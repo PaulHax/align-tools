@@ -1,0 +1,40 @@
+[project]
+name = "align-tools"
+version = "0.1.0"
+description = "Monorepo for align-system support tools and utilities"
+requires-python = ">=3.9"
+readme = "README.md"
+license = {text = "Apache-2.0"}
+authors = [
+    {name = "PaulHax"},
+]
+
+[tool.uv.workspace]
+members = ["packages/*"]
+
+[tool.uv]
+dev-dependencies = [
+    "pytest>=7.0",
+    "pytest-cov>=4.0",
+    "ruff>=0.1.0",
+    "mypy>=1.0",
+    "pre-commit>=3.0",
+    "python-semantic-release>=9.0",
+]
+
+[tool.semantic_release]
+version_toml = [
+    "pyproject.toml:project.version",
+    "packages/*/pyproject.toml:project.version",
+]
+version_variables = [
+    "packages/align-utils/src/align_utils/__init__.py:__version__",
+    "packages/align-track/src/align_track/__init__.py:__version__",
+]
+branch = "main"
+upload_to_pypi = false  # We'll handle PyPI per package
+upload_to_release = true
+build_command = "echo 'Monorepo release'"
+commit_message = "chore(release): v{version} [skip ci]"
+commit_parser = "angular"
+tag_format = "v{version}"

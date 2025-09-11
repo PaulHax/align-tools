@@ -1,0 +1,81 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+  id-token: write  # For PyPI trusted publishing
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v3
+      
+      - name: Install dependencies
+        run: |
+          uv pip install python-semantic-release
+      
+      - name: Configure Git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+      
+      - name: Python Semantic Release
+        id: release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          semantic-release version --no-push --no-commit
+          if [ -f ".VERSION" ]; then
+            echo "released=true" >> $GITHUB_OUTPUT
+            echo "version=$(cat .VERSION)" >> $GITHUB_OUTPUT
+          fi
+      
+      - name: Update all package versions
+        if: steps.release.outputs.released == 'true'
+        run: |
+          VERSION="${{ steps.release.outputs.version }}"
+          semantic-release version --no-vcs-release
+      
+      - name: Build packages
+        if: steps.release.outputs.released == 'true'
+        run: |
+          for pkg in packages/*/; do
+            echo "Building $pkg"
+            cd "$pkg"
+            uv build
+            cd ../..
+          done
+      
+      - name: Create Git tag and GitHub release
+        if: steps.release.outputs.released == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          semantic-release publish
+      
+      - name: Publish to PyPI
+        if: steps.release.outputs.released == 'true'
+        env:
+          UV_PUBLISH_TOKEN: ${{ secrets.PYPI_API_TOKEN }}
+        run: |
+          for pkg in packages/*/; do
+            echo "Publishing $pkg to PyPI..."
+            cd "$pkg"
+            uv publish
+            cd ../..
+          done

@@ -1,0 +1,43 @@
+[project]
+name = "align-track"
+version = "0.1.0"
+description = "Tracking and monitoring utilities for align-system experiments"
+readme = "README.md"
+requires-python = ">=3.9"
+license = {text = "Apache-2.0"}
+authors = [
+    {name = "PaulHax"},
+]
+keywords = ["align", "tracking", "monitoring", "experiments"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
+
+dependencies = [
+    "align-utils",
+    "pandas>=2.0",
+    "numpy>=1.24",
+    "pyyaml>=6.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/paulhax/align-tools"
+Repository = "https://github.com/paulhax/align-tools"
+Issues = "https://github.com/paulhax/align-tools/issues"
+
+[build-system]
+requires = ["uv>=0.7.0", "uv-build>=0.7.0"]
+build-backend = "uv_build"
+
+[project.scripts]
+list-runs = "align_track.list_runs:main"
+
+[tool.uv.sources]
+align-utils = { workspace = true }
