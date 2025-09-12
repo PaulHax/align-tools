@@ -138,7 +138,7 @@ class ExperimentConfig(BaseModel):
             f"{self.adm.name}:{self.adm.llm_backbone}:{kdma_string}:{self.run_variant}"
         )
 
-    def generate_experiment_key(self, experiment_path: Path = None) -> str:
+    def generate_experiment_key(self, experiment_path: Optional[Path] = None) -> str:
         """Generate hash-based experiment key for new manifest structure."""
         key_data = {
             "adm": self.adm.name,
@@ -584,7 +584,7 @@ class Manifest(BaseModel):
         self.experiments[exp_key] = enhanced_exp
 
         # Update indices
-        self._update_indices(exp_key, parameters, scenarios_dict.keys())
+        self._update_indices(exp_key, parameters, list(scenarios_dict.keys()))
 
         # Update file tracking
         self._update_file_info(input_output_path, input_output_checksum, exp_key)

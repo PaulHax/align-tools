@@ -3,7 +3,7 @@
 
 import sys
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 from align_utils.parser import parse_experiments_directory
 
@@ -89,7 +89,7 @@ def process_manifest_path(manifest_path: Path) -> List[Dict]:
     return sorted(runs, key=lambda x: x["path"])
 
 
-def main(args: List[str] = None) -> int:
+def main(args: Optional[List[str]] = None) -> int:
     """Main entry point for the CLI tool."""
     if args is None:
         args = sys.argv[1:]

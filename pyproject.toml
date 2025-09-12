@@ -20,6 +20,7 @@ dev-dependencies = [
     "mypy>=1.0",
     "pre-commit>=3.0",
     "python-semantic-release>=9.0",
+    "types-PyYAML>=6.0",
 ]
 
 [tool.semantic_release]
