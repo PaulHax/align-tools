@@ -8,6 +8,14 @@ license = {text = "Apache-2.0"}
 authors = [
     {name = "PaulHax"},
 ]
+dependencies = [
+    "align-utils",
+    "align-track",
+]
+
+[tool.uv.sources]
+align-utils = { workspace = true }
+align-track = { workspace = true }
 
 [tool.uv.workspace]
 members = ["packages/*"]
