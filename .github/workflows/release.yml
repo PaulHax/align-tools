@@ -73,5 +73,10 @@ jobs:
         env:
           UV_PUBLISH_TOKEN: ${{ secrets.PYPI_API_TOKEN }}
         run: |
-          echo "Publishing packages from dist/ to PyPI..."
-          uv publish dist/*
+          # Publish align-utils
+          echo "Publishing align-utils to PyPI..."
+          uv publish dist/align_utils-*
+          
+          # Publish align-track
+          echo "Publishing align-track to PyPI..."
+          uv publish dist/align_track-*
