@@ -27,7 +27,7 @@ jobs:
       
       - name: Install dependencies
         run: |
-          uv pip install python-semantic-release
+          uv sync --all-extras --dev
       
       - name: Configure Git
         run: |
@@ -39,7 +39,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          semantic-release version --no-push --no-commit
+          uv run semantic-release version --no-push --no-commit
           if [ -f ".VERSION" ]; then
             echo "released=true" >> $GITHUB_OUTPUT
             echo "version=$(cat .VERSION)" >> $GITHUB_OUTPUT
@@ -49,7 +49,7 @@ jobs:
         if: steps.release.outputs.released == 'true'
         run: |
           VERSION="${{ steps.release.outputs.version }}"
-          semantic-release version --no-vcs-release
+          uv run semantic-release version --no-vcs-release
       
       - name: Build packages
         if: steps.release.outputs.released == 'true'
@@ -66,7 +66,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          semantic-release publish
+          uv run semantic-release publish
       
       - name: Publish to PyPI
         if: steps.release.outputs.released == 'true'
