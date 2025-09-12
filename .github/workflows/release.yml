@@ -73,9 +73,5 @@ jobs:
         env:
           UV_PUBLISH_TOKEN: ${{ secrets.PYPI_API_TOKEN }}
         run: |
-          for pkg in packages/*/; do
-            echo "Publishing $pkg to PyPI..."
-            cd "$pkg"
-            uv publish
-            cd ../..
-          done
+          echo "Publishing packages from dist/ to PyPI..."
+          uv publish dist/*
