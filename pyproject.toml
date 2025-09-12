@@ -34,7 +34,8 @@ dev-dependencies = [
 [tool.semantic_release]
 version_toml = [
     "pyproject.toml:project.version",
-    "packages/*/pyproject.toml:project.version",
+    "packages/align-utils/pyproject.toml:project.version",
+    "packages/align-track/pyproject.toml:project.version",
 ]
 version_variables = [
     "packages/align-utils/src/align_utils/__init__.py:__version__",
@@ -45,5 +46,5 @@ upload_to_pypi = false  # We'll handle PyPI per package
 upload_to_release = true
 build_command = "echo 'Monorepo release'"
 commit_message = "chore(release): v{version} [skip ci]"
-commit_parser = "angular"
+commit_parser = "conventional"
 tag_format = "v{version}"
