@@ -70,13 +70,11 @@ jobs:
       
       - name: Publish to PyPI
         if: steps.release.outputs.released == 'true'
-        env:
-          UV_PUBLISH_TOKEN: ${{ secrets.PYPI_API_TOKEN }}
         run: |
           # Publish align-utils
           echo "Publishing align-utils to PyPI..."
-          uv publish dist/align_utils-*
+          uv publish --trusted-publishing always dist/align_utils-*
           
           # Publish align-track
           echo "Publishing align-track to PyPI..."
-          uv publish dist/align_track-*
+          uv publish --trusted-publishing always dist/align_track-*
