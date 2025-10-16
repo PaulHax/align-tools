@@ -39,18 +39,17 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          uv run semantic-release version --no-push --no-commit
-          if [ -f ".VERSION" ]; then
+          # Run semantic-release (commits, tags, pushes automatically)
+          uv run semantic-release version
+
+          # Check if a release was made by checking for new tag on HEAD
+          if git describe --exact-match --tags HEAD 2>/dev/null; then
             echo "released=true" >> $GITHUB_OUTPUT
-            echo "version=$(cat .VERSION)" >> $GITHUB_OUTPUT
+            echo "version=$(git describe --tags --abbrev=0 | sed 's/^v//')" >> $GITHUB_OUTPUT
+          else
+            echo "released=false" >> $GITHUB_OUTPUT
           fi
-      
-      - name: Update all package versions
-        if: steps.release.outputs.released == 'true'
-        run: |
-          VERSION="${{ steps.release.outputs.version }}"
-          uv run semantic-release version --no-vcs-release
-      
+
       - name: Build packages
         if: steps.release.outputs.released == 'true'
         run: |
@@ -61,20 +60,18 @@ jobs:
             cd ../..
           done
       
-      - name: Create Git tag and GitHub release
-        if: steps.release.outputs.released == 'true'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          uv run semantic-release publish
-      
       - name: Publish to PyPI
         if: steps.release.outputs.released == 'true'
         run: |
+          EXIT_CODE=0
+
           # Publish align-utils
           echo "Publishing align-utils to PyPI..."
-          uv publish --trusted-publishing always dist/align_utils-*
-          
-          # Publish align-track
+          uv publish --trusted-publishing always dist/align_utils-* || EXIT_CODE=$?
+
+          # Publish align-track (always attempts regardless of first result)
           echo "Publishing align-track to PyPI..."
-          uv publish --trusted-publishing always dist/align_track-*
+          uv publish --trusted-publishing always dist/align_track-* || EXIT_CODE=$?
+
+          # Fail the step if either package failed
+          exit $EXIT_CODE
