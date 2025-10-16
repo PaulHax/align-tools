@@ -1,6 +1,6 @@
 [project]
 name = "align-utils"
-version = "0.1.0"
+version = "1.0.0"
 description = "Utilities for parsing and processing align-system experiment data"
 readme = "README.md"
 requires-python = ">=3.9"
