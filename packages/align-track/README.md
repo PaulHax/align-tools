@@ -26,3 +26,22 @@ uv pip install -e .
 - Experiment tracking
 - Data aggregation and analysis
 - Integration with align-utils for data parsing
+
+## Usage
+
+### List Experiment Runs
+
+To list all experiment runs in a directory:
+
+```bash
+uv run python -m align_track.list_runs <experiment_directory>
+
+# Example
+uv run python -m align_track.list_runs ../align-utils/experiment-data/test-experiments
+```
+
+This will display a table with:
+- Run Path: The experiment run identifier
+- ADM Name: The ADM configuration used
+- Alignment: The alignment configuration
+- Scenarios: Number of scenarios in the run
