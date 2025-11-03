@@ -2,6 +2,22 @@
 
 <!-- version list -->
 
+## v1.0.1 (2025-11-03)
+
+### Bug Fixes
+
+- Update documentation and CI for dependency-groups syntax
+  ([`a5c3c6e`](https://github.com/PaulHax/align-tools/commit/a5c3c6eec1fd8d9d979058c48377dd821f5a2be0))
+
+### Chores
+
+- Migrate to dependency-groups from deprecated dev-dependencies
+  ([`ab3b169`](https://github.com/PaulHax/align-tools/commit/ab3b169e9471e264cab7f9ce96e9b3f2e9d4a040))
+
+- Remove src/align_tools/__init__.py
+  ([`f8904ac`](https://github.com/PaulHax/align-tools/commit/f8904ac285118e759f776114a07bfaaa7213bbfa))
+
+
 ## v1.0.0 (2025-10-16)
 
 - Initial Release
