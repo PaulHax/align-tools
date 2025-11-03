@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v1.1.0 (2025-11-03)
+
+### Features
+
+- Rename parser.py to discovery.py and add InputOutputFile.load() method
+  ([`5c2ed53`](https://github.com/PaulHax/align-tools/commit/5c2ed53aeb97f2e57f1ffe7766095138c1675bdd))
+
+
 ## v1.0.1 (2025-11-03)
 
 ### Bug Fixes
