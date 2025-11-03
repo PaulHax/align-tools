@@ -5,12 +5,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Commands
 
 ### Development Setup
+
 ```bash
 # Install dependencies for all packages
 uv sync --all-extras --dev
 ```
 
 ### Testing
+
 ```bash
 # Run all tests
 uv run pytest packages/
@@ -19,8 +21,8 @@ uv run pytest packages/
 uv run pytest packages/align-utils/
 uv run pytest packages/align-track/
 
-# Run tests with coverage
-uv run pytest packages/ --cov --cov-report=xml
+# Run tests
+uv run pytest packages/
 
 # Run a single test file
 uv run pytest packages/align-utils/tests/test_parsing.py
@@ -30,6 +32,7 @@ uv run pytest packages/align-utils/tests/test_parsing.py::test_specific_function
 ```
 
 ### Code Quality
+
 ```bash
 # Format code
 uv run ruff format .
@@ -42,6 +45,7 @@ uv run mypy packages/
 ```
 
 ### Building
+
 ```bash
 # Build a specific package
 cd packages/align-utils
@@ -49,6 +53,7 @@ uv build
 ```
 
 ### Dependency Management
+
 ```bash
 # Add dependency to specific package
 cd packages/align-utils
@@ -61,6 +66,7 @@ uv add --dev <package-name>
 ## Code Style
 
 Follow functional programming principles:
+
 - Prefer pure functions without side effects
 - Use immutable data structures where possible
 - Avoid classes when functions suffice
@@ -72,6 +78,7 @@ Follow functional programming principles:
 This is a Python monorepo using `uv` workspaces containing utility packages for the align-system:
 
 - **align-utils**: Core utilities for parsing align-system data
+
   - Pydantic models for input_output.json structures
   - YAML/JSON parsing utilities
   - CSV export functionality
