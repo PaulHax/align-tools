@@ -5,7 +5,7 @@ import sys
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
-from align_utils.parser import parse_experiments_directory
+from align_utils.discovery import parse_experiments_directory
 
 
 def format_table_row(columns: List[Tuple[str, int]]) -> str:

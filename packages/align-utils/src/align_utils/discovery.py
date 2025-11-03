@@ -39,6 +39,33 @@ def save_json(data: Dict[str, Any], file_path: Union[str, Path]) -> None:
         json.dump(data, f, indent=2)
 
 
+def discover_input_output_files(root: Path, recursive: bool = True) -> List[Path]:
+    """Find all input_output.json files in a directory tree.
+
+    Returns paths to files, not loaded data.
+
+    Args:
+        root: Root directory to search
+        recursive: Whether to search recursively (default: True)
+
+    Returns:
+        List of paths to input_output.json files
+    """
+    if root.is_file() and root.name == "input_output.json":
+        return [root]
+
+    if not root.is_dir():
+        return []
+
+    if recursive:
+        return list(root.rglob("input_output.json"))
+    else:
+        input_output_file = root / "input_output.json"
+        if input_output_file.exists():
+            return [input_output_file]
+        return []
+
+
 def _extract_run_variant(
     experiment_dir: Path, experiments_root: Path, all_conflicting_dirs: List[Path]
 ) -> str:

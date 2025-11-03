@@ -223,6 +223,31 @@ class InputOutputFile(BaseModel):
 
         return cls(data=items)
 
+    @classmethod
+    def load(cls, path: Path) -> "InputOutputFile":
+        """Load input_output data from a file or directory.
+
+        - If path is a JSON file: load directly
+        - If path is a directory: look for input_output.json inside
+
+        Args:
+            path: Path to a JSON file or directory containing input_output.json
+
+        Returns:
+            InputOutputFile with data loaded
+        """
+        if path.is_file():
+            return cls.from_file(path)
+        elif path.is_dir():
+            input_output_file = path / "input_output.json"
+            if not input_output_file.exists():
+                raise FileNotFoundError(
+                    f"No input_output.json found in directory {path}"
+                )
+            return cls.from_file(input_output_file)
+        else:
+            raise ValueError(f"Path {path} is neither a file nor a directory")
+
     @property
     def first_scenario_id(self) -> str:
         """Get the scenario ID from the first item."""
