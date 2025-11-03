@@ -9,17 +9,17 @@ The `align-tools` repository is organized as a monorepo using `uv`'s workspace f
 
 ## Packages
 
-### align-utils
+### [align-utils](packages/align-utils/README.md)
 Utilities for parsing and processing align-system experiment data.
 - Pydantic models for align-system input_output.json data structures
 - YAML/JSON parsing utilities
 - Data export utilities (CSV)
 
-## Quick Start
+### [align-track](packages/align-track/README.md)
+Experiment tracking and organization utilities for align-system.
+- Experiment tracking capabilities
 
-### Prerequisites
-- Python 3.9+
-- uv (Python package manager)
+## Quick Start
 
 ### Installation
 
@@ -32,7 +32,7 @@ Clone the repository and set up the development environment:
 ```bash
 git clone https://github.com/paulhax/align-tools.git
 cd align-tools
-uv sync --all-extras --dev
+uv sync --dev
 ```
 
 ### Using Published Packages
@@ -86,14 +86,6 @@ Add a development dependency to the workspace:
 uv add --dev pytest-mock
 ```
 
-### Building Packages
-
-Build a specific package:
-```bash
-cd packages/align-utils
-uv build
-```
-
 ## Release Process
 
 This repository uses semantic versioning and automated releases:
@@ -105,7 +97,7 @@ This repository uses semantic versioning and automated releases:
 
 2. When changes are merged to `main`, the release workflow:
    - Analyzes commits since the last release
-   - Bumps version according to semantic versioning
+   - Bumps versions for all packages according to semantic versioning
    - Updates changelog
    - Creates git tag
    - Builds and publishes to PyPI
@@ -121,6 +113,5 @@ This repository uses semantic versioning and automated releases:
 
 ## Links
 
-- [Repository](https://github.com/paulhax/align-tools)
-- [Issues](https://github.com/paulhax/align-tools/issues)
 - [PyPI - align-utils](https://pypi.org/project/align-utils/)
+- [PyPI - align-track](https://pypi.org/project/align-track/)
