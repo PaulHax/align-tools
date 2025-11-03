@@ -34,7 +34,7 @@ dataset = AlignDataset(
 ### Parsing Files
 
 ```python
-from align_utils.parser import load_yaml, load_json, save_yaml, save_json
+from align_utils.discovery import load_yaml, load_json, save_yaml, save_json
 
 # Load configuration
 config = load_yaml("config.yaml")

@@ -13,7 +13,7 @@ from align_utils.models import (
     ExperimentData,
     ChunkedExperimentData,
 )
-from align_utils.parser import (
+from align_utils.discovery import (
     parse_experiments_directory,
     build_manifest_from_experiments,
 )
