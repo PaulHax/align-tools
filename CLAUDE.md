@@ -8,7 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ```bash
 # Install dependencies for all packages
-uv sync --all-extras --dev
+uv sync --dev
 ```
 
 ### Testing
