@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v1.1.1 (2025-11-05)
+
+### Bug Fixes
+
+- Add py.typed marker files to enable mypy type checking
+  ([`c3efb0a`](https://github.com/PaulHax/align-tools/commit/c3efb0a4a91026266182b7b85daa805a748f1ad3))
+
+
 ## v1.1.0 (2025-11-03)
 
 ### Features
