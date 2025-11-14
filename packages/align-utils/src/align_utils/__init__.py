@@ -1,3 +1,3 @@
 """Core utilities for parsing and processing align-system data."""
 
-__version__ = "1.1.1"
+__version__ = "1.2.0"

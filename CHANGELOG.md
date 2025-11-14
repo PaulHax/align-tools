@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v1.2.0 (2025-11-14)
+
+### Features
+
+- **align_utils**: Add ADM output model types
+  ([`cf23d48`](https://github.com/PaulHax/align-tools/commit/cf23d48071f10949710ed49662c3c76c74a8774b))
+
+
 ## v1.1.1 (2025-11-05)
 
 ### Bug Fixes
