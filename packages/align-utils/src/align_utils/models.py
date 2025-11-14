@@ -5,8 +5,13 @@ import yaml
 import hashlib
 import os
 from pathlib import Path
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Union
 from pydantic import BaseModel, Field, ConfigDict
+
+
+KDMAScoreValue = Union[float, List[float]]
+KDMAChoiceScores = Dict[str, KDMAScoreValue]
+KDMANestedScores = Dict[str, KDMAChoiceScores]
 
 
 def calculate_file_checksum(file_path: Path) -> str:
@@ -185,6 +190,35 @@ class InputOutputItem(BaseModel):
     input: InputData
     output: Optional[Dict[str, Any]] = None
     original_index: int  # Index in the original file
+
+
+class Decision(BaseModel):
+    """Decision result from align-system ADM execution."""
+
+    unstructured: str
+    justification: str
+
+
+class ChoiceInfo(BaseModel):
+    """ADM execution metadata from align-system choice_info dict.
+
+    All fields optional to match align-system's flexible output structure.
+    Allows extra fields via ConfigDict to accommodate additional metadata.
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    predicted_kdma_values: Optional[KDMANestedScores] = None
+    true_kdma_values: Optional[Dict[str, Dict[str, float]]] = None
+    true_relevance: Optional[Dict[str, float]] = None
+    icl_example_responses: Optional[Dict[str, Any]] = None
+
+
+class ADMResult(BaseModel):
+    """Complete result from align-system ADM execution."""
+
+    decision: Decision
+    choice_info: ChoiceInfo
 
 
 class ScenarioTiming(BaseModel):
