@@ -66,6 +66,44 @@ def discover_input_output_files(root: Path, recursive: bool = True) -> List[Path
         return []
 
 
+def load_input_output_files(
+    root: Path, recursive: bool = True
+) -> List[InputOutputFile]:
+    """Find and load all JSON files that validate as InputOutputFile structures.
+
+    Recursively searches for JSON files and validates them against the
+    InputOutputFile Pydantic model. Filters out files like timing.json,
+    scores.json, and other JSON files that don't match the expected structure.
+
+    Args:
+        root: Root directory or file to search
+        recursive: Whether to search recursively (default: True)
+
+    Returns:
+        List of successfully loaded InputOutputFile models
+    """
+    if not root.exists():
+        return []
+
+    if root.is_file():
+        try:
+            return [InputOutputFile.from_file(root)]
+        except Exception:
+            return []
+
+    pattern = "**/*.json" if recursive else "*.json"
+    json_files = root.glob(pattern)
+
+    loaded_files = []
+    for json_file in json_files:
+        try:
+            loaded_files.append(InputOutputFile.from_file(json_file))
+        except Exception:
+            continue
+
+    return loaded_files
+
+
 def _extract_run_variant(
     experiment_dir: Path, experiments_root: Path, all_conflicting_dirs: List[Path]
 ) -> str:
