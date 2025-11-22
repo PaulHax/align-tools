@@ -196,7 +196,6 @@ def _create_experiments_from_directory(experiment_dir: Path) -> List[ExperimentD
     """
     experiments = []
 
-    # Load input_output using the standard method (which now sets original_index)
     input_output = InputOutputFile.from_file(experiment_dir / "input_output.json")
 
     # Load config to check for uniform alignment target
@@ -235,7 +234,7 @@ def _create_experiments_from_directory(experiment_dir: Path) -> List[ExperimentD
                 experiment = ExperimentData.from_directory_mixed_kdma(
                     experiment_dir,
                     alignment_target_id,
-                    items,  # items already have original_index
+                    items,
                 )
                 experiments.append(experiment)
 
