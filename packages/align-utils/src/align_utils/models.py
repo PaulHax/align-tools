@@ -189,7 +189,7 @@ class InputOutputItem(BaseModel):
 
     input: InputData
     output: Optional[Dict[str, Any]] = None
-    original_index: int  # Index in the original file
+    choice_info: Optional[Dict[str, Any]] = None
 
 
 class Decision(BaseModel):
@@ -249,11 +249,7 @@ class InputOutputFile(BaseModel):
         with open(path) as f:
             raw_data = json.load(f)
 
-        # Convert to InputOutputItem objects with original indices
-        items = []
-        for i, item_data in enumerate(raw_data):
-            item = InputOutputItem(**item_data, original_index=i)
-            items.append(item)
+        items = [InputOutputItem(**item_data) for item_data in raw_data]
 
         return cls(data=items)
 
@@ -604,14 +600,11 @@ class Manifest(BaseModel):
             scenario_id = item.input.scenario_id
             scene_id = "unknown"
 
-            # Use the original index from the InputOutputItem
-            source_index = item.original_index
-
             # Extract scene_id from full_state.meta_info.scene_id if available
             if item.input.full_state and isinstance(item.input.full_state, dict):
                 meta_info = item.input.full_state.get("meta_info", {})
                 if isinstance(meta_info, dict):
-                    scene_id = meta_info.get("scene_id", f"scene_{source_index}")
+                    scene_id = meta_info.get("scene_id", f"scene_{i}")
 
             if scenario_id not in scenarios_dict:
                 scores_path = None
@@ -632,9 +625,9 @@ class Manifest(BaseModel):
                 )
 
             scenarios_dict[scenario_id].scenes[scene_id] = SceneInfo(
-                source_index=source_index,
+                source_index=i,
                 scene_id=scene_id,
-                timing_s=experiment.timing.raw_times_s[source_index],
+                timing_s=experiment.timing.raw_times_s[i],
             )
 
         # Create enhanced experiment
