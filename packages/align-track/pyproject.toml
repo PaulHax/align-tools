@@ -1,6 +1,6 @@
 [project]
 name = "align-track"
-version = "1.2.0"
+dynamic = ["version"]
 description = "Tracking and monitoring utilities for align-system experiments"
 readme = "README.md"
 requires-python = ">=3.9"
@@ -33,8 +33,14 @@ Repository = "https://github.com/paulhax/align-tools"
 Issues = "https://github.com/paulhax/align-tools/issues"
 
 [build-system]
-requires = ["uv>=0.7.0", "uv-build>=0.7.0"]
-build-backend = "uv_build"
+requires = ["hatchling", "uv-dynamic-versioning"]
+build-backend = "hatchling.build"
+
+[tool.hatch.version]
+source = "uv-dynamic-versioning"
+
+[tool.uv-dynamic-versioning]
+fallback-version = "0.0.0"
 
 [project.scripts]
 list-runs = "align_track.list_runs:main"

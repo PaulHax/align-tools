@@ -17,7 +17,7 @@ members = [
 
 [[package]]
 name = "align-tools"
-version = "1.0.0"
+version = "1.2.0"
 source = { virtual = "." }
 dependencies = [
     { name = "align-track" },
@@ -54,7 +54,6 @@ dev = [
 
 [[package]]
 name = "align-track"
-version = "1.0.0"
 source = { editable = "packages/align-track" }
 dependencies = [
     { name = "align-utils" },
@@ -75,7 +74,6 @@ requires-dist = [
 
 [[package]]
 name = "align-utils"
-version = "1.0.0"
 source = { editable = "packages/align-utils" }
 dependencies = [
     { name = "pydantic" },
