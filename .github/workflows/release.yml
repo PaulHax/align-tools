@@ -39,8 +39,8 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # Run semantic-release (commits, tags, pushes automatically)
-          uv run semantic-release version
+          # Run semantic-release (tag only, no version commits)
+          uv run semantic-release version --no-commit --tag --push
 
           # Check if a release was made by checking for new tag on HEAD
           if git describe --exact-match --tags HEAD 2>/dev/null; then

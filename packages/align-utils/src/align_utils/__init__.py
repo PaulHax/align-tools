@@ -1,3 +1,5 @@
 """Core utilities for parsing and processing align-system data."""
 
-__version__ = "1.2.0"
+from importlib.metadata import version
+
+__version__ = version("align-utils")
