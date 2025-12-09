@@ -184,21 +184,6 @@ class InputData(BaseModel):
     choices: Optional[List[Dict[str, Any]]] = None
 
 
-class InputOutputItem(BaseModel):
-    """Represents a single input/output item from the experiment."""
-
-    input: InputData
-    output: Optional[Dict[str, Any]] = None
-    choice_info: Optional[Dict[str, Any]] = None
-
-
-class Decision(BaseModel):
-    """Decision result from align-system ADM execution."""
-
-    unstructured: str
-    justification: str
-
-
 class ChoiceInfo(BaseModel):
     """ADM execution metadata from align-system choice_info dict.
 
@@ -212,6 +197,43 @@ class ChoiceInfo(BaseModel):
     true_kdma_values: Optional[Dict[str, Dict[str, float]]] = None
     true_relevance: Optional[Dict[str, float]] = None
     icl_example_responses: Optional[Dict[str, Any]] = None
+
+
+class Action(BaseModel):
+    """Action chosen by the ADM."""
+
+    model_config = ConfigDict(extra="allow")
+
+    action_id: str
+    action_type: str
+    unstructured: str
+    justification: Optional[str] = None
+    character_id: Optional[str] = None
+    intent_action: Optional[bool] = None
+    kdma_association: Optional[Dict[str, float]] = None
+
+
+class Output(BaseModel):
+    """Output from ADM execution."""
+
+    choice: int
+    action: Action
+
+
+class InputOutputItem(BaseModel):
+    """Represents a single input/output item from the experiment."""
+
+    input: InputData
+    output: Optional[Output] = None
+    choice_info: Optional[ChoiceInfo] = None
+    label: Optional[List[Dict[str, float]]] = None
+
+
+class Decision(BaseModel):
+    """Decision result from align-system ADM execution."""
+
+    unstructured: str
+    justification: str
 
 
 class ADMResult(BaseModel):
