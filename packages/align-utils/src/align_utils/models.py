@@ -484,6 +484,38 @@ class ExperimentData(BaseModel):
         return all((experiment_dir / f).exists() for f in required_files)
 
 
+class ExperimentItem(BaseModel):
+    """Single item from an experiment with all associated context.
+
+    Composes the raw InputOutputItem with timing and config data,
+    providing a self-contained view of each decision in an experiment.
+    """
+
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
+    item: InputOutputItem
+    timing_s: float
+    config: ExperimentConfig
+    experiment_path: Path
+
+
+def get_experiment_items(experiment: ExperimentData) -> List[ExperimentItem]:
+    """Extract individual items from an ExperimentData with associated context.
+
+    Each item gets the timing value from the corresponding index in raw_times_s
+    and shares the experiment's config.
+    """
+    return [
+        ExperimentItem(
+            item=item,
+            timing_s=experiment.timing.raw_times_s[i],
+            config=experiment.config,
+            experiment_path=experiment.experiment_path,
+        )
+        for i, item in enumerate(experiment.input_output.data)
+    ]
+
+
 # Enhanced Manifest Models for New Structure
 class SceneInfo(BaseModel):
     """Information about a scene within a scenario."""
