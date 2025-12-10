@@ -227,10 +227,11 @@ def test_has_required_files():
         assert not ExperimentData.has_required_files(experiment_dir)
 
         (experiment_dir / "input_output.json").touch()
-        assert not ExperimentData.has_required_files(experiment_dir)
+        assert ExperimentData.has_required_files(experiment_dir)
 
+        # Optional files don't change the result
         (experiment_dir / "scores.json").touch()
-        assert not ExperimentData.has_required_files(experiment_dir)
+        assert ExperimentData.has_required_files(experiment_dir)
 
         (experiment_dir / "timing.json").touch()
         assert ExperimentData.has_required_files(experiment_dir)

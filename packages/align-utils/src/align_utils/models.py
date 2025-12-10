@@ -327,7 +327,7 @@ class ExperimentData(BaseModel):
     config: ExperimentConfig
     input_output: InputOutputFile
     scores: Optional[ScoresFile] = None
-    timing: TimingData
+    timing: Optional[TimingData] = None
     experiment_path: Path
 
     model_config = ConfigDict(arbitrary_types_allowed=True)  # Allow Path type
@@ -350,9 +350,12 @@ class ExperimentData(BaseModel):
         if scores_path.exists():
             scores = ScoresFile.from_file(scores_path)
 
-        with open(experiment_dir / "timing.json") as f:
-            timing_data = json.load(f)
-        timing = TimingData(**timing_data)
+        timing = None
+        timing_path = experiment_dir / "timing.json"
+        if timing_path.exists():
+            with open(timing_path) as f:
+                timing_data = json.load(f)
+            timing = TimingData(**timing_data)
 
         return cls(
             config=config,
@@ -400,11 +403,13 @@ class ExperimentData(BaseModel):
         if scores_path.exists():
             scores = ScoresFile.from_file(scores_path)
 
-        # Load timing data from default location
+        # Load timing data if available
+        timing = None
         timing_path = experiment_dir / "timing.json"
-        with open(timing_path) as f:
-            timing_data = json.load(f)
-        timing = TimingData(**timing_data)
+        if timing_path.exists():
+            with open(timing_path) as f:
+                timing_data = json.load(f)
+            timing = TimingData(**timing_data)
 
         # Create experiment instance
         experiment = cls(
@@ -456,7 +461,6 @@ class ExperimentData(BaseModel):
             alignment_target=alignment_target,
         )
 
-        # Load input_output and timing
         input_output = InputOutputFile.from_file(experiment_dir / "input_output.json")
 
         scores = None
@@ -464,9 +468,12 @@ class ExperimentData(BaseModel):
         if scores_path.exists():
             scores = ScoresFile.from_file(scores_path)
 
-        with open(experiment_dir / "timing.json") as f:
-            timing_data = json.load(f)
-        timing = TimingData(**timing_data)
+        timing = None
+        timing_path = experiment_dir / "timing.json"
+        if timing_path.exists():
+            with open(timing_path) as f:
+                timing_data = json.load(f)
+            timing = TimingData(**timing_data)
 
         return cls(
             config=config,
@@ -491,7 +498,6 @@ class ExperimentData(BaseModel):
         """Check if directory has all required experiment files."""
         required_files = [
             "input_output.json",
-            "timing.json",
             ".hydra/config.yaml",
         ]
         return all((experiment_dir / f).exists() for f in required_files)
@@ -501,7 +507,6 @@ class ExperimentData(BaseModel):
         """Check if directory has required files without hydra config."""
         required_files = [
             "input_output.json",
-            "timing.json",
         ]
         return all((experiment_dir / f).exists() for f in required_files)
 
@@ -516,7 +521,7 @@ class ExperimentItem(BaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
     item: InputOutputItem
-    timing_s: float
+    timing_s: float = 0.0
     config: ExperimentConfig
     experiment_path: Path
 
@@ -527,10 +532,11 @@ def get_experiment_items(experiment: ExperimentData) -> List[ExperimentItem]:
     Each item gets the timing value from the corresponding index in raw_times_s
     and shares the experiment's config.
     """
+    raw_times = experiment.timing.raw_times_s if experiment.timing else None
     return [
         ExperimentItem(
             item=item,
-            timing_s=experiment.timing.raw_times_s[i],
+            timing_s=raw_times[i] if raw_times else 0.0,
             config=experiment.config,
             experiment_path=experiment.experiment_path,
         )
