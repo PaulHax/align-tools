@@ -59,8 +59,18 @@ def create_sample_input_output_data():
                 ],
             },
             "output": {
-                "choice": "treat_patient_a",
-                "justification": "Test justification",
+                "choice": 0,
+                "action": {
+                    "action_id": "treat_patient_a",
+                    "action_type": "TREAT_PATIENT",
+                    "unstructured": "Treat Patient A",
+                    "justification": "Test justification",
+                },
+            },
+            "choice_info": {
+                "true_kdma_values": {
+                    "Treat Patient A": {"affiliation": 0.0, "medical": 0.99}
+                }
             },
         }
     ]
@@ -217,10 +227,11 @@ def test_has_required_files():
         assert not ExperimentData.has_required_files(experiment_dir)
 
         (experiment_dir / "input_output.json").touch()
-        assert not ExperimentData.has_required_files(experiment_dir)
+        assert ExperimentData.has_required_files(experiment_dir)
 
+        # Optional files don't change the result
         (experiment_dir / "scores.json").touch()
-        assert not ExperimentData.has_required_files(experiment_dir)
+        assert ExperimentData.has_required_files(experiment_dir)
 
         (experiment_dir / "timing.json").touch()
         assert ExperimentData.has_required_files(experiment_dir)

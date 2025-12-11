@@ -184,21 +184,6 @@ class InputData(BaseModel):
     choices: Optional[List[Dict[str, Any]]] = None
 
 
-class InputOutputItem(BaseModel):
-    """Represents a single input/output item from the experiment."""
-
-    input: InputData
-    output: Optional[Dict[str, Any]] = None
-    choice_info: Optional[Dict[str, Any]] = None
-
-
-class Decision(BaseModel):
-    """Decision result from align-system ADM execution."""
-
-    unstructured: str
-    justification: str
-
-
 class ChoiceInfo(BaseModel):
     """ADM execution metadata from align-system choice_info dict.
 
@@ -212,6 +197,43 @@ class ChoiceInfo(BaseModel):
     true_kdma_values: Optional[Dict[str, Dict[str, float]]] = None
     true_relevance: Optional[Dict[str, float]] = None
     icl_example_responses: Optional[Dict[str, Any]] = None
+
+
+class Action(BaseModel):
+    """Action chosen by the ADM."""
+
+    model_config = ConfigDict(extra="allow")
+
+    action_id: str
+    action_type: str
+    unstructured: str
+    justification: Optional[str] = None
+    character_id: Optional[str] = None
+    intent_action: Optional[bool] = None
+    kdma_association: Optional[Dict[str, float]] = None
+
+
+class Output(BaseModel):
+    """Output from ADM execution."""
+
+    choice: int
+    action: Action
+
+
+class InputOutputItem(BaseModel):
+    """Represents a single input/output item from the experiment."""
+
+    input: InputData
+    output: Optional[Output] = None
+    choice_info: Optional[ChoiceInfo] = None
+    label: Optional[List[Dict[str, float]]] = None
+
+
+class Decision(BaseModel):
+    """Decision result from align-system ADM execution."""
+
+    unstructured: str
+    justification: str
 
 
 class ADMResult(BaseModel):
@@ -305,7 +327,7 @@ class ExperimentData(BaseModel):
     config: ExperimentConfig
     input_output: InputOutputFile
     scores: Optional[ScoresFile] = None
-    timing: TimingData
+    timing: Optional[TimingData] = None
     experiment_path: Path
 
     model_config = ConfigDict(arbitrary_types_allowed=True)  # Allow Path type
@@ -328,9 +350,12 @@ class ExperimentData(BaseModel):
         if scores_path.exists():
             scores = ScoresFile.from_file(scores_path)
 
-        with open(experiment_dir / "timing.json") as f:
-            timing_data = json.load(f)
-        timing = TimingData(**timing_data)
+        timing = None
+        timing_path = experiment_dir / "timing.json"
+        if timing_path.exists():
+            with open(timing_path) as f:
+                timing_data = json.load(f)
+            timing = TimingData(**timing_data)
 
         return cls(
             config=config,
@@ -378,11 +403,13 @@ class ExperimentData(BaseModel):
         if scores_path.exists():
             scores = ScoresFile.from_file(scores_path)
 
-        # Load timing data from default location
+        # Load timing data if available
+        timing = None
         timing_path = experiment_dir / "timing.json"
-        with open(timing_path) as f:
-            timing_data = json.load(f)
-        timing = TimingData(**timing_data)
+        if timing_path.exists():
+            with open(timing_path) as f:
+                timing_data = json.load(f)
+            timing = TimingData(**timing_data)
 
         # Create experiment instance
         experiment = cls(
@@ -434,7 +461,6 @@ class ExperimentData(BaseModel):
             alignment_target=alignment_target,
         )
 
-        # Load input_output and timing
         input_output = InputOutputFile.from_file(experiment_dir / "input_output.json")
 
         scores = None
@@ -442,9 +468,12 @@ class ExperimentData(BaseModel):
         if scores_path.exists():
             scores = ScoresFile.from_file(scores_path)
 
-        with open(experiment_dir / "timing.json") as f:
-            timing_data = json.load(f)
-        timing = TimingData(**timing_data)
+        timing = None
+        timing_path = experiment_dir / "timing.json"
+        if timing_path.exists():
+            with open(timing_path) as f:
+                timing_data = json.load(f)
+            timing = TimingData(**timing_data)
 
         return cls(
             config=config,
@@ -469,7 +498,6 @@ class ExperimentData(BaseModel):
         """Check if directory has all required experiment files."""
         required_files = [
             "input_output.json",
-            "timing.json",
             ".hydra/config.yaml",
         ]
         return all((experiment_dir / f).exists() for f in required_files)
@@ -479,9 +507,41 @@ class ExperimentData(BaseModel):
         """Check if directory has required files without hydra config."""
         required_files = [
             "input_output.json",
-            "timing.json",
         ]
         return all((experiment_dir / f).exists() for f in required_files)
+
+
+class ExperimentItem(BaseModel):
+    """Single item from an experiment with all associated context.
+
+    Composes the raw InputOutputItem with timing and config data,
+    providing a self-contained view of each decision in an experiment.
+    """
+
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
+    item: InputOutputItem
+    timing_s: float = 0.0
+    config: ExperimentConfig
+    experiment_path: Path
+
+
+def get_experiment_items(experiment: ExperimentData) -> List[ExperimentItem]:
+    """Extract individual items from an ExperimentData with associated context.
+
+    Each item gets the timing value from the corresponding index in raw_times_s
+    and shares the experiment's config.
+    """
+    raw_times = experiment.timing.raw_times_s if experiment.timing else None
+    return [
+        ExperimentItem(
+            item=item,
+            timing_s=raw_times[i] if raw_times else 0.0,
+            config=experiment.config,
+            experiment_path=experiment.experiment_path,
+        )
+        for i, item in enumerate(experiment.input_output.data)
+    ]
 
 
 # Enhanced Manifest Models for New Structure
