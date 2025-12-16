@@ -123,7 +123,7 @@ def test_adm_config_model():
 def test_adm_config_no_llm():
     """Test ADMConfig model with no LLM backbone."""
     adm = ADMConfig(name="test_adm")
-    assert adm.llm_backbone == "no_llm"
+    assert adm.llm_backbone is None
 
 
 def test_experiment_config_key_generation():
