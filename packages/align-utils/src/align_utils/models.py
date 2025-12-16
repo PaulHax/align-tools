@@ -118,11 +118,11 @@ class ADMConfig(BaseModel):
     structured_inference_engine: Optional[Dict[str, Any]] = None
 
     @property
-    def llm_backbone(self) -> str:
-        """Extract LLM backbone model name."""
+    def llm_backbone(self) -> str | None:
+        """Extract LLM backbone model name, or None if no LLM is configured."""
         if self.structured_inference_engine:
-            return self.structured_inference_engine.get("model_name", "no_llm")
-        return "no_llm"
+            return self.structured_inference_engine.get("model_name")
+        return None
 
 
 class ExperimentConfig(BaseModel):
@@ -147,7 +147,7 @@ class ExperimentConfig(BaseModel):
         """Generate hash-based experiment key for new manifest structure."""
         key_data = {
             "adm": self.adm.name,
-            "llm": self.adm.llm_backbone if self.adm.llm_backbone != "no_llm" else None,
+            "llm": self.adm.llm_backbone,
             "kdma": self._get_kdma_key(),
             "run_variant": self.run_variant,
         }
@@ -550,7 +550,7 @@ class SceneInfo(BaseModel):
 
     source_index: int  # Index in the source input_output.json file
     scene_id: str  # Scene ID from meta_info.scene_id
-    timing_s: float  # Timing from timing.json raw_times_s[source_index]
+    timing_s: float | None  # Timing from timing.json, None if not available
 
 
 class InputOutputFileInfo(BaseModel):
@@ -625,7 +625,7 @@ class Manifest(BaseModel):
                 "instance": experiment.config.adm.instance,
             },
             "llm": None
-            if experiment.config.adm.llm_backbone == "no_llm"
+            if experiment.config.adm.llm_backbone is None
             else {
                 "model_name": experiment.config.adm.llm_backbone,
                 # Add other LLM config from structured_inference_engine if available
@@ -687,7 +687,7 @@ class Manifest(BaseModel):
             scenarios_dict[scenario_id].scenes[scene_id] = SceneInfo(
                 source_index=i,
                 scene_id=scene_id,
-                timing_s=experiment.timing.raw_times_s[i],
+                timing_s=experiment.timing.raw_times_s[i] if experiment.timing else None,
             )
 
         # Create enhanced experiment
