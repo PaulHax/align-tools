@@ -27,6 +27,11 @@ dependencies = [
     "pyyaml>=6.0",
 ]
 
+[project.optional-dependencies]
+clearml = [
+    "clearml>=1.14",
+]
+
 [project.urls]
 Homepage = "https://github.com/paulhax/align-tools"
 Repository = "https://github.com/paulhax/align-tools"
