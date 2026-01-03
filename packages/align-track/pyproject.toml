@@ -27,6 +27,11 @@ dependencies = [
     "pyyaml>=6.0",
 ]
 
+[project.optional-dependencies]
+aim = [
+    "aim>=3.17",
+]
+
 [project.urls]
 Homepage = "https://github.com/paulhax/align-tools"
 Repository = "https://github.com/paulhax/align-tools"
