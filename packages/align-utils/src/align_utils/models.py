@@ -687,7 +687,9 @@ class Manifest(BaseModel):
             scenarios_dict[scenario_id].scenes[scene_id] = SceneInfo(
                 source_index=i,
                 scene_id=scene_id,
-                timing_s=experiment.timing.raw_times_s[i] if experiment.timing else None,
+                timing_s=experiment.timing.raw_times_s[i]
+                if experiment.timing
+                else None,
             )
 
         # Create enhanced experiment
