@@ -3,7 +3,7 @@ name = "align-utils"
 dynamic = ["version"]
 description = "Utilities for parsing and processing align-system experiment data"
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 license = {text = "Apache-2.0"}
 authors = [
     {name = "PaulHax"},

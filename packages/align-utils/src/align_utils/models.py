@@ -118,7 +118,7 @@ class ADMConfig(BaseModel):
     structured_inference_engine: Optional[Dict[str, Any]] = None
 
     @property
-    def llm_backbone(self) -> Optional[str]:
+    def llm_backbone(self) -> str | None:
         """Extract LLM backbone model name, or None if no LLM is configured."""
         if self.structured_inference_engine:
             return self.structured_inference_engine.get("model_name")
@@ -550,7 +550,7 @@ class SceneInfo(BaseModel):
 
     source_index: int  # Index in the source input_output.json file
     scene_id: str  # Scene ID from meta_info.scene_id
-    timing_s: Optional[float]  # Timing from timing.json, None if not available
+    timing_s: float | None  # Timing from timing.json, None if not available
 
 
 class InputOutputFileInfo(BaseModel):
