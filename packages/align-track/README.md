@@ -1,15 +1,15 @@
 # align-track
 
-Experiment tracking and visualization for align-system using MLflow or Aim.
+Experiment tracking and visualization for align-system using MLflow.
 
 ## Overview
 
-The `align-track` package provides dual-backend experiment tracking for align-system experiments:
+The `align-track` package provides experiment tracking for align-system experiments using MLflow. Each experiment directory becomes one MLflow run, with MLflow traces capturing scene-level details (input text, choices, decisions, KDMA values).
 
-- **MLflow** (default): Hierarchical structure with parent experiment runs and nested child scene runs, ideal for aggregate analysis
-- **Aim**: Flat scene-level structure optimized for browsing and comparing large numbers of runs (10k+ scenes), with inline text viewing
-
-Both backends track the same data (parameters, metrics, text) and support filtering by ADM, LLM, alignment target, and scene ID.
+This structure enables:
+- **Run-level comparison**: Compare ADM configurations across alignment targets
+- **Scene drill-down**: Explore individual scene decisions via traces
+- **Searchable traces**: Filter scenes by scene_id, timing, or other attributes
 
 ## Installation
 
@@ -27,273 +27,202 @@ cd align-tools
 uv sync --dev
 ```
 
-## Features
-
-- **Dual Backend Support**: Choose between MLflow or Aim for experiment tracking
-- **MLflow**: Hierarchical structure, industry-standard format, experiment aggregates
-- **Aim**: Flat scene structure, optimized UI for 10k+ runs, inline text viewing
-- **Rich Metadata**: Parameters (ADM, LLM, KDMA values), metrics (scores, timing), and tags for filtering
-- **Text Data**: Scene descriptions, available choices, decisions, and justifications logged inline
-- **Flexible Querying**: Filter by ADM, LLM, alignment target, or scene ID
-- **Scene Comparison**: Compare how different ADM/LLM combinations perform on the same scene
-
-## Choosing a Backend
-
-### Use MLflow when:
-- You want hierarchical experiment organization
-- You need experiment-level aggregate metrics
-- You're familiar with MLflow's ecosystem
-- You want industry-standard ML experiment tracking
-
-### Use Aim when:
-- You're working with many scenes (6k+ runs)
-- You want faster UI for browsing and comparing runs
-- You need inline viewing of scene text (probe descriptions, choices, decisions)
-- You want direct scene-to-scene comparison without hierarchy
-- UI responsiveness with large datasets is important
-
-Both backends can coexist - you can ingest to both for different use cases.
-
-## Usage
-
-### Ingest Experiments into MLflow
-
-#### Hierarchical Ingestion (Default)
-
-Creates parent runs for experiments with nested child runs for each scene:
+## Quick Start
 
 ```bash
-# Ingest all experiments
-uv run align-track ingest \
-  --experiments-dir /home/paulhax/src/itm/align-browser/experiment-data \
-  --mlflow-uri file:///home/paulhax/src/itm/align-data/mlruns
+# Create a directory for MLflow data (gitignored)
+mkdir -p data/mlflow
 
-# Ingest single experiment directory
-uv run align-track ingest \
-  --experiments-dir /home/paulhax/src/itm/align-browser/experiment-data/base-eval \
-  --mlflow-uri file:///home/paulhax/src/itm/align-data/mlruns
+# Ingest experiments into MLflow
+align-track ingest \
+  --experiments-dir /path/to/experiments \
+  --mlflow-uri sqlite:///data/mlflow/mlflow.db
+
+# Launch MLflow UI
+align-track ui --mlflow-uri sqlite:///data/mlflow/mlflow.db
+
+# Open http://localhost:5000 in your browser
+```
+
+## CLI Commands
+
+### Ingest Experiments
+
+Ingest experiment directories into MLflow. Creates one run per experiment with traces for each scene.
+
+```bash
+# Basic usage (recommended: use data/mlflow directory)
+align-track ingest \
+  --experiments-dir /path/to/experiments \
+  --mlflow-uri sqlite:///data/mlflow/mlflow.db
+
+# Specify experiment name
+align-track ingest \
+  --experiments-dir /path/to/experiments \
+  --mlflow-uri sqlite:///data/mlflow/mlflow.db \
+  --experiment-name "My Experiment"
 
 # Force re-ingest existing experiments
-uv run align-track ingest \
+align-track ingest \
   --experiments-dir /path/to/experiments \
-  --mlflow-uri file:///path/to/mlruns \
+  --mlflow-uri sqlite:///data/mlflow/mlflow.db \
   --force
 ```
 
-#### Flat Ingestion
-
-Single-level runs (one run per experiment directory, no scene-level runs):
+### Launch MLflow UI
 
 ```bash
-uv run align-track ingest \
-  --experiments-dir /path/to/experiments \
-  --mlflow-uri file:///path/to/mlruns \
-  --flat
+# Start UI
+align-track ui --mlflow-uri sqlite:///data/mlflow/mlflow.db
+
+# Custom port and host
+align-track ui --mlflow-uri sqlite:///data/mlflow/mlflow.db --port 8080 --host 0.0.0.0
 ```
 
-### View Experiments in MLflow UI
+### Search Runs
 
-Start the MLflow UI to explore your experiments:
+Search and filter MLflow runs from the command line.
 
 ```bash
-cd /home/paulhax/src/itm/align-tools
-uv run mlflow ui --backend-store-uri file:///home/paulhax/src/itm/align-data/mlruns
+# Search by ADM
+align-track search --mlflow-uri sqlite:///data/mlflow/mlflow.db --adm pipeline_baseline
+
+# Search by minimum score
+align-track search --mlflow-uri sqlite:///data/mlflow/mlflow.db --min-score 0.8
+
+# Search with MLflow filter string
+align-track search --mlflow-uri sqlite:///data/mlflow/mlflow.db \
+  --filter "params.adm = 'pipeline_baseline'"
 ```
 
-Then open http://localhost:5000 in your browser.
+### Export Runs
 
-### MLflow UI Tips
-
-#### View Experiment Aggregates
-Filter by `run_type = "parent"` to see only experiment-level runs with aggregate metrics.
-
-#### Compare Scenes Across Experiments
-Filter by `scene_id = "June2025-SS-eval"` to see all evaluations of a specific scene across different ADM/LLM/alignment combinations.
-
-#### Drill Down into Experiments
-Click on a parent run to see all its child scene runs.
-
-#### Filter by ADM/LLM
-Use tags: `adm = "pipeline_baseline"` or `llm = "mistralai/Mistral-7B-Instruct-v0.3"`
-
-#### Compare Multiple Runs
-Select multiple runs (use checkboxes) and click "Compare" to see side-by-side metrics and parameters.
-
-### Ingest Experiments into Aim
-
-Aim uses a **flat scene-level structure** where each scene becomes a top-level run. This enables direct scene comparison and better UI performance with large datasets.
+Export run data to CSV, TSV, or JSON.
 
 ```bash
-# Ingest all experiments to Aim
-uv run align-track ingest \
-  --backend aim \
-  --experiments-dir /home/paulhax/src/itm/align-browser/experiment-data \
-  --aim-repo /home/paulhax/src/itm/align-data/aim-test
+# Export to CSV
+align-track export --mlflow-uri sqlite:///data/mlflow/mlflow.db -o results.csv
 
-# Ingest single experiment directory
-uv run align-track ingest \
-  --backend aim \
-  --experiments-dir /home/paulhax/src/itm/align-browser/experiment-data/baseline-eval \
-  --aim-repo /home/paulhax/src/itm/align-data/aim-test
-
-# Force re-ingest existing scenes
-uv run align-track ingest \
-  --backend aim \
-  --experiments-dir /path/to/experiments \
-  --aim-repo /path/to/aim/repo \
-  --force
+# Export to JSON
+align-track export --mlflow-uri sqlite:///data/mlflow/mlflow.db --format json -o results.json
 ```
 
-### Reindex Aim Repository (Important!)
+### Generate Reports
 
-After ingestion completes, you **must** reindex the Aim repository to make runs visible in the UI:
+Create pivot table reports from run data.
 
 ```bash
-# Reindex to finalize all runs
-uv run aim storage --repo /home/paulhax/src/itm/align-data/aim-test reindex -y
+# Default pivot: alignment_target_id × adm, values = timing.avg_seconds
+align-track report --mlflow-uri sqlite:///data/mlflow/mlflow.db -o report.xlsx
+
+# Custom pivot configuration
+align-track report --mlflow-uri sqlite:///data/mlflow/mlflow.db \
+  --rows alignment_target_id \
+  --cols adm \
+  --values "metrics.score.alignment_score" \
+  -o report.xlsx
 ```
 
-**Why?** Aim finalizes runs when the process terminates. Since we create many runs (6k+) in a single process, they need to be indexed manually after ingestion. This takes about 8 minutes for ~6,700 runs.
+### List Runs
 
-### View Experiments in Aim UI
-
-Start the Aim UI to explore your experiments:
+List runs with optional align-app deep links.
 
 ```bash
-uv run aim up --repo /home/paulhax/src/itm/align-data/aim-test
+align-track list-runs --mlflow-uri sqlite:///data/mlflow/mlflow.db
+
+# With deep links to align-app
+align-track list-runs --mlflow-uri sqlite:///data/mlflow/mlflow.db \
+  --with-links --experiments-root /data/experiments
 ```
 
-Then open http://127.0.0.1:43800 in your browser.
+## Data Model
 
-### Aim UI Tips
+### MLflow Run (Experiment-Level)
 
-#### Group Scenes by Experiment
-Group by `experiment_path` parameter to see all scenes from one experiment together.
-
-#### Compare ADM/LLM Combinations
-Filter by `scenario_id` to see how different ADM/LLM combinations handled the same scene.
-
-#### View Scene Text Inline
-Parameters like `probe_text`, `choices_text`, `decision_text`, and `justification` are viewable directly in the UI without downloading artifacts.
-
-#### Filter by Configuration
-Use parameters to filter:
-- `adm = "pipeline_baseline"`
-- `llm_backbone = "mistralai/Mistral-7B-Instruct-v0.3"`
-- `alignment_target_id = "MJ5"`
-- `kdma.Moral judgement = 0.75`
-
-#### Search and Compare
-- Click "Runs" to see all scenes as flat list
-- Use search/filter to narrow down
-- Select multiple runs and click "Compare" for side-by-side view
-- Group/pivot by parameters to analyze trends
-
-## Data Structure
-
-### Parent Run (Experiment-Level)
-
-Each experiment directory creates one parent run:
-
-**Parameters:**
-- `adm`: ADM name
-- `llm_backbone`: LLM model name
-- `alignment_target_id`: Alignment target identifier
-- `kdma.*`: Individual KDMA values (e.g., `kdma.merit: 0.5`)
-- `num_scenarios`: Total number of scenes in experiment
-
-**Metrics (Aggregates):**
-- `timing.total_seconds`: Total runtime across all scenes
-- `timing.avg_seconds`: Average time per scene
-- `timing.min_seconds`: Fastest scene
-- `timing.max_seconds`: Slowest scene
-
-**Tags:**
-- `run_type`: "parent"
-- `adm`: ADM name (for filtering)
-- `llm`: LLM model (for filtering)
-- `experiment_path`: Relative path to experiment directory
-- `has_hydra_config`: Whether .hydra/config.yaml exists
-
-**Artifacts:**
-- `input_output.json`: All scene inputs/outputs
-- `timing.json`: All timing data
-- `scores.json`: All scores (if available)
-- `.hydra/config.yaml`: Full Hydra configuration
-
-### Child Run (Scene-Level)
-
-Each scene in an experiment creates one child run:
-
-**Parameters:**
-- All parent parameters, plus:
-- `scene_id`: Scene identifier (e.g., "June2025-SS-eval")
-- `scene_index`: Index in input_output.json
-
-**Metrics (Scene-Specific):**
-- `scene.timing_seconds`: Time for this scene
-- `scene.score.*`: Per-scene scores (if available)
-
-**Tags:**
-- `scene_id`: Scene identifier (for filtering)
-- `scene_index`: Index in experiment
-- `mlflow.parentRunId`: Link to parent run
-- All parent tags
-
-**Artifacts:**
-- `scene_{index}/scene_data.json`: Individual scene input/output
-
-### Aim Run (Scene-Level, Flat Structure)
-
-Each scene creates one top-level Aim run (no parent/child hierarchy):
-
-**Run Name:**
-- Format: `{scene_id}_idx{scene_index}` (e.g., "June2025-MF1-eval_idx0")
-
-**Experiment Grouping:**
-- `experiment`: Relative path to experiment directory (e.g., "baseline-eval")
+Each experiment directory creates one MLflow run:
 
 **Parameters:**
 - `adm`: ADM name
 - `llm_backbone`: LLM model name (if applicable)
 - `alignment_target_id`: Alignment target identifier
-- `kdma.*`: Individual KDMA values (e.g., `kdma.merit: 0.5`)
+- `kdma.*`: Individual KDMA values (e.g., `kdma.Moral judgement: 0.75`)
 - `run_variant`: Experiment variant identifier
-- `scenario_id`: Scene scenario identifier
-- `scene_id`: Scene identifier (same as scenario_id)
-- `scene_index`: Index within experiment
-- `experiment_path`: Relative path for grouping
-
-**Text Parameters (Inline Viewing):**
-- `probe_text`: Scene description/state
-- `choices_text`: Available action choices (formatted list)
-- `decision_text`: ADM's chosen action
-- `justification`: Decision reasoning/explanation
+- `num_scenarios`: Total number of scenes
+- `first_scenario_id`: First scenario identifier
 
 **Metrics:**
+- `timing.total_seconds`: Total runtime across all scenes
+- `timing.avg_seconds`: Average time per scene
+- `timing.min_seconds`: Fastest scene
+- `timing.max_seconds`: Slowest scene
+- `score.*`: Score metrics (if available)
+
+**Tags:**
+- `adm`: ADM name (for filtering)
+- `llm`: LLM model (for filtering)
+- `alignment_target_id`: Alignment target (for filtering)
+- `experiment_path`: Relative path to experiment directory
+- `experiment_timestamp`: Directory modification timestamp
+- `has_hydra_config`: Whether .hydra/config.yaml exists
+
+**Artifacts:**
+- `input_output.json`: All scene inputs/outputs
+- `timing.json`: Timing data
+- `scores.json`: Scores (if available)
+- `.hydra/config.yaml`: Hydra configuration (if available)
+
+### MLflow Traces (Scene-Level)
+
+Each scene in an experiment creates one MLflow trace linked to the parent run:
+
+**Trace Name:** Scene ID (e.g., `June2025-SS-eval`)
+
+**Inputs:**
+- `scenario_id`: Scenario identifier
+- `state`: Scene state text
+- `scene_id`: Scene identifier
+- `unstructured`: Scene description
+- `characters`: Character information
+- `choices`: Available action choices with KDMA associations
+
+**Outputs:**
+- `choice_index`: Index of chosen action
+- `action`: Chosen action details (action_id, action_type, unstructured, justification)
+
+**Attributes:**
+- `scene_index`: Index in input_output.json
+- `scenario_id`: Scenario identifier
+- `adm`: ADM name
+- `alignment_target_id`: Alignment target
 - `timing_seconds`: Scene execution time
-- `score.*`: Per-scene scores (if available)
+- `true_kdma_values`: Ground truth KDMA values
+- `predicted_kdma_values`: ADM predicted KDMA values
+- `choice_index`: Chosen action index
+- `chosen_action`: Text of chosen action
 
-**Key Differences from MLflow:**
-- **Flat structure**: All scenes are top-level runs (no parent runs)
-- **Text inline**: Scene text viewable as parameters, not artifacts
-- **Grouping**: Use `experiment_path` parameter to group scenes by experiment
-- **No aggregates**: No experiment-level summary metrics (can compute in UI)
-- **Performance**: Optimized for 10k+ runs with fast filtering/grouping
+**Tags:**
+- `mlflow.runId`: Link to parent run
+- `scene_id`: Scene identifier (for filtering)
 
-## List Experiment Runs (Legacy)
+## MLflow UI Tips
 
-To list all experiment runs in a directory without MLflow:
+### Compare ADM Configurations
+1. Go to "Runs" tab in your experiment
+2. Filter by alignment target or scenario
+3. Select runs to compare
+4. Click "Compare" for side-by-side metrics
 
-```bash
-uv run list-runs <experiment_directory>
+### Explore Scene Details
+1. Go to "Traces" tab
+2. Filter by `scene_id` to find specific scenes
+3. Click a trace to see full input/output text, choices, and decision
 
-# Example
-uv run list-runs /home/paulhax/src/itm/align-browser/experiment-data/test-experiments
-```
+### Filter Runs
+Use the search bar with MLflow filter syntax:
+- `params.adm = 'pipeline_baseline'`
+- `params.alignment_target_id = 'MJ5'`
+- `metrics.timing.avg_seconds < 30`
+- `tags.llm = 'mistralai/Mistral-7B-Instruct-v0.3'`
 
-This displays a table with:
-- Run Path: The experiment run identifier
-- ADM Name: The ADM configuration used
-- Alignment: The alignment configuration
-- Scenarios: Number of scenarios in the run
+### Group and Aggregate
+Use "Group by" to organize runs by parameter values for pattern analysis.

@@ -50,6 +50,8 @@ coverage.xml
 
 # MLflow
 mlruns/
+mlflow.db
+data/mlflow/
 
 # IDEs
 .idea/
