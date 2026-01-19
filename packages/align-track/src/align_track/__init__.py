@@ -4,6 +4,15 @@ from importlib.metadata import version
 
 __version__ = version("align-track")
 
-from .list_runs import main as list_runs_main
+from .ingest import ingest_experiments_directory, IngestSummary
+from .mlflow_client import setup_mlflow_tracking, experiment_exists
+from .cli import cli
 
-__all__ = ["list_runs_main", "__version__"]
+__all__ = [
+    "ingest_experiments_directory",
+    "IngestSummary",
+    "setup_mlflow_tracking",
+    "experiment_exists",
+    "cli",
+    "__version__",
+]

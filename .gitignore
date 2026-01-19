@@ -48,6 +48,11 @@ coverage.xml
 .hypothesis/
 .pytest_cache/
 
+# MLflow
+mlruns/
+mlflow.db
+data/mlflow/
+
 # IDEs
 .idea/
 .vscode/
