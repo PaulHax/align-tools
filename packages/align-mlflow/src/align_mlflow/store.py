@@ -14,12 +14,14 @@ from .traces import (
     RUN_KEY_TAG,
     SCORE_ASSESSMENT,
     SESSION_METADATA_KEY,
+    SOURCE_RUN_METADATA_KEY,
     SessionScore,
     StepTrace,
 )
 
 _PAGE_SIZE = 500
 _COMPLETE_TAG = "align.import_complete"
+_COMPLETE_VALUE = "source-record-v1"
 
 
 def connect(tracking_uri: str, experiment_name: str) -> str:
@@ -56,14 +58,14 @@ def logged_steps(experiment_id: str, run_key: str) -> Dict[int, Trace]:
     incomplete = [
         trace.info.trace_id
         for trace in traces
-        if trace.info.tags.get(_COMPLETE_TAG) != "true"
+        if trace.info.tags.get(_COMPLETE_TAG) != _COMPLETE_VALUE
     ]
     if incomplete:
         _delete_incomplete(experiment_id, incomplete)
     return {
         int(trace.info.tags[RECORD_INDEX_TAG]): trace
         for trace in traces
-        if trace.info.tags.get(_COMPLETE_TAG) == "true"
+        if trace.info.tags.get(_COMPLETE_TAG) == _COMPLETE_VALUE
     }
 
 
@@ -81,14 +83,18 @@ def has_session_score(trace: Trace) -> bool:
     return any(a.name == SCORE_ASSESSMENT for a in trace.info.assessments or [])
 
 
-def log_step(experiment_id: str, step: StepTrace) -> str:
+def log_step(experiment_id: str, source_run_id: str, step: StepTrace) -> str:
+    metadata = {
+        SESSION_METADATA_KEY: step.session_id,
+        SOURCE_RUN_METADATA_KEY: source_run_id,
+    }
     root = mlflow.start_span_no_context(
         name=step.root.name,
         span_type=step.root.span_type,
         inputs=step.root.inputs,
         attributes=dict(step.root.attributes),
         tags=dict(step.tags),
-        metadata={SESSION_METADATA_KEY: step.session_id},
+        metadata=metadata,
         experiment_id=experiment_id,
         start_time_ns=step.root.start_ns,
     )
@@ -121,7 +127,10 @@ def log_step(experiment_id: str, step: StepTrace) -> str:
         or any(
             persisted[0].info.tags.get(key) != value for key, value in step.tags.items()
         )
-        or persisted[0].info.trace_metadata.get(SESSION_METADATA_KEY) != step.session_id
+        or any(
+            persisted[0].info.trace_metadata.get(key) != value
+            for key, value in metadata.items()
+        )
     ):
         unconfirmed = client.search_traces(**query, include_spans=False)
         if unconfirmed and (
@@ -132,9 +141,9 @@ def log_step(experiment_id: str, step: StepTrace) -> str:
         raise MlflowException(
             f"Trace {root.trace_id} was not fully persisted; retry sync"
         )
-    client.set_trace_tag(root.trace_id, _COMPLETE_TAG, "true")
+    client.set_trace_tag(root.trace_id, _COMPLETE_TAG, _COMPLETE_VALUE)
     confirmed = client.search_traces(**query, include_spans=False)
-    if not confirmed or confirmed[0].info.tags.get(_COMPLETE_TAG) != "true":
+    if not confirmed or confirmed[0].info.tags.get(_COMPLETE_TAG) != _COMPLETE_VALUE:
         raise MlflowException(
             f"Trace {root.trace_id} import was not confirmed; retry sync"
         )

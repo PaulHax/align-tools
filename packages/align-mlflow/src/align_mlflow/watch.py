@@ -12,20 +12,26 @@ from align_utils.open_world import (
     find_open_world_runs,
 )
 
+from .provenance import PROVENANCE_FILES
 from .sync import SyncResult
 
 Signature = Tuple[Tuple[str, int, int], ...]
 
 
 def run_signature(run_dir: Path) -> Signature:
-    """Name, mtime and size of the files whose changes add steps or scores."""
+    """Path, mtime and size of files that supply traces, scores or provenance."""
     paths = [
         run_dir / INPUT_OUTPUT_FILE,
         run_dir / RAW_LOG_FILE,
         run_dir / TIMING_FILE,
+        *(run_dir / path for path in PROVENANCE_FILES),
         *sorted(run_dir.glob(FINAL_STATE_GLOB)),
     ]
-    stats = [(path.name, path.stat()) for path in paths if path.is_file()]
+    stats = [
+        (path.relative_to(run_dir).as_posix(), path.stat())
+        for path in paths
+        if path.is_file()
+    ]
     return tuple((name, stat.st_mtime_ns, stat.st_size) for name, stat in stats)
 
 

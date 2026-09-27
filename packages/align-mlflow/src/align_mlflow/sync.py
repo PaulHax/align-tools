@@ -7,8 +7,10 @@ from pathlib import Path
 from typing import Optional, Tuple
 
 from align_utils.open_world import CONFIG_FILE, find_open_world_runs, load_run
+from mlflow import MlflowClient
 from mlflow.exceptions import MlflowException
 
+from .provenance import preserve_run, read_provenance
 from .store import has_session_score, log_session_score, log_step, logged_steps
 from .traces import run_key, run_label, session_scores, step_traces
 
@@ -42,10 +44,12 @@ def sync_run(experiment_id: str, run_dir: Path) -> SyncResult:
     """
     try:
         run = load_run(run_dir)
+        provenance = read_provenance(run_dir)
     except (OSError, ValueError) as error:
         return SyncResult(run_dir, error=str(error))
 
     try:
+        source_run_id = preserve_run(experiment_id, run, provenance)
         logged = logged_steps(experiment_id, run_key(run))
         trace_ids = {index: trace.info.trace_id for index, trace in logged.items()}
         new_steps = [
@@ -54,7 +58,7 @@ def sync_run(experiment_id: str, run_dir: Path) -> SyncResult:
             if step.record_index not in logged
         ]
         for step in new_steps:
-            trace_ids[step.record_index] = log_step(experiment_id, step)
+            trace_ids[step.record_index] = log_step(experiment_id, source_run_id, step)
 
         scored = {index for index, trace in logged.items() if has_session_score(trace)}
         new_scores = [
@@ -64,7 +68,8 @@ def sync_run(experiment_id: str, run_dir: Path) -> SyncResult:
         ]
         for score in new_scores:
             log_session_score(trace_ids[score.first_record_index], score)
-    except MlflowException as error:
+        MlflowClient().set_terminated(source_run_id)
+    except (MlflowException, OSError, ValueError) as error:
         return SyncResult(run_dir, run_label(run), error=str(error))
 
     return SyncResult(run_dir, run_label(run), len(new_steps), len(new_scores))

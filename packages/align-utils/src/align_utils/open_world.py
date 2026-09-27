@@ -8,11 +8,12 @@ directory can be loaded while the run is still in progress.
 
 import json
 import re
+from copy import deepcopy
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, Optional, Sequence, Tuple, TypeVar
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from .models import Action, ChoiceInfo, ExperimentConfig, TimingData
 
@@ -108,6 +109,15 @@ class OpenWorldRecord(BaseModel):
     output: OpenWorldOutput
     choice_info: ChoiceInfo = Field(default_factory=ChoiceInfo)
     label: Tuple[Dict[str, Any], ...] = ()
+    source: Dict[str, Any] = Field(default_factory=dict, exclude=True, repr=False)
+
+    @model_validator(mode="before")
+    @classmethod
+    def preserve_source(cls, value: Any) -> Any:
+        """Keep the original JSON values independently of validated model fields."""
+        if isinstance(value, dict):
+            return {**value, "source": deepcopy(value)}
+        return value
 
     @property
     def chosen_by_driver(self) -> bool:

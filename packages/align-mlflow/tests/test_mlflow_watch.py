@@ -1,5 +1,7 @@
 """Detecting runs that align-system has written to, and retrying failed syncs."""
 
+from pathlib import Path
+
 import pytest
 from mlflow import MlflowClient
 from mlflow.exceptions import MlflowException
@@ -151,3 +153,40 @@ def test_watch_retries_failed_export_without_a_source_change(
     traces = MlflowClient().search_traces(locations=[experiment_id])
     assert len(traces) == 1
     assert len(traces[0].data.spans) == 4
+
+
+def test_watch_preserves_late_launch_files_without_reimporting_steps(
+    tmp_path, monkeypatch, experiment_id
+):
+    run_dir = write_run(tmp_path / "2026-08-31__09-17-11", episode_records(TARGET)[:1])
+    reported = []
+    polls = iter(range(2))
+    recipe = b"- seed=7\n"
+
+    def next_poll(_seconds):
+        if next(polls) == 0:
+            (run_dir / ".hydra/overrides.yaml").write_bytes(recipe)
+        else:
+            raise KeyboardInterrupt
+
+    monkeypatch.setattr(watch_module.time, "sleep", next_poll)
+    with pytest.raises(KeyboardInterrupt):
+        watch_module.watch(
+            tmp_path,
+            lambda path: sync_run(experiment_id, path),
+            reported.append,
+            interval_s=0,
+        )
+
+    assert [(result.new_steps, result.error) for result in reported] == [
+        (1, None),
+        (0, None),
+    ]
+    client = MlflowClient()
+    runs = client.search_runs([experiment_id])
+    assert len(runs) == 1
+    saved = client.download_artifacts(
+        runs[0].info.run_id, "source/.hydra/overrides.yaml"
+    )
+    assert Path(saved).read_bytes() == recipe
+    assert len(client.search_traces(locations=[experiment_id])) == 1

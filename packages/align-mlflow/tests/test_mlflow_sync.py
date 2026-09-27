@@ -5,6 +5,7 @@ import os
 import shutil
 import subprocess
 import sys
+from pathlib import Path
 
 import pytest
 from mlflow import MlflowClient
@@ -32,6 +33,12 @@ def local_store(tmp_path):
 
 
 def sync(path, tracking_uri):
+    client = MlflowClient(tracking_uri=tracking_uri)
+    if client.get_experiment_by_name(EXPERIMENT) is None:
+        database = Path(tracking_uri.removeprefix("sqlite:///"))
+        client.create_experiment(
+            EXPERIMENT, artifact_location=str(database.parent / "artifacts")
+        )
     return subprocess.run(
         [
             sys.executable,
@@ -102,8 +109,10 @@ def test_sync_logs_each_step_as_a_trace_in_its_episode_session(tmp_path):
     ]
 
     tag_step = traces[1]
-    assert root_span(tag_step).outputs["action"] == "TAG_CHARACTER Patient 1 IMMEDIATE"
-    assert root_span(tag_step).outputs["alignment_info"]["votes"] == {
+    action = root_span(tag_step).outputs["output"]["action"]
+    assert action["action_type"] == "TAG_CHARACTER"
+    assert action["parameters"] == {"category": "IMMEDIATE"}
+    assert root_span(tag_step).outputs["choice_info"]["alignment_info"]["votes"] == {
         "0": 1.0,
         "1": 0.0,
     }
@@ -117,7 +126,11 @@ def test_sync_logs_each_step_as_a_trace_in_its_episode_session(tmp_path):
     driver_step = traces[5]
     assert driver_step.info.tags["chosen_by"] == "driver"
     assert child_names(driver_step) == []
-    assert set(root_span(driver_step).outputs) == {"action", "justification"}
+    assert "choice_info" in root_span(driver_step).outputs
+    assert (
+        root_span(driver_step).attributes["align.choice_info_applies_to_action"]
+        is False
+    )
 
     assert {
         session(trace): [(a.name, a.value) for a in trace.info.assessments]
@@ -142,6 +155,9 @@ def test_sync_again_adds_nothing(tmp_path):
 
     assert f"{RUN}: 0 new steps, 0 new episode scores" in again.stdout
     assert len(logged_traces(tracking_uri)) == 7
+    client = MlflowClient(tracking_uri=tracking_uri)
+    experiment = client.get_experiment_by_name(EXPERIMENT)
+    assert len(client.search_runs([experiment.experiment_id])) == 1
 
 
 def test_sync_follows_a_run_while_it_is_written(tmp_path):
@@ -281,7 +297,7 @@ def test_failed_trace_export_is_reported_and_recovered(
     traces = logged_traces(tracking_uri)
     assert len(traces) == 1
     assert len(traces[0].data.spans) == 4
-    assert traces[0].info.tags["align.import_complete"] == "true"
+    assert traces[0].info.tags["align.import_complete"] == "source-record-v1"
     assert sync_run(experiment_id, run_dir).new_steps == 0
     assert logged_traces(tracking_uri)[0].info.trace_id == traces[0].info.trace_id
 
@@ -317,4 +333,141 @@ def test_recovery_requires_cleanup_and_preserves_confirmed_steps(
     traces = logged_traces(tracking_uri)
     assert len(traces) == 2
     assert traces[0].info.trace_id == first_trace_id
-    assert all(trace.info.tags["align.import_complete"] == "true" for trace in traces)
+    assert all(
+        trace.info.tags["align.import_complete"] == "source-record-v1"
+        for trace in traces
+    )
+
+
+def test_cli_preserves_original_records_and_launch_files(tmp_path):
+    records = episode_records(MERIT_LOW)
+    records[0]["source_timestamp"] = "2026-08-31T09:17:12Z"
+    records[0]["unknown_top_level"] = {"null": None, "unicode": "café"}
+    records[0]["input"]["unknown_input"] = [None, False, 1]
+    records[0]["input"]["full_state"]["elapsed_time"] = "0"
+    records[0]["input"]["full_state"]["events"] = [{"description": "arrival"}]
+    records[0]["output"]["extra_output"] = None
+    records[0]["output"]["action"]["future_action_field"] = {"value": 2}
+    records[0]["choice_info"]["future_choice_field"] = ["a", None]
+    run_dir = write_run(tmp_path / "2026-08-31__09-17-11", records)
+    (run_dir / ".hydra/overrides.yaml").write_bytes(b"- seed=42\r\n")
+    (run_dir / ".hydra/hydra.yaml").write_bytes(b"hydra:\n  job:\n    name: test\n")
+    files = {
+        name: (run_dir / name).read_bytes()
+        for name in (
+            ".hydra/config.yaml",
+            ".hydra/overrides.yaml",
+            ".hydra/hydra.yaml",
+            "meta.json",
+        )
+    }
+    tracking_uri = f"sqlite:///{tmp_path}/mlflow.db"
+
+    result = sync(run_dir, tracking_uri)
+
+    assert result.returncode == 0, result.stderr
+    traces = logged_traces(tracking_uri)
+    assert [
+        {"input": root_span(trace).inputs, **root_span(trace).outputs}
+        for trace in traces
+    ] == records
+    client = MlflowClient(tracking_uri=tracking_uri)
+    experiment = client.get_experiment_by_name(EXPERIMENT)
+    runs = client.search_runs([experiment.experiment_id])
+    assert len(runs) == 1
+    source = runs[0]
+    assert source.info.status == "FINISHED"
+    assert source.data.tags["align.source_version"] == "0.5.11"
+    assert source.data.tags["align.source_path"] == str(run_dir)
+    assert {trace.info.trace_metadata["mlflow.sourceRun"] for trace in traces} == {
+        source.info.run_id
+    }
+    destination = tmp_path / "downloaded"
+    destination.mkdir()
+    for name, content in files.items():
+        saved = client.download_artifacts(
+            source.info.run_id, f"source/{name}", str(destination)
+        )
+        assert Path(saved).read_bytes() == content
+        assert (run_dir / name).read_bytes() == content
+
+
+def test_provenance_upload_resumes_and_copies_share_one_run(
+    tmp_path, monkeypatch, local_store
+):
+    run_dir = write_run(
+        tmp_path / "a/2026-08-31__09-17-11", episode_records(MERIT_LOW)[:1]
+    )
+    tracking_uri, experiment_id = local_store
+    client = MlflowClient()
+    upload = MlflowClient.log_artifact
+
+    def fail_metadata(self, run_id, path, **kwargs):
+        if Path(path).name == "meta.json":
+            raise MlflowException("artifact store unavailable")
+        return upload(self, run_id, path, **kwargs)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(MlflowClient, "log_artifact", fail_metadata)
+        assert "artifact store unavailable" in sync_run(experiment_id, run_dir).error
+    assert logged_traces(tracking_uri) == []
+    assert len(client.search_runs([experiment_id])) == 1
+    assert sync_run(experiment_id, run_dir).error is None
+    trace_id = logged_traces(tracking_uri)[0].info.trace_id
+    copy = tmp_path / "b/2026-08-31__09-17-11"
+    shutil.copytree(run_dir, copy)
+
+    def unexpected_upload(*args, **kwargs):
+        pytest.fail("Unchanged provenance must not be uploaded again")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(MlflowClient, "log_artifact", unexpected_upload)
+        assert sync_run(experiment_id, copy).error is None
+    assert len(client.search_runs([experiment_id])) == 1
+    assert logged_traces(tracking_uri)[0].info.trace_id == trace_id
+
+
+def test_changed_provenance_does_not_overwrite_archived_files(tmp_path, local_store):
+    run_dir = write_run(
+        tmp_path / "2026-08-31__09-17-11", episode_records(MERIT_LOW)[:1]
+    )
+    overrides = run_dir / ".hydra/overrides.yaml"
+    overrides.write_text("- seed=1\n")
+    tracking_uri, experiment_id = local_store
+    assert sync_run(experiment_id, run_dir).error is None
+    trace_id = logged_traces(tracking_uri)[0].info.trace_id
+    overrides.write_text("- seed=2\n")
+
+    result = sync_run(experiment_id, run_dir)
+
+    assert "Source provenance changed: .hydra/overrides.yaml" in result.error
+    assert logged_traces(tracking_uri)[0].info.trace_id == trace_id
+    client = MlflowClient()
+    source = client.search_runs([experiment_id])[0]
+    archived = client.download_artifacts(
+        source.info.run_id, "source/.hydra/overrides.yaml"
+    )
+    assert Path(archived).read_text() == "- seed=1\n"
+
+
+def test_older_trace_format_is_reimported_with_source_records(tmp_path, local_store):
+    records = episode_records(MERIT_LOW)[:1]
+    run_dir = write_run(tmp_path / "2026-08-31__09-17-11", records)
+    tracking_uri, experiment_id = local_store
+    assert sync_run(experiment_id, run_dir).error is None
+    previous = logged_traces(tracking_uri)[0]
+    MlflowClient().set_trace_tag(
+        previous.info.trace_id, "align.import_complete", "true"
+    )
+
+    result = sync_run(experiment_id, run_dir)
+
+    assert result.error is None
+    assert result.new_steps == 1
+    traces = logged_traces(tracking_uri)
+    assert len(traces) == 1
+    assert traces[0].info.trace_id != previous.info.trace_id
+    assert {
+        "input": root_span(traces[0]).inputs,
+        **root_span(traces[0]).outputs,
+    } == records[0]
