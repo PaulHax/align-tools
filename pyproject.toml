@@ -11,11 +11,13 @@ authors = [
 dependencies = [
     "align-utils",
     "align-track",
+    "align-mlflow",
 ]
 
 [tool.uv.sources]
 align-utils = { workspace = true }
 align-track = { workspace = true }
+align-mlflow = { workspace = true }
 
 [tool.uv.workspace]
 members = ["packages/*"]

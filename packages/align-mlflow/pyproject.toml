@@ -1,0 +1,47 @@
+[project]
+name = "align-mlflow"
+dynamic = ["version"]
+description = "Load align-system open-world runs into MLflow as step traces grouped into episode sessions"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "Apache-2.0"}
+authors = [
+    {name = "PaulHax"},
+]
+keywords = ["align", "mlflow", "tracing", "open-world"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
+
+dependencies = [
+    "align-utils",
+    "click>=8.0",
+    "mlflow>=3.16",
+]
+
+[project.urls]
+Homepage = "https://github.com/paulhax/align-tools"
+Repository = "https://github.com/paulhax/align-tools"
+Issues = "https://github.com/paulhax/align-tools/issues"
+
+[project.scripts]
+align-mlflow = "align_mlflow.cli:cli"
+
+[build-system]
+requires = ["hatchling", "uv-dynamic-versioning"]
+build-backend = "hatchling.build"
+
+[tool.hatch.version]
+source = "uv-dynamic-versioning"
+
+[tool.uv-dynamic-versioning]
+fallback-version = "0.0.0"
+
+[tool.uv.sources]
+align-utils = { workspace = true }

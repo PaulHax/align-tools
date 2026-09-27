@@ -12,12 +12,19 @@ The `align-tools` repository is organized as a monorepo using `uv`'s workspace f
 ### [align-utils](packages/align-utils/README.md)
 Utilities for parsing and processing align-system experiment data.
 - Pydantic models for align-system input_output.json data structures
+- Open-world run loading: ordered steps split into episodes with TA3 outcomes
 - YAML/JSON parsing utilities
 - Data export utilities (CSV)
 
 ### [align-track](packages/align-track/README.md)
 Experiment tracking and organization utilities for align-system.
 - Experiment tracking capabilities
+
+### [align-mlflow](packages/align-mlflow/README.md)
+Load align-system open-world runs into MLflow.
+- One trace per step, one session per episode
+- Start with `sync` to import a completed run or sweep, then inspect it in the MLflow UI
+- Optional `watch` for inspecting results during longer sweeps
 
 ## Quick Start
 
