@@ -78,6 +78,7 @@ for run_dir in find_open_world_runs(Path("outputs")):
 ```
 
 - Every record is kept in order; repeated actions are not collapsed.
+- `record.source` retains the complete original JSON values, including unknown fields and explicit nulls, separately from the validated fields. It is excluded from model dumps.
 - A new episode starts when the scenario or target changes or when TA3's clock (`elapsed_time`) restarts, which separates the repeated sessions of unaligned ADMs that record no target.
 - Episode outcomes are the completion lines in `raw_align_system.log`, paired with episodes in order. `EpisodeOutcome.alignment_target_id` is the target TA3 scored against, known even for unaligned runs.
 - `record.chosen_by_driver` marks actions the driver took itself; their `choice_info` may belong to the previous step.

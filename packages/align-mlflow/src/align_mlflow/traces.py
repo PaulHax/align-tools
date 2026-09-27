@@ -20,6 +20,7 @@ from align_utils.open_world import Episode, OpenWorldRecord, OpenWorldRun
 from mlflow.entities import SpanType
 
 SESSION_METADATA_KEY = "mlflow.trace.session"
+SOURCE_RUN_METADATA_KEY = "mlflow.sourceRun"
 RUN_KEY_TAG = "align.run_key"
 RECORD_INDEX_TAG = "align.record_index"
 SCORE_ASSESSMENT = "ta3_session_alignment_score"
@@ -86,14 +87,6 @@ def session_id(episode: Episode, label: str, key: str) -> str:
     return _URL_UNSAFE.sub("-", raw)
 
 
-def action_summary(record: OpenWorldRecord) -> str:
-    action = record.output.action
-    parameters = [str(value) for value in (action.parameters or {}).values()]
-    return " ".join(
-        [action.action_type, *filter(None, [action.character_id]), *parameters]
-    )
-
-
 def component_spans(record: OpenWorldRecord, start_ns: int) -> Tuple[SpanSpec, ...]:
     """Child spans for the pipeline components that chose this action.
 
@@ -155,28 +148,11 @@ def _root_span(record: OpenWorldRecord, step: int, start_ns: int) -> SpanSpec:
         span_type=SpanType.AGENT,
         start_ns=start_ns,
         end_ns=start_ns + step_duration_ns(record),
-        inputs={
-            "scene_id": record.input.full_state.meta_info.scene_id,
-            "state": record.input.state,
-            "characters": [
-                character.model_dump(exclude_none=True)
-                for character in record.input.full_state.characters
-            ],
-            "choices": [choice.unstructured for choice in record.input.choices],
+        inputs=record.source["input"],
+        outputs={key: value for key, value in record.source.items() if key != "input"},
+        attributes={
+            "align.choice_info_applies_to_action": not record.chosen_by_driver,
         },
-        outputs=_step_outputs(record),
-    )
-
-
-def _step_outputs(record: OpenWorldRecord) -> Dict[str, Any]:
-    outputs: Dict[str, Any] = {
-        "action": action_summary(record),
-        "justification": record.output.action.justification,
-    }
-    if record.chosen_by_driver:
-        return outputs
-    return outputs | record.choice_info.model_dump(
-        exclude={"per_step_timing_stats"}, exclude_none=True
     )
 
 

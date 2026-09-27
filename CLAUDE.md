@@ -91,7 +91,7 @@ This is a Python monorepo using `uv` workspaces containing utility packages for 
 
 - **align-mlflow**: Loads open-world runs into MLflow (one trace per step, one session per episode)
   - Depends on align-utils and mlflow
-  - `traces.py` is pure mapping; `store.py` holds the MLflow side effects; `sync.py` and `watch.py` drive them; `cli.py` exposes `align-mlflow sync|watch`
+  - `traces.py` is pure mapping; `store.py` writes traces and scores; `provenance.py` preserves run configuration artifacts; `sync.py` and `watch.py` drive them; `cli.py` exposes `align-mlflow sync|watch`
 
 The packages are published independently to PyPI with semantic versioning handled by automated GitHub Actions workflows. Commit messages follow Angular convention (feat:, fix:, etc.) to trigger appropriate version bumps.
 
