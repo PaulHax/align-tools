@@ -184,6 +184,24 @@ class InputData(BaseModel):
     choices: Optional[List[Dict[str, Any]]] = None
 
 
+class AlignmentInfo(BaseModel):
+    """How an alignment component turned predicted KDMA values into a choice."""
+
+    model_config = ConfigDict(extra="allow")
+
+    source: Optional[str] = None
+    per_kdma: Dict[str, Any] = Field(default_factory=dict)
+    votes: Dict[str, float] = Field(default_factory=dict)
+
+
+class PipelineStepTiming(BaseModel):
+    """Wall time of one pipeline ADM component while choosing an action."""
+
+    step: str
+    step_num: int
+    elapsed_s: float
+
+
 class ChoiceInfo(BaseModel):
     """ADM execution metadata from align-system choice_info dict.
 
@@ -197,6 +215,8 @@ class ChoiceInfo(BaseModel):
     true_kdma_values: Optional[Dict[str, Dict[str, float]]] = None
     true_relevance: Optional[Dict[str, float]] = None
     icl_example_responses: Optional[Dict[str, Any]] = None
+    alignment_info: Optional[AlignmentInfo] = None
+    per_step_timing_stats: Optional[List[PipelineStepTiming]] = None
 
 
 class Action(BaseModel):
@@ -209,6 +229,7 @@ class Action(BaseModel):
     unstructured: str
     justification: Optional[str] = None
     character_id: Optional[str] = None
+    parameters: Optional[Dict[str, Any]] = None
     intent_action: Optional[bool] = None
     kdma_association: Optional[Dict[str, float]] = None
 

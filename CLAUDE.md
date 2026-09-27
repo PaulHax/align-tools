@@ -80,6 +80,7 @@ This is a Python monorepo using `uv` workspaces containing utility packages for 
 - **align-utils**: Core utilities for parsing align-system data
 
   - Pydantic models for input_output.json structures
+  - `open_world.py`: open-world run loading (ordered records, episodes, TA3 outcomes from `raw_align_system.log`)
   - YAML/JSON parsing utilities
   - CSV export functionality
   - KDMA (Key Decision Making Attributes) parsing
@@ -87,6 +88,10 @@ This is a Python monorepo using `uv` workspaces containing utility packages for 
 - **align-track**: Experiment tracking and organization utilities
   - Depends on align-utils
   - Provides experiment tracking capabilities
+
+- **align-mlflow**: Loads open-world runs into MLflow (one trace per step, one session per episode)
+  - Depends on align-utils and mlflow
+  - `traces.py` is pure mapping; `store.py` holds the MLflow side effects; `sync.py` and `watch.py` drive them; `cli.py` exposes `align-mlflow sync|watch`
 
 The packages are published independently to PyPI with semantic versioning handled by automated GitHub Actions workflows. Commit messages follow Angular convention (feat:, fix:, etc.) to trigger appropriate version bumps.
 
