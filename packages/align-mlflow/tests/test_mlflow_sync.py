@@ -92,6 +92,7 @@ def test_sync_logs_each_step_as_a_trace_in_its_episode_session(tmp_path):
     assert result.returncode == 0, result.stderr
     assert f"{RUN}: 14 new steps, 2 new episode scores" in result.stdout
     traces = logged_traces(tracking_uri)
+    assert {trace.info.tags["align.source_version"] for trace in traces} == {"0.5.11"}
     key = traces[0].info.tags["align.run_key"]
     first_session = f"{SCENARIO} | {MERIT_LOW} | {RUN} | episode 1 | {key}"
     second_session = f"{SCENARIO} | {MERIT_HIGH} | {RUN} | episode 2 | {key}"
@@ -158,6 +159,33 @@ def test_sync_again_adds_nothing(tmp_path):
     client = MlflowClient(tracking_uri=tracking_uri)
     experiment = client.get_experiment_by_name(EXPERIMENT)
     assert len(client.search_runs([experiment.experiment_id])) == 1
+
+
+def test_sync_enriches_existing_traces_without_replacing_them(tmp_path, local_store):
+    run_dir = write_run(
+        tmp_path / "2026-08-31__09-17-11",
+        episode_records(MERIT_LOW)[:1],
+        [completion_line(MERIT_LOW, 0.83)],
+    )
+    tracking_uri, experiment_id = local_store
+    assert sync_run(experiment_id, run_dir).error is None
+    original = logged_traces(tracking_uri)[0]
+    client = MlflowClient(tracking_uri=tracking_uri)
+    client.delete_trace_tag(original.info.trace_id, "align.source_version")
+    client.set_trace_tag(original.info.trace_id, "review_note", "keep this")
+
+    for _ in range(2):
+        result = sync_run(experiment_id, run_dir)
+        assert result.error is None
+        assert (result.new_steps, result.new_scores) == (0, 0)
+        traces = logged_traces(tracking_uri)
+        assert len(traces) == 1
+        trace = traces[0]
+        assert trace.info.trace_id == original.info.trace_id
+        assert trace.info.tags["align.source_version"] == "0.5.11"
+        assert trace.info.tags["review_note"] == "keep this"
+        assert trace.data.to_dict() == original.data.to_dict()
+        assert trace.info.assessments == original.info.assessments
 
 
 def test_sync_follows_a_run_while_it_is_written(tmp_path):

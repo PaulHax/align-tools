@@ -1,7 +1,7 @@
 """MLflow side effects: find what is already logged, log steps and scores."""
 
 import os
-from typing import Dict, Iterator, List, Optional
+from typing import Dict, Iterable, Iterator, List, Optional
 
 import mlflow
 from align_utils.open_world import RAW_LOG_FILE
@@ -81,6 +81,16 @@ def _delete_incomplete(experiment_id: str, trace_ids: List[str]) -> None:
 
 def has_session_score(trace: Trace) -> bool:
     return any(a.name == SCORE_ASSESSMENT for a in trace.info.assessments or [])
+
+
+def sync_source_version(traces: Iterable[Trace], version: Optional[str]) -> None:
+    """Expose recorded producer provenance on existing traces for filtering."""
+    if not version:
+        return
+    client = MlflowClient()
+    for trace in traces:
+        if trace.info.tags.get("align.source_version") != version:
+            client.set_trace_tag(trace.info.trace_id, "align.source_version", version)
 
 
 def log_step(experiment_id: str, source_run_id: str, step: StepTrace) -> str:
