@@ -59,6 +59,35 @@ To install the optional comparison views:
 
 The view recipe requires MLflow 3.16.1; see [saved views](REFERENCE.md#saved-views).
 
+## Share a new store with a team
+
+On the server, check out the same repository revision and run `uv sync --frozen --dev` to use the committed dependency versions. Choose a fresh database outside the checkout, then start MLflow with HTTP artifact serving:
+
+```bash
+export MLFLOW_TRACKING_URI=sqlite:////absolute/path/to/mlflow-store/mlflow.db
+uv run --no-sync mlflow server \
+  --backend-store-uri "$MLFLOW_TRACKING_URI" \
+  --artifacts-destination "$(uv run --no-sync python -m align_mlflow.local_store)" \
+  --default-artifact-root mlflow-artifacts:/ \
+  --serve-artifacts --workers 1 \
+  --host 0.0.0.0 --port 5000 \
+  --allowed-hosts 'mlflow.example.internal:5000,localhost:5000'
+```
+
+Replace the example hostname with the address teammates will use. Provide access through the team's private network or authenticated gateway. The host allowlist validates hostnames; it does not authenticate users.
+
+In another terminal, on this server or an importing computer with the same checkout and dependencies:
+
+```bash
+export MLFLOW_TRACKING_URI=http://mlflow.example.internal:5000
+./packages/align-mlflow/scripts/ingest.sh /path/to/open-world-runs
+./packages/align-mlflow/scripts/views.sh "$MLFLOW_TRACKING_URI"
+```
+
+Teammates open that HTTP address in a browser. The server owns the database and artifact files; clients do not need a shared filesystem. New imports include readable episode cards, and the last command installs the optional comparison tables.
+
+Create experiments through the HTTP connection for this setup. Experiments previously created by direct SQLite ingestion keep their file artifact locations; changing server flags does not migrate them. Keep one importer active at a time, and use your server's process manager to keep MLflow running between logins.
+
 ## Deployment and maintenance
 
 The local server script uses SQLite and direct artifact access (`--no-serve-artifacts`). For a server that is already running, clients only need `MLFLOW_TRACKING_URI=http://server:5000`; its administrator controls storage.

@@ -110,10 +110,12 @@ def test_sync_logs_each_step_as_a_trace_in_its_episode_session(tmp_path):
     ]
 
     tag_step = traces[1]
-    action = root_span(tag_step).outputs["output"]["action"]
+    action = root_span(tag_step).outputs["source"]["output"]["action"]
     assert action["action_type"] == "TAG_CHARACTER"
     assert action["parameters"] == {"category": "IMMEDIATE"}
-    assert root_span(tag_step).outputs["choice_info"]["alignment_info"]["votes"] == {
+    assert root_span(tag_step).outputs["source"]["choice_info"]["alignment_info"][
+        "votes"
+    ] == {
         "0": 1.0,
         "1": 0.0,
     }
@@ -127,7 +129,7 @@ def test_sync_logs_each_step_as_a_trace_in_its_episode_session(tmp_path):
     driver_step = traces[5]
     assert driver_step.info.tags["chosen_by"] == "driver"
     assert child_names(driver_step) == []
-    assert "choice_info" in root_span(driver_step).outputs
+    assert "choice_info" in root_span(driver_step).outputs["source"]
     assert (
         root_span(driver_step).attributes["align.choice_info_applies_to_action"]
         is False
@@ -159,6 +161,50 @@ def test_sync_again_adds_nothing(tmp_path):
     client = MlflowClient(tracking_uri=tracking_uri)
     experiment = client.get_experiment_by_name(EXPERIMENT)
     assert len(client.search_runs([experiment.experiment_id])) == 1
+
+
+def test_cli_creates_readable_session_cards_without_losing_source(tmp_path):
+    records = episode_records(MERIT_LOW)
+    records[3]["input"]["state"] = "Two casualties await evacuation."
+    records[3]["output"]["action"]["unstructured"] = (
+        "Move to Patient 2 to check vitals."
+    )
+    records[3]["output"]["action"]["justification"] = "Patient 2 needs assessment."
+    # A missing description is resolved by action identity, not a stale index.
+    records[4]["output"]["action"]["unstructured"] = ""
+    records[4]["output"]["choice"] = 0
+    records[4]["output"]["action"]["justification"] = None
+    records[6]["input"]["state"] = None
+    records[6]["input"]["full_state"]["unstructured"] = None
+    records[6]["input"]["full_state"]["characters"] = []
+    run_dir = write_run(tmp_path / "2026-08-31__09-17-11", records)
+    tracking_uri = f"sqlite:///{tmp_path}/mlflow.db"
+
+    result = sync(run_dir, tracking_uri)
+
+    assert result.returncode == 0, result.stderr
+    roots = [root_span(trace) for trace in logged_traces(tracking_uri)]
+    assert "Two casualties await evacuation." in roots[3].inputs["input"]
+    assert "Patient context: Patient 2" in roots[3].inputs["input"]
+    assert "Patient 2 is injured" in roots[3].inputs["input"]
+    assert roots[3].outputs["response"] == (
+        "Move to Patient 2 to check vitals.\n\nPatient 2\n\n"
+        "**Justification**\n\nPatient 2 needs assessment."
+    )
+    assert (
+        roots[4]
+        .outputs["response"]
+        .startswith("Place the specified triage tag on a patient")
+    )
+    assert "category: DELAYED" in roots[4].outputs["response"]
+    assert "No justification recorded." in roots[4].outputs["response"]
+    assert "Chosen by the driver" in roots[5].outputs["response"]
+    assert "All patients have been tagged and treated" in roots[5].outputs["response"]
+    assert "Why TAG_CHARACTER" not in roots[5].outputs["response"]
+    assert "No situation text recorded." in roots[6].inputs["input"]
+    assert [
+        {"input": root.inputs["source"], **root.outputs["source"]} for root in roots
+    ] == records
 
 
 def test_sync_enriches_existing_traces_without_replacing_them(tmp_path, local_store):
@@ -372,6 +418,8 @@ def test_cli_preserves_original_records_and_launch_files(tmp_path):
     records[0]["source_timestamp"] = "2026-08-31T09:17:12Z"
     records[0]["unknown_top_level"] = {"null": None, "unicode": "café"}
     records[0]["input"]["unknown_input"] = [None, False, 1]
+    records[0]["input"]["input"] = "An original field, not the display summary"
+    records[0]["response"] = {"source": "An original response field"}
     records[0]["input"]["full_state"]["elapsed_time"] = "0"
     records[0]["input"]["full_state"]["events"] = [{"description": "arrival"}]
     records[0]["output"]["extra_output"] = None
@@ -396,7 +444,10 @@ def test_cli_preserves_original_records_and_launch_files(tmp_path):
     assert result.returncode == 0, result.stderr
     traces = logged_traces(tracking_uri)
     assert [
-        {"input": root_span(trace).inputs, **root_span(trace).outputs}
+        {
+            "input": root_span(trace).inputs["source"],
+            **root_span(trace).outputs["source"],
+        }
         for trace in traces
     ] == records
     client = MlflowClient(tracking_uri=tracking_uri)
@@ -496,6 +547,6 @@ def test_older_trace_format_is_reimported_with_source_records(tmp_path, local_st
     assert len(traces) == 1
     assert traces[0].info.trace_id != previous.info.trace_id
     assert {
-        "input": root_span(traces[0]).inputs,
-        **root_span(traces[0]).outputs,
+        "input": root_span(traces[0]).inputs["source"],
+        **root_span(traces[0]).outputs["source"],
     } == records[0]

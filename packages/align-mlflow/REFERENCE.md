@@ -13,21 +13,32 @@ uv run python packages/align-mlflow/examples/configure_views.py \
 
 Supply the destination tracking URI, UI URL, and optional `--experiment`. The script updates matching named views and prints their links. It uses MLflow's internal saved-view format, checks the server version, and runs separately from ingestion. Use the manual recipe for other versions.
 
-Standard and assessment columns can be reordered; custom tag columns only support show/hide. Grouped session headers omit custom tags. Column widths are browser preferences. Saved table views do not customize the original JSON shown in episode turn cards.
+Standard and assessment columns can be reordered; custom tag columns only support show/hide. Grouped session headers omit custom tags. Column widths are browser preferences. Saved table views are independent of the episode turn cards.
 
 `adm` names the driving implementation; `align.source_version` is the producer's align-system version, not a separate ADM release. Repeating `sync` adds the version to confirmed traces while retaining their IDs, payloads, and assessments. Target IDs are preserved as recorded; predicted KDMAs are not target settings. Unaligned ADMs can have no input target even when completion feedback names a scored target.
+
+## Episode cards
+
+New imports include readable cards automatically, using MLflow's standard input/output rendering. No saved view, browser settings, or frontend patch is required. This presentation is verified with MLflow 3.16.1.
+
+- **Input:** scene, elapsed simulation time, the chosen patient's recorded context when available, and the situation text.
+- **Output:** the chosen action's unstructured text, patient and parameters, followed by its recorded justification. Driver-chosen actions are labeled explicitly. Missing justification is reported as missing.
+
+Long text expands with **See more**. **Show 1 more** reveals the original `source` object, also available under **View full trace**. Summaries use recorded text, without generating new explanations. If the action description is empty, the importer uses the matching choice's text, then the action type as a fallback.
+
+Already confirmed traces retain their existing layout and annotations. To render an existing dataset with these cards, import into a fresh database or a new experiment using `MLFLOW_EXPERIMENT_NAME`. Repeating an import in that destination remains deduplicated.
 
 ## What is logged
 
 | Where | Contents |
 | --- | --- |
 | Trace name | `<step> <action type> <character>`, for example `05 TAG_CHARACTER Patient 2` |
-| Inputs | The original record's complete `input` object, including full state and choice objects |
-| Outputs | Every other field of the original record, including `output`, `choice_info`, `label`, and any unknown fields |
+| Inputs | `input`: the readable card; `source`: the original record's complete `input` object |
+| Outputs | `response`: the readable action and justification; `source`: every other original field, including `output`, `choice_info`, `label`, and unknown fields |
 | Tags | `run`, `episode`, `step`, `scenario_id`, `alignment_target_id`, `scene_id`, `action_type`, `character_id`, `action_detail`, `chosen_by`, `adm`, `llm`, `align.source_version` |
 | Session feedback | `ta3_session_alignment_score`, with the completion line as rationale and the target TA3 scored against in its metadata |
 
-The full source JSON record can be reconstructed as `{"input": root.inputs, **root.outputs}`. Values, nulls, and unknown fields are preserved before model validation can normalize them. Trace names, tags, and component spans are derived navigation aids. JSON whitespace and formatting are not preserved in traces.
+For traces with root attribute `align.card_format=situation-action-v1`, reconstruct the full source JSON as `{"input": root.inputs["source"], **root.outputs["source"]}`. Values, nulls, and unknown fields are preserved before model validation can normalize them. Trace names, summaries, tags, and component spans are derived navigation aids. JSON whitespace and formatting are not preserved in traces.
 
 Steps the driver chose itself (ending a scene once everyone is tagged and treated, or a random fallback after a component failure) are tagged `chosen_by=driver` and have no component spans, because align-system leaves the previous step's `choice_info` on those records. That original metadata is retained, with the root attribute `align.choice_info_applies_to_action=false` to distinguish it from evidence for the current action.
 

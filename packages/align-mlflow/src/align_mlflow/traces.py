@@ -19,6 +19,8 @@ from typing import Any, Dict, Mapping, Optional, Tuple
 from align_utils.open_world import Episode, OpenWorldRecord, OpenWorldRun
 from mlflow.entities import SpanType
 
+from .cards import input_summary, output_summary
+
 SESSION_METADATA_KEY = "mlflow.trace.session"
 SOURCE_RUN_METADATA_KEY = "mlflow.sourceRun"
 RUN_KEY_TAG = "align.run_key"
@@ -148,10 +150,16 @@ def _root_span(record: OpenWorldRecord, step: int, start_ns: int) -> SpanSpec:
         span_type=SpanType.AGENT,
         start_ns=start_ns,
         end_ns=start_ns + step_duration_ns(record),
-        inputs=record.source["input"],
-        outputs={key: value for key, value in record.source.items() if key != "input"},
+        inputs={"input": input_summary(record), "source": record.source["input"]},
+        outputs={
+            "response": output_summary(record),
+            "source": {
+                key: value for key, value in record.source.items() if key != "input"
+            },
+        },
         attributes={
             "align.choice_info_applies_to_action": not record.chosen_by_driver,
+            "align.card_format": "situation-action-v1",
         },
     )
 
