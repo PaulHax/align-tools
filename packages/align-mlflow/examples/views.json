@@ -1,0 +1,35 @@
+[
+  {
+    "id": "open-world-actions",
+    "name": "Open-world actions",
+    "state": {
+      "single": {
+        "startTimeLabel": "ALL",
+        "cols": "trace_name,start_time,session,duration,state,run_name,tags"
+      },
+      "multi": {}
+    }
+  },
+  {
+    "id": "open-world-episodes",
+    "name": "Episodes by ADM and target",
+    "state": {
+      "single": {
+        "startTimeLabel": "ALL",
+        "cols": "session,start_time"
+      },
+      "multi": {},
+      "filters": [
+        {"field": "tag", "operator": "=", "value": "1", "key": "step"}
+      ],
+      "customColumns": {
+        "tag:adm": true,
+        "tag:llm": true,
+        "tag:align.source_version": true,
+        "tag:scenario_id": true,
+        "tag:alignment_target_id": true,
+        "tag:episode": true
+      }
+    }
+  }
+]

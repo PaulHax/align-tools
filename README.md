@@ -21,10 +21,7 @@ Experiment tracking and organization utilities for align-system.
 - Experiment tracking capabilities
 
 ### [align-mlflow](packages/align-mlflow/README.md)
-Load align-system open-world runs into MLflow.
-- One trace per step, one session per episode
-- Start with `sync` to import a completed run or sweep, then inspect it in the MLflow UI
-- Optional `watch` for inspecting results during longer sweeps
+Import open-world runs with `sync` and inspect episodes in MLflow; optional `watch` for growing runs.
 
 ## Quick Start
 

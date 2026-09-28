@@ -173,6 +173,7 @@ def _step_tags(
         "action_detail": " ".join(str(v) for v in (action.parameters or {}).values()),
         "adm": run.config.adm.name if run.config else None,
         "llm": run.config.adm.llm_backbone if run.config else None,
+        "align.source_version": run.version,
     }
     return {
         RUN_KEY_TAG: key,

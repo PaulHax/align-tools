@@ -11,7 +11,13 @@ from mlflow import MlflowClient
 from mlflow.exceptions import MlflowException
 
 from .provenance import preserve_run, read_provenance
-from .store import has_session_score, log_session_score, log_step, logged_steps
+from .store import (
+    has_session_score,
+    log_session_score,
+    log_step,
+    logged_steps,
+    sync_source_version,
+)
 from .traces import run_key, run_label, session_scores, step_traces
 
 # align-system's Hydra run directories are named by start time.
@@ -51,6 +57,7 @@ def sync_run(experiment_id: str, run_dir: Path) -> SyncResult:
     try:
         source_run_id = preserve_run(experiment_id, run, provenance)
         logged = logged_steps(experiment_id, run_key(run))
+        sync_source_version(logged.values(), run.version)
         trace_ids = {index: trace.info.trace_id for index, trace in logged.items()}
         new_steps = [
             step
