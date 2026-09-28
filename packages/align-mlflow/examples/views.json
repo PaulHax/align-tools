@@ -20,7 +20,12 @@
       },
       "multi": {},
       "filters": [
-        {"field": "tag", "operator": "=", "value": "1", "key": "step"}
+        {
+          "field": "tag",
+          "operator": "=",
+          "value": "1",
+          "key": "step"
+        }
       ],
       "customColumns": {
         "tag:adm": true,
@@ -28,6 +33,26 @@
         "tag:align.source_version": true,
         "tag:scenario_id": true,
         "tag:alignment_target_id": true,
+        "tag:episode": true
+      }
+    }
+  },
+  {
+    "id": "open-world-session-comparison",
+    "name": "Session comparison",
+    "state": {
+      "single": {
+        "startTimeLabel": "ALL",
+        "groupBy": "session",
+        "cols": "session,tag:adm,tag:llm,tag:align.source_version,tag:alignment_target_id,tag:scenario_id,tag:episode,start_time"
+      },
+      "multi": {},
+      "customColumns": {
+        "tag:adm": true,
+        "tag:llm": true,
+        "tag:align.source_version": true,
+        "tag:alignment_target_id": true,
+        "tag:scenario_id": true,
         "tag:episode": true
       }
     }

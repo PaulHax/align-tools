@@ -10,6 +10,8 @@ MLflow has three parts:
 
 The server process is separate from its data. Stopping it preserves the database and artifacts. A client can connect directly to a database or through the server's HTTP URL. Our local scripts below configure these parts from `MLFLOW_TRACKING_URI` alone.
 
+On a new computer, clone this repository, check out the revision you want to deploy, and run `uv sync --frozen --dev` from its root. These Bash scripts run on Linux, macOS, or WSL. Use the local setup below for one computer, or [the team setup](#share-a-new-store-with-a-team) for browser access and ingestion from other computers.
+
 ## Configure storage
 
 Keep scripts and guides in this repository and runtime data outside the checkout. For local use, set **one standard MLflow variable** in each terminal:
@@ -41,7 +43,7 @@ Existing experiments retain their recorded artifact locations. Changing `MLFLOW_
 
 ## Start and stop
 
-From the repository root after `uv sync --dev`, with storage configured:
+From the repository root after `uv sync --frozen --dev`, with storage configured:
 
 ```bash
 ./packages/align-mlflow/scripts/server.sh
@@ -57,11 +59,11 @@ To install the optional comparison views:
 ./packages/align-mlflow/scripts/views.sh http://localhost:5000
 ```
 
-The view recipe requires MLflow 3.16.1; see [saved views](REFERENCE.md#saved-views).
+The view recipe requires MLflow 3.16.1; see [saved views](REFERENCE.md#saved-views). For movable tag columns and hideable Input/Output in grouped sessions, install the optional [session UI](SESSION-UI.md) on the server.
 
 ## Share a new store with a team
 
-On the server, check out the same repository revision and run `uv sync --frozen --dev` to use the committed dependency versions. Choose a fresh database outside the checkout, then start MLflow with HTTP artifact serving:
+On the server, check out the same repository revision and run `uv sync --frozen --dev` to use the committed dependency versions. To include the customized session table and action labels, install the [session UI](SESSION-UI.md) in this environment before starting the server. Choose a fresh database outside the checkout, then start MLflow with HTTP artifact serving:
 
 ```bash
 export MLFLOW_TRACKING_URI=sqlite:////absolute/path/to/mlflow-store/mlflow.db

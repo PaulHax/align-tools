@@ -1,33 +1,29 @@
 """Readable session cards derived from the recorded state and chosen action."""
 
 import json
-from typing import Any
+import re
+from typing import Any, Optional
 
 from align_utils.open_world import OpenWorldRecord
 
+from .observations import input_summary
 
-def input_summary(record: OpenWorldRecord) -> str:
-    state = record.input.full_state
-    context = [f"**Elapsed:** {state.elapsed_time:g}s"]
-    if state.meta_info.scene_id:
-        context.insert(0, f"**Scene:** {state.meta_info.scene_id}")
-    sections = [" · ".join(context)]
-    patient = next(
-        (
-            character
-            for character in state.characters
-            if character.id == record.output.action.character_id
-        ),
-        None,
-    )
-    if patient is not None:
-        sections.append(
-            f"**Patient context: {patient.name or patient.id}**\n\n"
-            f"{patient.unstructured or 'No patient description recorded.'}"
-        )
-    narrative = record.input.state or state.unstructured
-    sections.append(f"**Situation**\n\n{narrative or 'No situation text recorded.'}")
-    return "\n\n".join(sections)
+CARD_FORMAT = "situation-action-v1"
+
+
+def card_inputs(
+    record: OpenWorldRecord, previous: Optional[OpenWorldRecord] = None
+) -> dict[str, Any]:
+    return {"input": input_summary(record, previous), "source": record.source["input"]}
+
+
+def card_outputs(record: OpenWorldRecord) -> dict[str, Any]:
+    return {
+        "response": output_summary(record),
+        "source": {
+            key: value for key, value in record.source.items() if key != "input"
+        },
+    }
 
 
 def _display_value(value: Any) -> str:
@@ -44,7 +40,14 @@ def output_summary(record: OpenWorldRecord) -> str:
         ),
         action.action_type.replace("_", " ").capitalize(),
     )
-    details = [action.character_id] if action.character_id else []
+    details = (
+        [action.character_id]
+        if action.character_id
+        and not re.search(
+            rf"(?<!\w){re.escape(action.character_id)}(?!\w)", description
+        )
+        else []
+    )
     details.extend(
         f"{name}: {_display_value(value)}"
         for name, value in (action.parameters or {}).items()

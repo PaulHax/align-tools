@@ -19,7 +19,8 @@ from typing import Any, Dict, Mapping, Optional, Tuple
 from align_utils.open_world import Episode, OpenWorldRecord, OpenWorldRun
 from mlflow.entities import SpanType
 
-from .cards import input_summary, output_summary
+from .cards import CARD_FORMAT, card_inputs, card_outputs
+from .evidence import DecisionLog, component_evidence
 
 SESSION_METADATA_KEY = "mlflow.trace.session"
 SOURCE_RUN_METADATA_KEY = "mlflow.sourceRun"
@@ -89,7 +90,12 @@ def session_id(episode: Episode, label: str, key: str) -> str:
     return _URL_UNSAFE.sub("-", raw)
 
 
-def component_spans(record: OpenWorldRecord, start_ns: int) -> Tuple[SpanSpec, ...]:
+def component_spans(
+    record: OpenWorldRecord,
+    start_ns: int,
+    record_index: int = 0,
+    log: Optional[DecisionLog] = None,
+) -> Tuple[SpanSpec, ...]:
     """Child spans for the pipeline components that chose this action.
 
     Driver-chosen steps get none: their choice_info may describe the previous
@@ -109,18 +115,32 @@ def component_spans(record: OpenWorldRecord, start_ns: int) -> Tuple[SpanSpec, .
             span_type=SpanType.CHAIN,
             start_ns=start,
             end_ns=start + duration,
-            attributes={"component": timing.step},
+            inputs=evidence[0],
+            outputs=evidence[1],
+            attributes={"component": timing.step, **evidence[2]},
         )
         for timing, start, duration in zip(timings, starts, durations)
+        for evidence in [component_evidence(record, timing.step, record_index, log)]
     )
 
 
 def step_duration_ns(record: OpenWorldRecord) -> int:
-    spans = component_spans(record, 0)
-    return spans[-1].end_ns if spans else _MIN_SPAN_NS
+    if record.chosen_by_driver:
+        return _MIN_SPAN_NS
+    timings = record.choice_info.per_step_timing_stats or []
+    return (
+        sum(max(round(t.elapsed_s * 1e9), _MIN_SPAN_NS) for t in timings)
+        or _MIN_SPAN_NS
+    )
 
 
-def step_traces(run: OpenWorldRun, run_start_ns: int) -> Tuple[StepTrace, ...]:
+def step_traces(
+    run: OpenWorldRun,
+    run_start_ns: int,
+    logs: Optional[Tuple[DecisionLog, ...]] = None,
+) -> Tuple[StepTrace, ...]:
+    if logs is not None and len(logs) != len(run.records):
+        raise ValueError("Decision log count does not match source records")
     label, key = run_label(run), run_key(run)
     placed = [
         (episode, step, episode.first_record_index + step - 1, record)
@@ -135,31 +155,38 @@ def step_traces(run: OpenWorldRun, run_start_ns: int) -> Tuple[StepTrace, ...]:
         StepTrace(
             record_index=record_index,
             session_id=session_id(episode, label, key),
-            root=_root_span(record, step, start),
-            children=component_spans(record, start),
+            root=_root_span(
+                record, step, start, episode.records[step - 2] if step > 1 else None
+            ),
+            children=component_spans(
+                record,
+                start,
+                record_index,
+                logs[record_index] if logs is not None else None,
+            ),
             tags=_step_tags(run, label, key, episode, step, record_index, record),
         )
         for (episode, step, record_index, record), start in zip(placed, starts)
     )
 
 
-def _root_span(record: OpenWorldRecord, step: int, start_ns: int) -> SpanSpec:
+def _root_span(
+    record: OpenWorldRecord,
+    step: int,
+    start_ns: int,
+    previous: Optional[OpenWorldRecord] = None,
+) -> SpanSpec:
     action = record.output.action
     return SpanSpec(
         name=f"{step:02d} {action.action_type} {action.character_id or ''}".rstrip(),
         span_type=SpanType.AGENT,
         start_ns=start_ns,
         end_ns=start_ns + step_duration_ns(record),
-        inputs={"input": input_summary(record), "source": record.source["input"]},
-        outputs={
-            "response": output_summary(record),
-            "source": {
-                key: value for key, value in record.source.items() if key != "input"
-            },
-        },
+        inputs=card_inputs(record, previous),
+        outputs=card_outputs(record),
         attributes={
             "align.choice_info_applies_to_action": not record.chosen_by_driver,
-            "align.card_format": "situation-action-v1",
+            "align.card_format": CARD_FORMAT,
         },
     )
 

@@ -13,7 +13,7 @@ uv run python packages/align-mlflow/examples/configure_views.py \
 
 Supply the destination tracking URI, UI URL, and optional `--experiment`. The script updates matching named views and prints their links. It uses MLflow's internal saved-view format, checks the server version, and runs separately from ingestion. Use the manual recipe for other versions.
 
-Standard and assessment columns can be reordered; custom tag columns only support show/hide. Grouped session headers omit custom tags. Column widths are browser preferences. Saved table views are independent of the episode turn cards.
+Stock MLflow 3.16.1 only reorders standard and assessment columns; it forces Input/Output into grouped sessions. The optional [session UI](SESSION-UI.md) makes tag columns reorderable and respects column visibility. Its **Session comparison** view uses real grouped sessions without the `step = 1` filter. Column widths remain browser preferences.
 
 `adm` names the driving implementation; `align.source_version` is the producer's align-system version, not a separate ADM release. Repeating `sync` adds the version to confirmed traces while retaining their IDs, payloads, and assessments. Target IDs are preserved as recorded; predicted KDMAs are not target settings. Unaligned ADMs can have no input target even when completion feedback names a scored target.
 
@@ -21,12 +21,21 @@ Standard and assessment columns can be reordered; custom tag columns only suppor
 
 New imports include readable cards automatically, using MLflow's standard input/output rendering. No saved view, browser settings, or frontend patch is required. This presentation is verified with MLflow 3.16.1.
 
-- **Input:** scene, elapsed simulation time, the chosen patient's recorded context when available, and the situation text.
-- **Output:** the chosen action's unstructured text, patient and parameters, followed by its recorded justification. Driver-chosen actions are labeled explicitly. Missing justification is reported as missing.
+- **Input:** Situation first, then patient observations. The first step shows visible patients; later steps emphasize changes since the preceding input, including descriptions, vitals, tags, proximity, supplies, events, and available actions. Repeated situation text becomes “Unchanged.” Patient selection is independent of the chosen action.
+- **Output:** the chosen action's unstructured text, target ID when absent from that text, parameters, and justification. Driver-chosen actions are labeled explicitly. Missing justification is reported as missing.
 
 Long text expands with **See more**. **Show 1 more** reveals the original `source` object, also available under **View full trace**. Summaries use recorded text, without generating new explanations. If the action description is empty, the importer uses the matching choice's text, then the action type as a fallback.
 
-Already confirmed traces retain their existing layout and annotations. To render an existing dataset with these cards, import into a fresh database or a new experiment using `MLFLOW_EXPERIMENT_NAME`. Repeating an import in that destination remains deduplicated.
+Input comparisons stay within an episode. Missing or ambiguous preceding steps use a full patient snapshot. Removed fields are shown as no longer recorded, without treating lost visibility as a change in the patient's condition. Elapsed-time changes are omitted from summaries. Complete current inputs remain in `source`, including unchanged and unseen records.
+
+Repeating `sync` preserves the layout of already confirmed traces. To apply the current summaries to existing imports, back up the store, stop other importers, and run:
+
+```bash
+uv run align-mlflow refresh-cards --tracking-uri "$MLFLOW_TRACKING_URI" \
+  --experiment "align-system open world"
+```
+
+Use `--dry-run` to count affected cards first. This maintenance command requires a local MLflow **3.16.1 SQLite store** and a `sqlite:///` tracking URI. It updates the stored card payloads in a transaction per page and invalidates MLflow's payload cache. HTTP tracking URIs are not supported. It preserves trace and span IDs, source records, timing, tags, child spans, and assessments, then verifies each page by reading it back. Current cards are skipped, so an interrupted refresh can be resumed. Trace-table preview strings are unchanged; the episode cards and full trace show the refreshed payloads. New imports include readable cards automatically.
 
 ## What is logged
 
@@ -43,6 +52,32 @@ For traces with root attribute `align.card_format=situation-action-v1`, reconstr
 Steps the driver chose itself (ending a scene once everyone is tagged and treated, or a random fallback after a component failure) are tagged `chosen_by=driver` and have no component spans, because align-system leaves the previous step's `choice_info` on those records. That original metadata is retained, with the root attribute `align.choice_info_applies_to_action=false` to distinguish it from evidence for the current action.
 
 Episode boundaries, completion and scores come from `align_utils.open_world`: a new episode starts when the scenario or target changes or when TA3's clock restarts, and completions are read in order from `raw_align_system.log`. Unaligned ADMs such as the baseline record no target, so the target TA3 scored against is taken from that log.
+
+## Component evidence
+
+New imports fill pipeline spans from recorded `choice_info` and attributable sections of `raw_align_system.log`. The trace boundary remains one decision; episodes remain sessions.
+
+| Component | Evidence |
+| --- | --- |
+| World-state tracking | The observation before the decision, explicitly labeled as source context; internal tracker history is not captured |
+| Choice formatting | Recorded available actions, without claiming to reconstruct formatted intermediate choices |
+| Regression, relevance, ICL | Recorded predictions, relevance, or example responses, plus attributable prompts and responses |
+| Alignment | Its source-identified alignment results, recorded prediction context, target ID, and logged selection results |
+| Action selection and parameter completion | Attributable prompts, votes, structured responses, cache status, and the final action as context |
+| Choice-info collection | Every recorded non-timing `choice_info` field, including unknown fields |
+
+Fields named for a component, or objects whose `source` names that component, are also exposed on that span. JSON values come from the final pipeline snapshot; later components may have modified them. Log excerpts retain their filename, line range, and content hash under `align.evidence_sources`. Alignment vote indices are retained in their recorded candidate ordering, not relabeled as action indices.
+
+Log association first checks complete action objects against JSON records in order. A mismatch discards that run's log associations while retaining JSON evidence. Missing logs, logs that lag a growing run, ambiguous component ownership, and cache hits do not cause invented prompts or intermediate outputs. Inspect `align.log_match` and `align.cache_status` for coverage. Excerpts are stored in spans; the full log is not archived.
+
+Confirmed traces retain their payloads when `sync` is repeated. To enrich an existing **MLflow 3.16.1 SQLite store**, back it up, stop other importers, and run:
+
+```bash
+uv run align-mlflow refresh-components /path/to/runs --dry-run
+uv run align-mlflow refresh-components /path/to/runs
+```
+
+The command reads `MLFLOW_TRACKING_URI` and accepts `--experiment` and `--tracking-uri`. It requires the original run directories, verifies them against the stored decision records, and updates component payloads without replacing trace/span IDs, decision cards, timing, tags, or reviews. Updates commit in batches and can be resumed. This maintenance command uses the pinned SQLite schema; HTTP tracking URIs are not supported. Ordinary new imports include the same evidence through MLflow's API.
 
 ## Source configuration and provenance
 
