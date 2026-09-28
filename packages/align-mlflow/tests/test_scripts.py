@@ -49,7 +49,8 @@ def test_scripts_require_explicit_destinations(tmp_path, script, args, message):
     assert list(tmp_path.iterdir()) == []
 
 
-def test_import_server_and_views_share_configured_storage(tmp_path):
+@pytest.mark.parametrize("transport", ["sqlite", "http"])
+def test_import_server_and_views_share_configured_storage(tmp_path, transport):
     target = "ADEPT-June2025-merit-0.4"
     records = episode_records(target)[:1]
     source = write_run(
@@ -65,22 +66,56 @@ def test_import_server_and_views_share_configured_storage(tmp_path):
         "MLFLOW_EXPERIMENT_NAME": "script configuration test",
         "MLFLOW_PORT": "0",
     }
-    for expected in [
-        "1 new steps, 1 new episode scores",
-        "0 new steps, 0 new episode scores",
-    ]:
-        result = subprocess.run(
-            [str(SCRIPTS / "ingest.sh"), "source runs"],
+
+    def import_twice(import_env):
+        for expected in [
+            "1 new steps, 1 new episode scores",
+            "0 new steps, 0 new episode scores",
+        ]:
+            result = subprocess.run(
+                [str(SCRIPTS / "ingest.sh"), "source runs"],
+                cwd=tmp_path,
+                env=import_env,
+                capture_output=True,
+                text=True,
+            )
+            assert result.returncode == 0, result.stderr
+            assert expected in result.stdout
+
+    if transport == "sqlite":
+        import_twice(env)
+        command = [str(SCRIPTS / "server.sh")]
+    else:
+        uv = ["uv", "run", "--project", str(REPOSITORY), "--no-sync"]
+        prepared = subprocess.run(
+            [*uv, "python", "-m", "align_mlflow.local_store"],
             cwd=tmp_path,
             env=env,
             capture_output=True,
             text=True,
+            check=True,
         )
-        assert result.returncode == 0, result.stderr
-        assert expected in result.stdout
+        command = [
+            *uv,
+            "mlflow",
+            "server",
+            "--backend-store-uri",
+            env["MLFLOW_TRACKING_URI"],
+            "--artifacts-destination",
+            prepared.stdout.strip(),
+            "--default-artifact-root",
+            "mlflow-artifacts:/",
+            "--serve-artifacts",
+            "--workers",
+            "1",
+            "--host",
+            "127.0.0.1",
+            "--port",
+            "0",
+        ]
 
     server = subprocess.Popen(
-        [str(SCRIPTS / "server.sh")],
+        command,
         cwd=tmp_path,
         env=env,
         stdout=subprocess.PIPE,
@@ -102,18 +137,34 @@ def test_import_server_and_views_share_configured_storage(tmp_path):
 
         with urlopen(f"{url}/health") as response:
             assert response.read() == b"OK"
+        if transport == "http":
+            import_twice({**env, "MLFLOW_TRACKING_URI": url})
         client = MlflowClient(tracking_uri=url)
         experiment = client.get_experiment_by_name(env["MLFLOW_EXPERIMENT_NAME"])
-        assert experiment.artifact_location == artifacts.as_uri()
+        assert experiment.artifact_location == (
+            artifacts.as_uri()
+            if transport == "sqlite"
+            else f"mlflow-artifacts:/{experiment.experiment_id}"
+        )
         traces = client.search_traces(locations=[experiment.experiment_id])
         assert len(traces) == 1
         root = next(span for span in traces[0].data.spans if span.parent_id is None)
-        assert {"input": root.inputs, **root.outputs} == records[0]
+        assert {"input": root.inputs["source"], **root.outputs["source"]} == records[0]
         runs = client.search_runs([experiment.experiment_id])
         assert len(runs) == 1
+        artifact_directory = (
+            artifacts if transport == "sqlite" else artifacts / experiment.experiment_id
+        )
         for relative in [".hydra/config.yaml", "meta.json"]:
-            copied = next(artifacts.glob(f"*/artifacts/source/{relative}"))
+            copied = next(artifact_directory.glob(f"*/artifacts/source/{relative}"))
             assert copied.read_bytes() == (source / relative).read_bytes()
+            if transport == "http":
+                download = tmp_path / "downloads"
+                download.mkdir(exist_ok=True)
+                downloaded = client.download_artifacts(
+                    runs[0].info.run_id, f"source/{relative}", str(download)
+                )
+                assert Path(downloaded).read_bytes() == (source / relative).read_bytes()
 
         views = subprocess.run(
             [str(SCRIPTS / "views.sh"), url],
