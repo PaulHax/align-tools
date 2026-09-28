@@ -5,6 +5,8 @@ from pathlib import Path
 import click
 
 from .store import connect
+from .refresh_cards import refresh_cards as refresh_card_payloads
+from .refresh_components import refresh_components as refresh_component_payloads
 from .sync import SyncResult, sync_run, sync_tree
 from .watch import watch as watch_runs
 
@@ -66,6 +68,52 @@ def sync(path: Path, tracking_uri: str, experiment: str) -> None:
         click.echo(describe(result))
     if any(result.error is not None for result in results):
         raise SystemExit(1)
+
+
+@cli.command()
+@_tracking_uri_option
+@_experiment_option
+@click.option(
+    "--dry-run", is_flag=True, help="Report older cards without changing them"
+)
+def refresh_cards(tracking_uri: str, experiment: str, dry_run: bool) -> None:
+    """Give previously imported traces readable cards without replacing their IDs.
+
+    Requires a local MLflow 3.16.1 SQLite store. Back up the store first.
+    New imports already use these cards. Repeating this command skips current cards.
+    """
+    try:
+        for updated, current in refresh_card_payloads(
+            tracking_uri, experiment, dry_run
+        ):
+            action = "would refresh" if dry_run else "refreshed"
+            click.echo(f"{updated} cards {action}, {current} already current")
+    except ValueError as error:
+        raise click.ClickException(str(error)) from error
+
+
+@cli.command()
+@_path_argument
+@_tracking_uri_option
+@_experiment_option
+@click.option("--dry-run", is_flag=True, help="Report changes without writing them")
+def refresh_components(
+    path: Path, tracking_uri: str, experiment: str, dry_run: bool
+) -> None:
+    """Enrich existing component spans using source runs at PATH.
+
+    Requires a local MLflow 3.16.1 SQLite store. Back up the store first and stop
+    other importers. Trace IDs, decision cards, timing, and reviews are retained.
+    New imports include component evidence automatically.
+    """
+    try:
+        for source, count, statuses in refresh_component_payloads(
+            tracking_uri, experiment, path, dry_run
+        ):
+            action = "would refresh" if dry_run else "refreshed"
+            click.echo(f"{source}: {count} components {action}; log matches {statuses}")
+    except (ValueError, OSError) as error:
+        raise click.ClickException(str(error)) from error
 
 
 @cli.command()

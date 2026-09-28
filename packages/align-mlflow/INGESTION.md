@@ -1,6 +1,6 @@
 # Ingestion
 
-Run `uv sync --dev` from the repository root, then [configure storage](SERVER.md#configure-storage) in the shell used for ingestion.
+Run `uv sync --frozen --dev` from the repository root, then [configure storage](SERVER.md#configure-storage) in the shell used for ingestion.
 
 ```bash
 ./packages/align-mlflow/scripts/ingest.sh /path/to/runs
@@ -9,7 +9,7 @@ Run `uv sync --dev` from the repository root, then [configure storage](SERVER.md
 
 The source directory is required. Relative paths resolve from your current directory. The importer searches nested folders for recognized open-world runs; unsupported drivers are skipped.
 
-New traces include [readable episode cards](REFERENCE.md#episode-cards) with situation text, the chosen action, and its justification. Original JSON remains available in each trace's `source` fields.
+New traces include [readable episode cards](REFERENCE.md#episode-cards) with situation text, the chosen action, and its justification. Original JSON remains available in each trace's `source` fields. Pipeline spans include [component evidence](REFERENCE.md#component-evidence) from `choice_info` and matched logs.
 
 ## Destination
 

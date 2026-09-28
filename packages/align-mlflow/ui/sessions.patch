@@ -1,0 +1,522 @@
+--- a/mlflow/server/js/src/experiment-tracking/components/experiment-page/components/traces-v4/components/TracesV4PageContent.test.tsx
++++ b/mlflow/server/js/src/experiment-tracking/components/experiment-page/components/traces-v4/components/TracesV4PageContent.test.tsx
+@@ -748,6 +748,41 @@
+     });
+   });
+ 
++  test('grouped sessions hide previews and reorder custom ADM columns through Display', async () => {
++    const user = userEvent.setup({ pointerEventsCheck: PointerEventsCheckLevel.Never });
++    state.pages = {
++      '': {
++        traces: [
++          { ...makeSessionTrace('t1', 'episode-1'), tags: { adm: 'regression', target: 'affiliation-0.2' } },
++          { ...makeSessionTrace('t2', 'episode-1'), tags: { adm: 'regression', target: 'affiliation-0.2' } },
++        ],
++      },
++    };
++    setLocalStorageItem(`${TRACE_COLUMN_ORDER_STORAGE_KEY_PREFIX}.${EXPERIMENT_ID}`, 1, true, [
++      'session',
++      'tag:target',
++      'tag:adm',
++      'input',
++      'output',
++    ]);
++    renderPage({ initialUrl: `${URL}?groupBy=session` });
++    await screen.findByRole('button', { name: 'Expand session episode-1' });
++    await openDisplaySubmenu(user, /^Columns/);
++    await selectSubmenuItem('menuitemcheckbox', 'Input');
++    await selectSubmenuItem('menuitemcheckbox', 'Output');
++    await selectSubmenuItem('menuitemcheckbox', 'adm');
++    await selectSubmenuItem('menuitemcheckbox', 'target');
++    fireEvent.keyDown(screen.getByRole('menuitemcheckbox', { name: 'adm' }), { key: 'ArrowUp', ctrlKey: true });
++    await user.keyboard('{Escape}{Escape}');
++    expect(screen.queryByRole('columnheader', { name: 'Input' })).not.toBeInTheDocument();
++    expect(screen.queryByRole('columnheader', { name: 'Output' })).not.toBeInTheDocument();
++    expect(screen.getByText('regression')).toBeInTheDocument();
++    expect(screen.getByText('affiliation-0.2')).toBeInTheDocument();
++    const adm = screen.getByRole('columnheader', { name: 'adm' });
++    const target = screen.getByRole('columnheader', { name: 'target' });
++    expect(adm.compareDocumentPosition(target) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
++  });
++
+   describe('column reordering', () => {
+     test('renders headers in the persisted column order', async () => {
+       // Seed the per-experiment order store (version 1) with Output moved before Input, then assert
+--- a/mlflow/server/js/src/experiment-tracking/components/experiment-page/components/traces-v4/components/TracesV4PageContent.tsx
++++ b/mlflow/server/js/src/experiment-tracking/components/experiment-page/components/traces-v4/components/TracesV4PageContent.tsx
+@@ -101,12 +101,23 @@
+     columnOrder.reset();
+   }, [columns, assessments, customColumns, columnOrder]);
+ 
+-  // What a view captures: visible standard + assessment ids in display order (from the reorder store),
++  // What a view captures: visible standard, assessment, tag, and metadata ids in display order (from the reorder store),
+   // so a saved view's `cols` carries reordering, not just membership.
+   const effectiveVisibleColumns = useMemo(() => {
+-    const visible = new Set<string>([...columns.visibleColumns, ...assessments.visibleIds]);
++    const visible = new Set<string>([
++      ...columns.visibleColumns,
++      ...assessments.visibleIds,
++      ...customColumns.tags.visibleIds,
++      ...customColumns.metadata.visibleIds,
++    ]);
+     return columnOrder.columnOrder.filter((id) => visible.has(id));
+-  }, [columnOrder.columnOrder, columns.visibleColumns, assessments.visibleIds]);
++  }, [
++    columnOrder.columnOrder,
++    columns.visibleColumns,
++    assessments.visibleIds,
++    customColumns.tags.visibleIds,
++    customColumns.metadata.visibleIds,
++  ]);
+ 
+   // Saved views (dirty model): the hook reads/writes view tags, restores a view's columns + order into
+   // the user's own store on open, and reports whether the live table has diverged (dirty) so the Views
+--- a/mlflow/server/js/src/experiment-tracking/components/experiment-page/components/traces-v4/components/TracesV4Toolbar.tsx
++++ b/mlflow/server/js/src/experiment-tracking/components/experiment-page/components/traces-v4/components/TracesV4Toolbar.tsx
+@@ -15,6 +15,7 @@
+ import { type TracesV4AssessmentColumns } from '../hooks/useTracesV4AssessmentColumns';
+ import { type TracesV4CustomColumns } from '../hooks/useTracesV4CustomColumns';
+ import { type TracesV4Density } from '../hooks/useTracesV4Density';
++import { isCustomTraceColumnId } from '../utils/customColumns';
+ import { isAssessmentColumnId } from '../utils/assessmentColumns';
+ import { TracesV4DateSelector, TracesV4RefreshButton } from './TracesV4DateSelector';
+ import { TracesV4DisplayButton, type TracesV4ColumnGroup } from './TracesV4DisplayButton';
+@@ -198,13 +199,15 @@
+     [intl],
+   );
+ 
+-  // The unified reorderable list: standard + assessment columns in the persisted `columnOrder`, each
+-  // carrying a localized reorder aria-label. Standard columns keep their rich `FormattedMessage`
+-  // label; assessment columns use their name. Ids unknown on this page (a stored assessment not in the
+-  // current data) are dropped by the flatMap.
+   const reorderableColumns = useMemo<ReorderableTraceColumnOption[]>(() => {
+     const standardById = new Map(COLUMN_OPTIONS.map((option) => [option.id, option]));
+     const assessmentById = new Map(assessmentColumns.selectorOptions.map((option) => [option.id, option]));
++    const customById = new Map(
++      [...customColumns.tags.selectorOptions, ...customColumns.metadata.selectorOptions].map((option) => [
++        option.id,
++        option,
++      ]),
++    );
+     const reorderLabelFor = (name: string) =>
+       intl.formatMessage(
+         {
+@@ -222,15 +225,33 @@
+       if (assessment) {
+         return [{ ...assessment, reorderLabel: reorderLabelFor(String(assessment.label)) }];
+       }
++      const custom = customById.get(id);
++      if (custom) {
++        return [{ ...custom, reorderLabel: reorderLabelFor(String(custom.label)) }];
++      }
+       return [];
+     });
+-  }, [columnOrder, assessmentColumns.selectorOptions, columnDisplayText, intl]);
+-
+-  // A single toggle that routes to the right handler by id: assessment ids go to the assessment
+-  // toggle, standard ids to the column toggle. The reorderable list is a flat list of both.
++  }, [
++    columnOrder,
++    assessmentColumns.selectorOptions,
++    customColumns.tags.selectorOptions,
++    customColumns.metadata.selectorOptions,
++    columnDisplayText,
++    intl,
++  ]);
++
+   const toggleAnyColumn = (id: string) =>
+-    isAssessmentColumnId(id) ? assessmentColumns.toggle(id) : onToggleColumn(id as TraceColumnId);
+-  const visibleAnyColumns = [...visibleColumns, ...assessmentColumns.visibleIds];
++    isCustomTraceColumnId(id)
++      ? customColumns.toggle(id)
++      : isAssessmentColumnId(id)
++        ? assessmentColumns.toggle(id)
++        : onToggleColumn(id as TraceColumnId);
++  const visibleAnyColumns = [
++    ...visibleColumns,
++    ...assessmentColumns.visibleIds,
++    ...customColumns.tags.visibleIds,
++    ...customColumns.metadata.visibleIds,
++  ];
+ 
+   // Siloed copy of v3's UC-delete disabled reason.
+   const deleteDisabledReason = intl.formatMessage({
+@@ -240,11 +261,6 @@
+       'Trace deletion disabled reason. Displayed in a tooltip when a user attempts to delete a trace housed in the UC delta table.',
+   });
+ 
+-  // Dynamic (per-page) columns render as labeled checkbox groups beneath the reorderable list in the
+-  // Display → Columns submenu. Tags/metadata are toggle-only. Assessments ALSO appear in the
+-  // reorderable list above (so they can be dragged + toggled individually); the group here adds only
+-  // the bulk "show/hide all assessments" affordance via its toggle-all header. Each group is included
+-  // only when the page has relevant candidates.
+   const columnGroups: TracesV4ColumnGroup[] = [];
+   if (customColumns.tags.selectorOptions.length > 0) {
+     columnGroups.push({
+@@ -258,6 +274,7 @@
+       visibleIds: customColumns.tags.visibleIds,
+       onToggle: customColumns.tags.toggle,
+       onToggleAll: customColumns.tags.setAllVisible,
++      headerOnly: true,
+     });
+   }
+   if (customColumns.metadata.selectorOptions.length > 0) {
+@@ -272,6 +289,7 @@
+       visibleIds: customColumns.metadata.visibleIds,
+       onToggle: customColumns.metadata.toggle,
+       onToggleAll: customColumns.metadata.setAllVisible,
++      headerOnly: true,
+     });
+   }
+   if (assessmentColumns.selectorOptions.length > 0) {
+--- a/mlflow/server/js/src/experiment-tracking/components/experiment-page/components/traces-v4/hooks/useTracesV4ColumnOrder.test.ts
++++ b/mlflow/server/js/src/experiment-tracking/components/experiment-page/components/traces-v4/hooks/useTracesV4ColumnOrder.test.ts
+@@ -11,7 +11,7 @@
+   test('reorders assessment columns across standard columns and persists the mixed order', () => {
+     const renderOrder = () =>
+       renderHook(() =>
+-        useTracesV4ColumnOrder('mixed-order', STANDARD_COLUMNS, ['assessment:relevance', 'assessment:safety']),
++        useTracesV4ColumnOrder('mixed-order', STANDARD_COLUMNS, ['assessment:relevance', 'assessment:safety'], []),
+       );
+     const { result, unmount } = renderOrder();
+ 
+@@ -25,7 +25,7 @@
+   test('appends newly discovered assessments without disturbing the stored order', () => {
+     const { result, rerender } = renderHook(
+       ({ assessmentIds }: { assessmentIds: string[] }) =>
+-        useTracesV4ColumnOrder('new-assessment', STANDARD_COLUMNS, assessmentIds),
++        useTracesV4ColumnOrder('new-assessment', STANDARD_COLUMNS, assessmentIds, []),
+       { initialProps: { assessmentIds: ['assessment:relevance'] } },
+     );
+     act(() => result.current.reorderColumn('assessment:relevance', 'output'));
+@@ -43,7 +43,7 @@
+   });
+ 
+   test('retains assessment ids restored from a saved view even when absent from the current page', () => {
+-    const { result } = renderHook(() => useTracesV4ColumnOrder('saved-order', STANDARD_COLUMNS, []));
++    const { result } = renderHook(() => useTracesV4ColumnOrder('saved-order', STANDARD_COLUMNS, [], []));
+     act(() => result.current.setColumnOrder(['assessment:off-page', 'output', 'input']));
+ 
+     expect(result.current.columnOrder.slice(0, 3)).toEqual(['assessment:off-page', 'output', 'input']);
+--- a/mlflow/server/js/src/experiment-tracking/components/experiment-page/components/traces-v4/hooks/useTracesV4ColumnOrder.ts
++++ b/mlflow/server/js/src/experiment-tracking/components/experiment-page/components/traces-v4/hooks/useTracesV4ColumnOrder.ts
+@@ -1,13 +1,14 @@
+ import { useCallback, useMemo } from 'react';
+ import { useLocalStorage } from '@databricks/web-shared/hooks';
+ import { isTraceColumnId, TRACE_COLUMN_IDS, type TraceColumnId } from '@databricks/web-shared/traces-table';
++import { isCustomTraceColumnId } from '../utils/customColumns';
+ import { isAssessmentColumnId } from '../utils/assessmentColumns';
+ import { TRACE_COLUMN_ORDER_STORAGE_KEY_PREFIX } from '../utils/constants';
+ 
+ const COLUMN_ORDER_STORAGE_VERSION = 1;
+ 
+ export interface TracesV4ColumnOrder {
+-  /** Complete mixed order, including hidden standard and known assessment columns. */
++  /** Complete mixed order, including hidden standard, assessment, tag, and metadata columns. */
+   columnOrder: string[];
+   reorderColumn: (activeColumn: string, targetColumn: string) => void;
+   /** Restores an explicitly saved order; an older view with no order leaves the preference intact. */
+@@ -16,32 +17,37 @@
+   reset: () => void;
+ }
+ 
+-/** Persists one order across fixed standard columns and page-dependent assessment columns. */
++/** Persists one order across standard, assessment, tag, and metadata columns. */
+ export const useTracesV4ColumnOrder = (
+   experimentId: string,
+   standardColumnOrder: TraceColumnId[],
+   assessmentColumnIds: string[],
++  customColumnIds: string[],
+ ): TracesV4ColumnOrder => {
+   const normalizeColumnOrder = useCallback(
+     (storedOrder: unknown): string[] => {
+       const candidateOrder = Array.isArray(storedOrder) ? storedOrder : [];
+       const seen = new Set<string>();
+       const normalized: string[] = [];
+-      for (const id of [...candidateOrder, ...standardColumnOrder, ...assessmentColumnIds]) {
+-        if (typeof id === 'string' && (isTraceColumnId(id) || isAssessmentColumnId(id)) && !seen.has(id)) {
++      for (const id of [...candidateOrder, ...standardColumnOrder, ...assessmentColumnIds, ...customColumnIds]) {
++        if (
++          typeof id === 'string' &&
++          (isTraceColumnId(id) || isAssessmentColumnId(id) || isCustomTraceColumnId(id)) &&
++          !seen.has(id)
++        ) {
+           normalized.push(id);
+           seen.add(id);
+         }
+       }
+       return normalized;
+     },
+-    [standardColumnOrder, assessmentColumnIds],
++    [standardColumnOrder, assessmentColumnIds, customColumnIds],
+   );
+ 
+   const [storedColumnOrder, setStoredColumnOrder] = useLocalStorage<unknown>({
+     key: `${TRACE_COLUMN_ORDER_STORAGE_KEY_PREFIX}.${experimentId}`,
+     version: COLUMN_ORDER_STORAGE_VERSION,
+-    initialValue: [...standardColumnOrder, ...assessmentColumnIds],
++    initialValue: [...standardColumnOrder, ...assessmentColumnIds, ...customColumnIds],
+   });
+   const columnOrder = useMemo(() => normalizeColumnOrder(storedColumnOrder), [normalizeColumnOrder, storedColumnOrder]);
+ 
+@@ -75,8 +81,8 @@
+   );
+ 
+   const reset = useCallback(
+-    () => setStoredColumnOrder(normalizeColumnOrder([...TRACE_COLUMN_IDS, ...assessmentColumnIds])),
+-    [assessmentColumnIds, normalizeColumnOrder, setStoredColumnOrder],
++    () => setStoredColumnOrder(normalizeColumnOrder([...TRACE_COLUMN_IDS, ...assessmentColumnIds, ...customColumnIds])),
++    [assessmentColumnIds, customColumnIds, normalizeColumnOrder, setStoredColumnOrder],
+   );
+ 
+   return {
+--- a/mlflow/server/js/src/experiment-tracking/components/experiment-page/components/traces-v4/hooks/useTracesV4Controller.ts
++++ b/mlflow/server/js/src/experiment-tracking/components/experiment-page/components/traces-v4/hooks/useTracesV4Controller.ts
+@@ -203,7 +203,11 @@
+     () => assessments.candidateNames.map(assessmentColumnId),
+     [assessments.candidateNames],
+   );
+-  const columnOrder = useTracesV4ColumnOrder(experimentId, columns.columnOrder, assessmentColumnIds);
++  const customColumnIds = useMemo(
++    () => [...customColumns.tags.selectorOptions, ...customColumns.metadata.selectorOptions].map(({ id }) => id),
++    [customColumns.tags.selectorOptions, customColumns.metadata.selectorOptions],
++  );
++  const columnOrder = useTracesV4ColumnOrder(experimentId, columns.columnOrder, assessmentColumnIds, customColumnIds);
+ 
+   const bulk = useBulkTraceSelection(page.traces);
+ 
+--- a/mlflow/server/js/src/experiment-tracking/components/experiment-page/components/traces-v4/hooks/useTracesV4CustomColumns.tsx
++++ b/mlflow/server/js/src/experiment-tracking/components/experiment-page/components/traces-v4/hooks/useTracesV4CustomColumns.tsx
+@@ -184,10 +184,13 @@
+     [setVisibility],
+   );
+ 
++  const tags = useMemo(() => makeGroup('tag'), [makeGroup]);
++  const metadata = useMemo(() => makeGroup('metadata'), [makeGroup]);
++
+   return {
+     columnDefs,
+-    tags: makeGroup('tag'),
+-    metadata: makeGroup('metadata'),
++    tags,
++    metadata,
+     visibilityById: visibility,
+     setVisibility: restoreVisibility,
+     toggle,
+--- a/mlflow/server/js/src/experiment-tracking/pages/experiment-chat-sessions/single-chat-view/ExperimentSingleChatConversation.tsx
++++ b/mlflow/server/js/src/experiment-tracking/pages/experiment-chat-sessions/single-chat-view/ExperimentSingleChatConversation.tsx
+@@ -80,11 +80,13 @@
+             <div css={{ display: 'flex', alignItems: 'center', gap: theme.spacing.sm }}>
+               <ExperimentSingleChatIcon />
+               <Typography.Text bold>
+-                <FormattedMessage
+-                  defaultMessage="Turn {turnNumber}"
+-                  description="Label for a single turn within an experiment chat session"
+-                  values={{ turnNumber: index + 1 }}
+-                />
++                {(!Array.isArray(trace.info.tags) && trace.info.tags?.['mlflow.traceName']) || (
++                  <FormattedMessage
++                    defaultMessage="Turn {turnNumber}"
++                    description="Label for a single turn within an experiment chat session"
++                    values={{ turnNumber: index + 1 }}
++                  />
++                )}
+               </Typography.Text>
+               <div css={{ flex: 1 }} />
+               <Button
+--- a/mlflow/server/js/src/experiment-tracking/pages/experiment-chat-sessions/single-chat-view/ExperimentSingleChatSessionSidebar.tsx
++++ b/mlflow/server/js/src/experiment-tracking/pages/experiment-chat-sessions/single-chat-view/ExperimentSingleChatSessionSidebar.tsx
+@@ -1,5 +1,5 @@
+-import { ChainIcon, TitleSkeleton, Typography, useDesignSystemTheme } from '@databricks/design-system';
+-import { getModelTraceId, type ModelTrace, type ModelTraceInfoV3 } from '@databricks/web-shared/model-trace-explorer';
++import { TitleSkeleton, Typography, useDesignSystemTheme } from '@databricks/design-system';
++import { getModelTraceId, type ModelTrace } from '@databricks/web-shared/model-trace-explorer';
+ import type { MutableRefObject } from 'react';
+ import { useCallback } from 'react';
+ import { ExperimentSingleChatIcon } from './ExperimentSingleChatIcon';
+@@ -38,7 +38,8 @@
+     <div
+       css={{
+         minHeight: 0,
+-        width: 200,
++        width: 260,
++        flexShrink: 0,
+         borderRight: `1px solid ${theme.colors.border}`,
+         overflow: 'auto',
+         paddingTop: theme.spacing.sm,
+@@ -62,12 +63,14 @@
+         >
+           <ExperimentSingleChatIcon displayLink={index !== traces.length - 1} />
+ 
+-          <Typography.Text bold>
+-            <FormattedMessage
+-              defaultMessage="Turn {turnNumber}"
+-              description="Label for a single turn within an experiment chat session"
+-              values={{ turnNumber: index + 1 }}
+-            />
++          <Typography.Text bold css={{ overflowWrap: 'anywhere' }}>
++            {(!Array.isArray(trace.info.tags) && trace.info.tags?.['mlflow.traceName']) || (
++              <FormattedMessage
++                defaultMessage="Turn {turnNumber}"
++                description="Label for a single turn within an experiment chat session"
++                values={{ turnNumber: index + 1 }}
++              />
++            )}
+           </Typography.Text>
+         </div>
+       ))}
+@@ -83,7 +86,8 @@
+         display: 'flex',
+         flexDirection: 'column',
+         minHeight: 0,
+-        width: 200,
++        width: 260,
++        flexShrink: 0,
+         borderRight: `1px solid ${theme.colors.border}`,
+         gap: theme.spacing.xs,
+         paddingTop: theme.spacing.sm,
+--- a/mlflow/server/js/src/shared/web-shared/traces-table/TracesTable.test.tsx
++++ b/mlflow/server/js/src/shared/web-shared/traces-table/TracesTable.test.tsx
+@@ -209,7 +209,7 @@
+       <TracesTable
+         {...baseProps({
+           traces,
+-          visibleColumns: ['start_time'],
++          visibleColumns: ['session', 'input', 'output', 'start_time'],
+           isGroupedBySession: true,
+           getSessionHref: ({ sessionId }) => `/sessions/${sessionId}`,
+           onSessionSelected,
+@@ -217,7 +217,6 @@
+       />,
+     );
+ 
+-    // Grouped mode force-shows session + the input/output previews, regardless of visibleColumns.
+     expect(screen.getByRole('columnheader', { name: 'Session' })).toBeInTheDocument();
+     expect(screen.getByRole('columnheader', { name: 'Input' })).toBeInTheDocument();
+     expect(screen.getByRole('columnheader', { name: 'Output' })).toBeInTheDocument();
+@@ -237,6 +236,50 @@
+     // The first turn's input now appears twice: in the header preview AND in its expanded row.
+     expect(screen.getAllByText('request for s1-turn-1')).toHaveLength(2);
+     expect(screen.getByText('request for s1-turn-2')).toBeInTheDocument();
++  });
++
++  test('grouped sessions honor hidden previews and the selected column order', async () => {
++    const traces = [makeSessionTrace('s1-turn-1', 's1'), makeSessionTrace('s1-turn-2', 's1')];
++    await renderWithProviders(
++      <TracesTable
++        {...baseProps({
++          traces,
++          isGroupedBySession: true,
++          visibleColumns: ['session', 'start_time'],
++          columnOrder: ['start_time', 'session'],
++        })}
++      />,
++    );
++    expect(screen.queryByRole('columnheader', { name: 'Input' })).not.toBeInTheDocument();
++    expect(screen.queryByRole('columnheader', { name: 'Output' })).not.toBeInTheDocument();
++    const time = screen.getByRole('columnheader', { name: 'Time' });
++    const session = screen.getByRole('columnheader', { name: 'Session' });
++    expect(time.compareDocumentPosition(session) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
++    await userEvent.click(screen.getByRole('button', { name: 'Expand session s1' }));
++    expect(screen.getByText('Turn 1')).toBeInTheDocument();
++    expect(screen.getByText('Turn 2')).toBeInTheDocument();
++  });
++
++  test('expanded sessions show action names with a turn fallback for unnamed traces', async () => {
++    const actionName = '01 CHECK_VITALS Patient 8';
++    const traces = [
++      { ...makeSessionTrace('s1-turn-1', 's1'), tags: { 'mlflow.traceName': actionName } },
++      makeSessionTrace('s1-turn-2', 's1'),
++    ];
++    const onTraceSelected = jest.fn();
++    await renderWithProviders(
++      <TracesTable
++        {...baseProps({ traces, visibleColumns: ['session'], isGroupedBySession: true, onTraceSelected })}
++      />,
++    );
++    expect(screen.queryByText(actionName)).not.toBeInTheDocument();
++    await userEvent.click(screen.getByRole('button', { name: 'Expand session s1' }));
++    expect(screen.getByText(actionName)).toBeInTheDocument();
++    expect(screen.getByTitle(actionName)).toBeInTheDocument();
++    expect(screen.queryByText('Turn 1')).not.toBeInTheDocument();
++    expect(screen.getByText('Turn 2')).toBeInTheDocument();
++    await userEvent.click(screen.getByText(actionName));
++    expect(onTraceSelected).toHaveBeenCalledWith(traces[0]);
+   });
+ 
+   test('passes all child traces to an extra column session renderer', async () => {
+--- a/mlflow/server/js/src/shared/web-shared/traces-table/TracesTable.tsx
++++ b/mlflow/server/js/src/shared/web-shared/traces-table/TracesTable.tsx
+@@ -364,28 +364,11 @@
+       '.table-row-select-cell': { alignItems: 'center', paddingRight: theme.spacing.sm },
+     } as const;
+ 
+-    // Canonical-order visible column defs + any product columns. `extraColumns` is guarded to a stable
+-    // reference so a stable/undefined value doesn't defeat the deep memo (see `getVisibleColumnDefs`).
+-    // When grouped, session + input/output are pinned left. When column reordering is enabled, columnOrder
+-    // overrides the canonical order.
+     const columns = useMemo(() => {
+-      // Grouped mode always shows session + the input/output previews and pins them left, so a session
+-      // header reads left-to-right as "which session → first input → last output" regardless of the
+-      // user's own column visibility/order.
+-      const groupedLeadingColumns: TraceColumnId[] = ['session', 'input', 'output'];
+-      const groupedVisibleColumns = isGroupedBySession
+-        ? [...new Set([...visibleColumns, ...groupedLeadingColumns])]
+-        : visibleColumns;
+-      const visibleColumnDefs = getVisibleColumnDefs(groupedVisibleColumns, extraColumns, columnOrder);
+-      const groupedColumnRank = new Map<string, number>(groupedLeadingColumns.map((id, index) => [id, index]));
+-      const getGroupedColumnRank = (id: string | undefined) =>
+-        id === undefined ? Infinity : (groupedColumnRank.get(id) ?? Infinity);
+-      const orderedVisibleColumnDefs = isGroupedBySession
+-        ? [...visibleColumnDefs].sort((left, right) => getGroupedColumnRank(left.id) - getGroupedColumnRank(right.id))
+-        : visibleColumnDefs;
++      const visibleColumnDefs = getVisibleColumnDefs(visibleColumns, extraColumns, columnOrder);
+       // Product-specific column ids are intentionally absent and resolve to undefined.
+       const contentMaxSizes: Readonly<Record<string, number | undefined>> = getContentColumnMaxSizes(traces, intl);
+-      return orderedVisibleColumnDefs.map((column) => {
++      return visibleColumnDefs.map((column) => {
+         if (column.id === undefined) {
+           return column;
+         }
+@@ -402,7 +385,7 @@
+         const maxSize = contentMaxSize ?? Math.max(column.maxSize ?? 0, persistedSize ?? 0);
+         return { ...column, maxSize };
+       });
+-    }, [visibleColumns, extraColumns, isGroupedBySession, traces, intl, initialColumnSizing, columnOrder]);
++    }, [visibleColumns, extraColumns, traces, intl, initialColumnSizing, columnOrder]);
+ 
+     // Product-owned per-column session summary renderers (e.g. assessment aggregates), keyed by
+     // column id so a session header cell can look one up.
+@@ -670,6 +653,15 @@
+     ) => {
+       const isSelected = row.id === selectedTraceId;
+       const isBulkChecked = selectedForBulk.has(row.original.trace_id);
++      const sessionLabel =
++        row.original.tags?.['mlflow.traceName'] ||
++        intl.formatMessage(
++          {
++            defaultMessage: 'Turn {turnNumber}',
++            description: 'Sequential turn number for a trace within an expanded session',
++          },
++          { turnNumber: sessionTurnNumber },
++        );
+       return (
+         <TableRow
+           key={row.id}
+@@ -711,14 +703,8 @@
+           {row.getVisibleCells().map((cell) => (
+             <TableCell key={cell.id} css={{ verticalAlign: 'middle' }} style={columnStyles.get(cell.column.id)}>
+               {cell.column.id === 'session' && sessionTurnNumber !== undefined ? (
+-                <Tag componentId={`${COMPONENT_ID}.session-turn`}>
+-                  {intl.formatMessage(
+-                    {
+-                      defaultMessage: 'Turn {turnNumber}',
+-                      description: 'Sequential turn number for a trace within an expanded session',
+-                    },
+-                    { turnNumber: sessionTurnNumber },
+-                  )}
++                <Tag componentId={`${COMPONENT_ID}.session-turn`} title={sessionLabel} css={{ maxWidth: '100%' }}>
++                  <Typography.Text ellipsis>{sessionLabel}</Typography.Text>
+                 </Tag>
+               ) : (
+                 flexRender(cell.column.columnDef.cell, cell.getContext())

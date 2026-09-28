@@ -1,5 +1,6 @@
 """align-mlflow sync, run as a command against a temporary MLflow store."""
 
+import copy
 import json
 import os
 import shutil
@@ -170,6 +171,9 @@ def test_cli_creates_readable_session_cards_without_losing_source(tmp_path):
         "Move to Patient 2 to check vitals."
     )
     records[3]["output"]["action"]["justification"] = "Patient 2 needs assessment."
+    records[3]["input"]["full_state"]["characters"].append(
+        {"id": "Unseen patient", "unseen": True, "unstructured": "Hidden description"}
+    )
     # A missing description is resolved by action identity, not a stale index.
     records[4]["output"]["action"]["unstructured"] = ""
     records[4]["output"]["choice"] = 0
@@ -185,10 +189,15 @@ def test_cli_creates_readable_session_cards_without_losing_source(tmp_path):
     assert result.returncode == 0, result.stderr
     roots = [root_span(trace) for trace in logged_traces(tracking_uri)]
     assert "Two casualties await evacuation." in roots[3].inputs["input"]
-    assert "Patient context: Patient 2" in roots[3].inputs["input"]
-    assert "Patient 2 is injured" in roots[3].inputs["input"]
+    assert "Patient context" not in roots[3].inputs["input"]
+    assert "Patient 1 is injured" in roots[0].inputs["input"]
+    assert "Patient 2 is injured" in roots[0].inputs["input"]
+    assert "Patient 1 is injured" not in roots[3].inputs["input"]
+    assert "Patient 2 is injured" not in roots[3].inputs["input"]
+    assert "Unseen patient" not in roots[3].inputs["input"]
+    assert "Hidden description" not in roots[3].inputs["input"]
     assert roots[3].outputs["response"] == (
-        "Move to Patient 2 to check vitals.\n\nPatient 2\n\n"
+        "Move to Patient 2 to check vitals.\n\n"
         "**Justification**\n\nPatient 2 needs assessment."
     )
     assert (
@@ -204,6 +213,60 @@ def test_cli_creates_readable_session_cards_without_losing_source(tmp_path):
     assert "No situation text recorded." in roots[6].inputs["input"]
     assert [
         {"input": root.inputs["source"], **root.outputs["source"]} for root in roots
+    ] == records
+
+
+def test_cli_highlights_input_changes_within_each_episode(tmp_path):
+    records = episode_records(MERIT_LOW)[:6]
+    for record in records:
+        record["input"]["state"] = "Situation stays the same."
+        record["input"]["full_state"]["unstructured"] = "Situation stays the same."
+    records[1]["input"]["full_state"]["characters"][1]["vitals"] = {"AVPU": "ALERT"}
+    records[2]["input"]["full_state"]["characters"][1]["vitals"] = {
+        "AVPU": "ALERT",
+        "heart_rate": "FAST",
+    }
+    records[3]["input"]["full_state"]["characters"][1]["tag"] = "IMMEDIATE"
+    records[3]["input"]["full_state"]["supplies"][0]["quantity"] = 998
+    records[3]["input"]["full_state"]["events"] = [
+        {"unstructured": "An evacuation vehicle arrived."}
+    ]
+    records[4]["input"] = copy.deepcopy(records[3]["input"])
+    records[4]["input"]["full_state"]["elapsed_time"] = 20
+    records[4]["input"]["full_state"]["characters"][1].update(
+        unseen=True, unstructured="Hidden patient description"
+    )
+    records[5]["input"] = copy.deepcopy(records[4]["input"])
+    records[5]["input"]["full_state"]["elapsed_time"] = 21
+    records.append(copy.deepcopy(records[0]))
+    path = write_run(tmp_path / "2026-08-31__09-17-11", records)
+    uri = f"sqlite:///{tmp_path}/mlflow.db"
+    result = sync(path, uri)
+    assert result.returncode == 0, result.stderr
+    imported = logged_traces(uri)
+    summaries = [root_span(trace).inputs["input"] for trace in imported]
+    assert summaries[0].index("**Situation**") < summaries[0].index("**Patients**")
+    assert "Patient 1 is injured" in summaries[0]
+    assert "Patient 2 is injured" in summaries[0]
+    assert summaries[1].startswith("**Situation**\n\nUnchanged.")
+    assert "**Patient 2**" in summaries[1]
+    assert "Vitals / AVPU: not recorded → ALERT" in summaries[1]
+    assert "**Patient 1**" not in summaries[1]
+    assert "Heart rate: not recorded → FAST" in summaries[2]
+    assert "AVPU" not in summaries[2]
+    assert "AVPU: ALERT → not recorded" in summaries[3]
+    assert "Triage tag: not recorded → IMMEDIATE" in summaries[3]
+    assert "Quantity: 999 → 998" in summaries[3]
+    assert "evacuation vehicle arrived" in summaries[3]
+    assert "No longer visible" in summaries[4]
+    assert "Hidden patient description" not in summaries[4]
+    assert "No other changes to summarize" in summaries[5]
+    assert "Elapsed" not in summaries[5]
+    assert session(imported[0]) != session(imported[6])
+    assert summaries[6] == summaries[0]
+    assert [
+        {"input": root_span(t).inputs["source"], **root_span(t).outputs["source"]}
+        for t in imported
     ] == records
 
 

@@ -10,6 +10,7 @@ from align_utils.open_world import CONFIG_FILE, find_open_world_runs, load_run
 from mlflow import MlflowClient
 from mlflow.exceptions import MlflowException
 
+from .evidence import read_decision_logs
 from .provenance import preserve_run, read_provenance
 from .store import (
     has_session_score,
@@ -51,6 +52,7 @@ def sync_run(experiment_id: str, run_dir: Path) -> SyncResult:
     try:
         run = load_run(run_dir)
         provenance = read_provenance(run_dir)
+        logs = read_decision_logs(run_dir, run.records)
     except (OSError, ValueError) as error:
         return SyncResult(run_dir, error=str(error))
 
@@ -61,7 +63,7 @@ def sync_run(experiment_id: str, run_dir: Path) -> SyncResult:
         trace_ids = {index: trace.info.trace_id for index, trace in logged.items()}
         new_steps = [
             step
-            for step in step_traces(run, run_start_ns(run_dir))
+            for step in step_traces(run, run_start_ns(run_dir), logs)
             if step.record_index not in logged
         ]
         for step in new_steps:
