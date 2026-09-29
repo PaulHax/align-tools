@@ -154,7 +154,11 @@ def _owner_sections(
         owner = None
         if title == "cache":
             match = _CACHE.match(section.text)
-            active = unique(_CACHE_COMPONENTS.get(match[2], set()))
+            active = (
+                unique(_CACHE_COMPONENTS.get(match[2], set()))
+                if match is not None
+                else None
+            )
             owner = active
         elif title == "alignment_selection":
             owner = unique({alignment_owner})
@@ -255,7 +259,12 @@ def component_evidence(
         inputs = {"input": "\n\n".join(map(_block, prompts)), **inputs}
     if responses:
         outputs = {"response": "\n\n".join(map(_block, responses)), **outputs}
-    caches = [section for section in sections if section.title == "cache"]
+    cache_status = [
+        match[1]
+        for section in sections
+        if section.title == "cache"
+        and (match := _CACHE.match(section.text)) is not None
+    ]
     attributes = {
         "align.component_evidence": EVIDENCE_VERSION,
         "align.log_match": log.status,
@@ -274,9 +283,9 @@ def component_evidence(
             *(section.reference() for section in sections),
         ],
     }
-    if caches:
-        attributes["align.cache_status"] = [_CACHE.match(s.text)[1] for s in caches]
-        if all(_CACHE.match(s.text)[1] == "hit" for s in caches) and not prompts:
+    if cache_status:
+        attributes["align.cache_status"] = cache_status
+        if all(status == "hit" for status in cache_status) and not prompts:
             inputs = {
                 "input": "Cached execution. No fresh prompt was recorded for this component in this decision.",
                 **inputs,

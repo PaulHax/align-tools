@@ -97,7 +97,7 @@ def main() -> None:
         parser.error(
             f"This frontend requires MLflow {VERSION}, found {distribution.version}."
         )
-    target = Path(distribution.locate_file("mlflow/server/js/build")).resolve()
+    target = Path(str(distribution.locate_file("mlflow/server/js/build"))).resolve()
     backup = target.with_name(f"build.stock-{VERSION}")
     if args.restore:
         if not backup.is_dir():
