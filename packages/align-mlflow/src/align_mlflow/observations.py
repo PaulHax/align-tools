@@ -69,10 +69,8 @@ def _patient_updates(previous: list[dict], current: list[dict]) -> list[str]:
     updates = []
     for identifier in dict.fromkeys([*new, *old]):
         before, after = old.get(identifier), new.get(identifier)
-        was_visible = before is not None and before.get("unseen") is not True
-        is_visible = after is not None and after.get("unseen") is not True
-        if not is_visible:
-            if was_visible:
+        if after is None or after.get("unseen") is True:
+            if before is not None and before.get("unseen") is not True:
                 status = (
                     "No longer visible."
                     if after is not None
@@ -80,7 +78,7 @@ def _patient_updates(previous: list[dict], current: list[dict]) -> list[str]:
                 )
                 updates.append(f"**{_patient_label(before)}**\n\n{status}")
             continue
-        if not was_visible:
+        if before is None or before.get("unseen") is True:
             updates.append(_patient_snapshot(after))
             continue
         details = []
