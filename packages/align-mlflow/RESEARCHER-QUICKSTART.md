@@ -22,4 +22,4 @@ Use the URL of a configured shared MLflow server.
 
 3. **View the results.** Open your server URL, select your experiment, and open **Traces**. Group by **Session**; choose **All time** for older runs.
 
-Rerun step 2 to resume or add records. Coordinate imports: one at a time. See [ingestion details](INGESTION.md) for supported formats and troubleshooting.
+Rerun step 2 to resume or add records. For the initial SQLite setup, run one bulk import at a time; browsing and annotations can continue. See [ingestion details](INGESTION.md) for supported formats and troubleshooting.

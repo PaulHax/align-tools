@@ -1,31 +1,29 @@
 # Start a shared MLflow server
 
-Choose a new, writable data directory and an unused port. This creates a fresh store; it does not migrate existing data.
+This starts a fresh store; it does not migrate existing data.
 
-1. **Install** (requires Git and `uv`):
+1. **Install the server and session UI** (requires Git, `uv`, and Node.js **24.14+ within 24.x** on `PATH`):
 
    ```bash
    git clone --branch open-world-traces https://github.com/PaulHax/align-tools.git
    cd align-tools
-   uv sync --frozen --dev
+   ./packages/align-mlflow/scripts/setup.sh
    ```
 
-2. **Start the server.** Replace the directory and hostname with your own:
+2. **Choose your configuration.** Copy the [example](examples/server.env.example) to `.env` and edit it as needed. It uses `/data/shared/mlflow` on ITM and port **5001**:
 
    ```bash
-   store_dir='/absolute/path/to/mlflow-store'
-   public_host='mlflow.example.internal'
-   port=5001
-   mkdir -p "$store_dir/artifacts"
-   uv run --no-sync mlflow server \
-     --backend-store-uri "sqlite:///$store_dir/mlflow.db" \
-     --artifacts-destination "$store_dir/artifacts" \
-     --default-artifact-root mlflow-artifacts:/ \
-     --serve-artifacts --host 0.0.0.0 --port "$port" --workers 1 \
-     --allowed-hosts "$public_host:$port,localhost:$port" \
-     --cors-allowed-origins "http://$public_host:$port,http://localhost:$port"
+   cp packages/align-mlflow/examples/server.env.example .env
    ```
 
-3. **Open `http://YOUR_HOST:5001`** and follow the [directory import steps](RESEARCHER-QUICKSTART.md). Stop the foreground server with **Ctrl-C**; restart with the same settings to reuse its data.
+   The server account needs write access to the chosen directory. On another host, update both host and browser-origin allowlists.
 
-This example has no authentication; use the intended private network. See [server options](SERVER.md) for storage and access configuration, or [install the session UI](SESSION-UI.md).
+3. **Start the server:**
+
+   ```bash
+   uv run --no-sync mlflow --env-file .env server
+   ```
+
+   Open <http://10.50.57.47:5001> for the example configuration and follow the [directory import steps](RESEARCHER-QUICKSTART.md). Stop with **Ctrl-C**; restart with the same command to reuse its data. To select another configuration file, change `--env-file`.
+
+This example has no authentication; use the intended private network. See [server options](SERVER.md) for storage and access configuration.

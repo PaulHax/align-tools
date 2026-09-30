@@ -1,6 +1,6 @@
-# CLAUDE.md
+# AGENTS.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+Repository development instructions.
 
 ## Commands
 
@@ -9,6 +9,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ```bash
 # Install dependencies for all packages
 uv sync --dev
+
+# Set up an MLflow server, including the session UI
+./packages/align-mlflow/scripts/setup.sh
 ```
 
 ### Testing

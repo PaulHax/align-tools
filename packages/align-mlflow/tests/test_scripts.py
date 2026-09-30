@@ -11,6 +11,7 @@ from pathlib import Path
 from urllib.request import urlopen
 
 import pytest
+from dotenv import dotenv_values
 from mlflow import MlflowClient
 from open_world_fixtures import completion_line, episode_records, write_run
 
@@ -89,31 +90,25 @@ def test_import_server_and_views_share_configured_storage(tmp_path, transport):
         command = [str(SCRIPTS / "server.sh")]
     else:
         uv = ["uv", "run", "--project", str(REPOSITORY), "--no-sync"]
-        prepared = subprocess.run(
-            [*uv, "python", "-m", "align_mlflow.local_store"],
-            cwd=tmp_path,
-            env=env,
-            capture_output=True,
-            text=True,
-            check=True,
+        settings = dotenv_values(SCRIPTS.parent / "examples/server.env.example")
+        settings.update(
+            MLFLOW_BACKEND_STORE_URI=env["MLFLOW_TRACKING_URI"],
+            MLFLOW_ARTIFACTS_DESTINATION=str(artifacts),
+            MLFLOW_HOST="127.0.0.1",
+            MLFLOW_PORT="0",
+            MLFLOW_SERVER_ALLOWED_HOSTS="127.0.0.1:*",
+            MLFLOW_SERVER_CORS_ALLOWED_ORIGINS="http://127.0.0.1:*",
+        )
+        config = tmp_path / "server.env"
+        config.write_text(
+            "".join(f"{key}={json.dumps(value)}\n" for key, value in settings.items())
         )
         command = [
             *uv,
             "mlflow",
+            "--env-file",
+            str(config),
             "server",
-            "--backend-store-uri",
-            env["MLFLOW_TRACKING_URI"],
-            "--artifacts-destination",
-            prepared.stdout.strip(),
-            "--default-artifact-root",
-            "mlflow-artifacts:/",
-            "--serve-artifacts",
-            "--workers",
-            "1",
-            "--host",
-            "127.0.0.1",
-            "--port",
-            "0",
         ]
 
     server = subprocess.Popen(
