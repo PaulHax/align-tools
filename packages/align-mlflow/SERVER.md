@@ -1,6 +1,6 @@
 # MLflow server and storage
 
-For a short startup recipe and the current ITM service, see the [server quickstart](QUICKSTART.md).
+For a short startup recipe, see the [server quickstart](QUICKSTART.md).
 
 MLflow has three parts:
 
@@ -61,7 +61,7 @@ To install the optional comparison views:
 ./packages/align-mlflow/scripts/views.sh http://localhost:5000
 ```
 
-The view recipe requires MLflow 3.16.1; see [saved views](REFERENCE.md#saved-views). For movable tag columns and hideable Input/Output in grouped sessions, install the optional [session UI](SESSION-UI.md) on the server.
+The view recipe requires MLflow 3.16.1 and updates matching named presets. For movable tag columns and hideable Input/Output in grouped sessions, install the optional [session UI](SESSION-UI.md) on the server.
 
 ## Share a new store with a team
 
