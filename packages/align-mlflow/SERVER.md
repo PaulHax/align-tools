@@ -1,5 +1,7 @@
 # MLflow server and storage
 
+For a short startup recipe and the current ITM service, see the [server quickstart](QUICKSTART.md).
+
 MLflow has three parts:
 
 | Part | Purpose | Native MLflow setting |
@@ -73,10 +75,11 @@ uv run --no-sync mlflow server \
   --default-artifact-root mlflow-artifacts:/ \
   --serve-artifacts --workers 1 \
   --host 0.0.0.0 --port 5000 \
-  --allowed-hosts 'mlflow.example.internal:5000,localhost:5000'
+  --allowed-hosts 'mlflow.example.internal:5000,localhost:5000' \
+  --cors-allowed-origins 'http://mlflow.example.internal:5000,http://localhost:5000'
 ```
 
-Replace the example hostname with the address teammates will use. Provide access through the team's private network or authenticated gateway. The host allowlist validates hostnames; it does not authenticate users.
+Replace the example hostname with the address teammates will use. Configure both the host allowlist (`host:port`) and browser-origin allowlist (`scheme://host:port`); browser POSTs can fail even when the HTML page loads if the actual Origin is missing. Provide access through the team's private network or authenticated gateway. These allowlists do not authenticate users.
 
 In another terminal, on this server or an importing computer with the same checkout and dependencies:
 
@@ -92,7 +95,7 @@ Create experiments through the HTTP connection for this setup. Experiments previ
 
 ## Deployment and maintenance
 
-The local server script uses SQLite and direct artifact access (`--no-serve-artifacts`). For a server that is already running, clients only need `MLFLOW_TRACKING_URI=http://server:5000`; its administrator controls storage.
+The local server script uses SQLite and direct artifact access (`--no-serve-artifacts`). For a server that is already running, clients select it with `MLFLOW_TRACKING_URI=http://server:5000`; its administrator controls storage. Complete imports also require clients to access the experiment's recorded artifact location. With local `file://` artifacts, that means filesystem permissions; with proxied artifacts, uploads go through HTTP.
 
 For PostgreSQL, separate artifact storage, or artifact proxying, use `mlflow server` directly with its native settings: `MLFLOW_BACKEND_STORE_URI`, `MLFLOW_DEFAULT_ARTIFACT_ROOT`, or `MLFLOW_ARTIFACTS_DESTINATION`. MLflow has no single native directory variable that combines all of those deployment choices.
 

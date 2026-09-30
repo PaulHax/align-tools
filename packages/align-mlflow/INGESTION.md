@@ -1,5 +1,7 @@
 # Ingestion
 
+For the short directory-import workflow, start with the [researcher quickstart](RESEARCHER-QUICKSTART.md).
+
 Run `uv sync --frozen --dev` from the repository root, then [configure storage](SERVER.md#configure-storage) in the shell used for ingestion.
 
 ```bash
