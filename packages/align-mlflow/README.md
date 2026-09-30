@@ -4,8 +4,8 @@ Import align-system open-world runs into MLflow for episode inspection and ADM c
 
 Start with the short guides:
 
-- [Import an Align run directory](RESEARCHER-QUICKSTART.md), including `/data/shared` runs and the current ITM storage prerequisite.
-- [Start a server](QUICKSTART.md), including the existing ITM user service and proposed shared storage.
+- [Import an Align run directory](RESEARCHER-QUICKSTART.md).
+- [Start a shared server](QUICKSTART.md).
 
 From the repository root, run `uv sync --frozen --dev`, then:
 
@@ -14,7 +14,5 @@ From the repository root, run `uv sync --frozen --dev`, then:
 3. [Start the server and restore views](SERVER.md#start-and-stop).
 
 Each source folder becomes a run, each episode a session, and each action a trace. Hydra files and metadata are copied as artifacts; source files stay unchanged.
-
-See the [adapter reference](REFERENCE.md) for data mapping, saved views, and recovery behavior.
 
 For controllable grouped-session columns and action labels, install the optional [session UI](SESSION-UI.md).

@@ -30,7 +30,7 @@ def main() -> None:
     if version != "3.16.1":
         parser.error(
             f"Server is MLflow {version}; this recipe is verified for 3.16.1. "
-            "Use REFERENCE.md's manual column/filter recipe for other versions."
+            "Configure columns and filters manually in the UI for other versions."
         )
 
     client = MlflowClient(tracking_uri=args.tracking_uri)

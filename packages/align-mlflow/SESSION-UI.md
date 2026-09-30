@@ -20,7 +20,7 @@ The first build downloads the upstream source and dependencies and needs several
 
 ## Use and share
 
-Install the [comparison views](REFERENCE.md#saved-views) after importing:
+Install the comparison views after importing:
 
 ```bash
 ./packages/align-mlflow/scripts/views.sh http://localhost:5000
