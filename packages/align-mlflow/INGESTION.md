@@ -25,7 +25,7 @@ To import through an existing server, set `MLFLOW_TRACKING_URI` to its HTTP URL.
 
 ## Repeating an import
 
-Repeat the command to resume or add runs. Confirmed actions retain their IDs, and copied run folders are deduplicated. Use one importer at a time for a source/store. Editing previously imported actions requires a separate experiment.
+Repeat the command to resume or add runs. Confirmed actions retain their IDs, and copied run folders are deduplicated. Do not overlap imports of the same source run into the same experiment: resume checks are not atomic. For the initial shared SQLite setup, run bulk imports one at a time to limit write contention; browsing and annotations can continue. Editing previously imported actions requires a separate experiment.
 
 Output goes to the terminal. Redirect it to a chosen log file if needed. Run summaries print after the scan finishes. On failure, address the reported error and rerun.
 

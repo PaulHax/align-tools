@@ -7,7 +7,7 @@ Start with the short guides:
 - [Import an Align run directory](RESEARCHER-QUICKSTART.md).
 - [Start a shared server](QUICKSTART.md).
 
-From the repository root, run `uv sync --frozen --dev`, then:
+For a local server, run `./packages/align-mlflow/scripts/setup.sh` from the repository root to install dependencies and the session UI, then:
 
 1. [Set `MLFLOW_TRACKING_URI` to choose storage](SERVER.md#configure-storage).
 2. [Import a run or sweep](INGESTION.md).
@@ -15,4 +15,4 @@ From the repository root, run `uv sync --frozen --dev`, then:
 
 Each source folder becomes a run, each episode a session, and each action a trace. Hydra files and metadata are copied as artifacts; source files stay unchanged.
 
-For controllable grouped-session columns and action labels, install the optional [session UI](SESSION-UI.md).
+The included [session UI](SESSION-UI.md) adds movable columns and action names to grouped sessions.
