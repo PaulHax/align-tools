@@ -13,7 +13,7 @@ Use the URL of a configured shared MLflow server.
 2. **Import your directory.** From your `align-tools` checkout, replace the server URL, experiment name, and source path:
 
    ```bash
-   MLFLOW_TRACKING_URI='http://YOUR_HOST:5001' \
+   MLFLOW_TRACKING_URI='http://YOUR_HOST:5000' \
    MLFLOW_EXPERIMENT_NAME='Research - my-project' \
    ./packages/align-mlflow/scripts/ingest.sh /path/to/align-run
    ```
