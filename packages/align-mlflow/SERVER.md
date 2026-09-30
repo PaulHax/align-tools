@@ -72,7 +72,7 @@ cp packages/align-mlflow/examples/server.env.example .env
 uv run --no-sync mlflow --env-file .env server
 ```
 
-The example uses a fresh SQLite database at `/data/shared/mlflow/mlflow.db`, artifacts at `/data/shared/mlflow/artifacts`, and port 5001 on ITM. The server account must be able to write there. MLflow creates the database's parent directory and artifact directories as needed. Port 5001 allows testing alongside an existing server on 5000.
+The example uses a fresh SQLite database at `/data/shared/mlflow/mlflow.db`, artifacts at `/data/shared/mlflow/artifacts`, and port 5000 on ITM. The server account must be able to write there. MLflow creates the database's parent directory and artifact directories as needed.
 
 These are native MLflow settings. With no configuration, the server normally uses `sqlite:///mlflow.db` and `./mlartifacts` in its working directory; artifact serving is enabled by default. The example makes storage paths and HTTP artifact serving explicit. `MLFLOW_TRACKING_URI` is the client destination, not the server's backend configuration.
 
@@ -83,7 +83,7 @@ If you change the address or port, update both the host allowlist (`host:port`) 
 In another terminal, on this server or an importing computer with the same checkout and dependencies:
 
 ```bash
-export MLFLOW_TRACKING_URI=http://10.50.57.47:5001
+export MLFLOW_TRACKING_URI=http://10.50.57.47:5000
 ./packages/align-mlflow/scripts/ingest.sh /path/to/open-world-runs
 ./packages/align-mlflow/scripts/views.sh "$MLFLOW_TRACKING_URI"
 ```

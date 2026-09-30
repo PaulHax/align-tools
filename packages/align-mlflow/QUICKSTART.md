@@ -10,7 +10,7 @@ This starts a fresh store; it does not migrate existing data.
    ./packages/align-mlflow/scripts/setup.sh
    ```
 
-2. **Choose your configuration.** Copy the [example](examples/server.env.example) to `.env` and edit it as needed. It uses `/data/shared/mlflow` on ITM and port **5001**:
+2. **Choose your configuration.** Copy the [example](examples/server.env.example) to `.env` and edit it as needed. It uses `/data/shared/mlflow` on ITM and port **5000**:
 
    ```bash
    cp packages/align-mlflow/examples/server.env.example .env
@@ -24,6 +24,6 @@ This starts a fresh store; it does not migrate existing data.
    uv run --no-sync mlflow --env-file .env server
    ```
 
-   Open <http://10.50.57.47:5001> for the example configuration and follow the [directory import steps](RESEARCHER-QUICKSTART.md). Stop with **Ctrl-C**; restart with the same command to reuse its data. To select another configuration file, change `--env-file`.
+   Open <http://10.50.57.47:5000> for the example configuration and follow the [directory import steps](RESEARCHER-QUICKSTART.md). Stop with **Ctrl-C**; restart with the same command to reuse its data. To select another configuration file, change `--env-file`.
 
 This example has no authentication; use the intended private network. See [server options](SERVER.md) for storage and access configuration.
