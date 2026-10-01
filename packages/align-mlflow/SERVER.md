@@ -1,105 +1,107 @@
-# MLflow server and storage
+# Manage a shared MLflow server
 
-For startup instructions, see [Start a shared MLflow server](START-SHARED-SERVER.md).
+## Quick Start
 
-MLflow has three parts:
+1. **Install the server and session UI.** Requires Git, `uv`, and Node.js **24.14+ within 24.x** on `PATH`.
 
-| Part | Purpose | Native MLflow setting |
-| --- | --- | --- |
-| Tracking database | Runs, traces, tags, scores, and saved views | Server: `MLFLOW_BACKEND_STORE_URI` |
-| Artifact storage | Copied files, including Hydra configuration and metadata | Server: `MLFLOW_ARTIFACTS_DESTINATION` for HTTP uploads; `MLFLOW_DEFAULT_ARTIFACT_ROOT` for new experiments' artifact URIs |
-| Server | HTTP API and browser UI over that stored data | Clients connect with `MLFLOW_TRACKING_URI` |
+   ```bash
+   git clone --branch open-world-traces https://github.com/PaulHax/align-tools.git
+   cd align-tools
+   ./packages/align-mlflow/scripts/setup.sh
+   ```
 
-The server process is separate from its data. Stopping it preserves the database and artifacts. A client can connect directly to a database or through the server's HTTP URL. Our local scripts below configure these parts from `MLFLOW_TRACKING_URI` alone.
+2. **Configure storage.** The example uses `/data/shared/mlflow` on ITM. Edit the copied file if needed.
 
-Clone this repository and check out the revision you want to deploy. For a server, run `./packages/align-mlflow/scripts/setup.sh` from its root to install locked dependencies and the [session UI](SESSION-UI.md). For an importer only, use `uv sync --frozen --dev`. These Bash scripts run on Linux, macOS, or WSL. Use the local setup below for one computer, or [the team setup](#share-a-new-store-with-a-team) for browser access and ingestion from other computers.
+   ```bash
+   mkdir -p /data/shared/mlflow
+   cp packages/align-mlflow/examples/server.env.example /data/shared/mlflow/.env
+   ```
 
-## Configure storage
+3. **Start the server.** From the repository root:
 
-Keep scripts and guides in this repository and runtime data outside the checkout. For local use, set **one standard MLflow variable** in each terminal:
+   ```bash
+   uv run --no-sync mlflow --env-file /data/shared/mlflow/.env server
+   ```
 
-```bash
-export MLFLOW_TRACKING_URI=sqlite:////absolute/path/to/mlflow-store/mlflow.db
-```
+   Open <http://10.50.57.47:5000>. Stop a foreground server with **Ctrl-C**. Follow [Import Align runs](INGESTION.md) to add data.
 
-The scripts create the directory and use this layout:
+## Manage the instance on ITM
 
-- The specified file is the tracking database.
-- An `artifacts/` directory beside it holds copied files for new experiments.
-
-This layout is an **align-mlflow script convention**, not a new MLflow environment variable. The local server script sets MLflow's native backend-store and artifact-root environment variables. You do not need to set `MLFLOW_BACKEND_STORE_URI` or `MLFLOW_DEFAULT_ARTIFACT_ROOT` for this workflow.
-
-Use an absolute SQLite file URI without query options. The four slashes in `sqlite:////...` include the leading slash of the filesystem path. Set the variable in each terminal, or source your own environment file; the scripts do not load `.env` automatically.
-
-```text
-align-tools/packages/align-mlflow/     Versioned code, scripts, and guides
-/chosen/mlflow-store/                 Runtime data, outside Git
-  mlflow.db
-  mlflow.db-wal, mlflow.db-shm         SQLite working files while in use
-  artifacts/<run ID>/artifacts/source/
-    .hydra/{config,overrides,hydra}.yaml
-    meta.json
-```
-
-Existing experiments retain their recorded artifact locations. Changing `MLFLOW_TRACKING_URI` selects another store; it does not move data. To reuse a store, point at its existing database and keep its artifact paths accessible.
-
-## Start and stop
-
-From the repository root after server setup, with storage configured:
+The installed instance uses the **user service** `open-world-mlflow.service`.
 
 ```bash
-./packages/align-mlflow/scripts/server.sh
+systemctl --user status open-world-mlflow.service --no-pager
+systemctl --user start open-world-mlflow.service
+systemctl --user stop open-world-mlflow.service
+systemctl --user restart open-world-mlflow.service
+journalctl --user -u open-world-mlflow.service -n 50 -f
 ```
 
-The server runs in the foreground at [localhost:5000](http://localhost:5000). It writes logs to the terminal and uses one web worker. `MLFLOW_HOST`, `MLFLOW_PORT`, and `MLFLOW_WORKERS` can override those defaults.
+- Run these commands over SSH in the account that owns the service; **no sudo is needed**.
+- The service runs independently of a terminal and restarts after failure.
+- **Lingering is currently disabled.** Boot/logout independence requires it to be enabled with administrator authorization.
+- After editing `.env`, **restart the service** to apply changes.
 
-Check it from another terminal with `curl -fsS http://localhost:5000/health`. Stop with **Ctrl-C** and wait for the process to exit. Restart with the same configuration and command. If shutdown stalls, close browser connections and inspect remaining server workers before starting another instance.
+## Files and configuration
 
-To install the optional comparison views:
+| Location | Contents |
+| --- | --- |
+| `/data/shared/mlflow/.env` | Server configuration |
+| `/data/shared/mlflow/mlflow.db` | Runs, traces, sessions, scores, annotations, and saved views |
+| `/data/shared/mlflow/artifacts/` | Run artifacts and original source archives |
+| `/data/shared/mlflow/migration-verification.json` | Verification of the copied store and artifact hashes |
+
+- **Runtime data stays outside Git.** Code, the UI patch, and the configuration example belong in this repository.
+- **The server account owns writes.** Importers use HTTP and need no direct access to the database or artifact directory.
+- **SQLite working files** (`mlflow.db-wal` and `mlflow.db-shm`) may appear while the server runs. Do not delete a live WAL.
+- **Existing IDs are retained** in the ITM copy, including traces, assessments, and saved views. The original store is retained for rollback.
+
+### Native MLflow settings
+
+The [environment example](examples/server.env.example) uses MLflow's built-in variables:
+
+| Setting | Purpose |
+| --- | --- |
+| `MLFLOW_BACKEND_STORE_URI` | Server database URI |
+| `MLFLOW_ARTIFACTS_DESTINATION` | Physical destination for HTTP artifact uploads |
+| `MLFLOW_DEFAULT_ARTIFACT_ROOT` | New experiments' artifact URI; `mlflow-artifacts:/` uses the server proxy |
+| `MLFLOW_SERVE_ARTIFACTS` | Enable HTTP artifact upload/download |
+| `MLFLOW_HOST`, `MLFLOW_PORT`, `MLFLOW_WORKERS` | Listener and worker settings |
+| `MLFLOW_SERVER_ALLOWED_HOSTS` | Allowed `host:port` values |
+| `MLFLOW_SERVER_CORS_ALLOWED_ORIGINS` | Allowed browser `scheme://host:port` origins |
+
+- Choose another file with **`--env-file /path/to/server.env`**, before `server`.
+- MLflow **3.16.1** loads that file explicitly. Existing shell variables override file values; CLI options override both.
+- **Configure both allowlists.** Missing browser origins can cause POST requests to return **403** even when the page loads.
+- **No authentication is configured.** Access is through the intended internal network/VPN.
+- **Client destination:** set `MLFLOW_TRACKING_URI=http://10.50.57.47:5000` when logging or importing.
+
+### Local SQLite launcher
+
+- `scripts/server.sh` is a **local SQLite launcher**, using an absolute `MLFLOW_TRACKING_URI=sqlite:////path/to/mlflow.db`.
+- It creates adjacent `artifacts/` and disables the HTTP artifact proxy. Use the native startup command above for the shared server.
+- Changing server settings **does not migrate existing data** or convert recorded `file://` locations. Copy files and update recorded artifact locations as a separate, verified migration.
+
+## Upgrade
+
+From the deployed checkout, with the service stopped:
 
 ```bash
-./packages/align-mlflow/scripts/views.sh http://localhost:5000
+systemctl --user stop open-world-mlflow.service
+git pull --ff-only
+./packages/align-mlflow/scripts/setup.sh
+systemctl --user start open-world-mlflow.service
 ```
 
-The view recipe requires MLflow 3.16.1 and updates matching named presets.
+- Setup installs the **locked environment and session UI together**. Reload browsers afterward.
+- The UI and maintenance commands require **MLflow 3.16.1**. A different global installation does not include this patch.
+- Review dependency changes before upgrading MLflow; database schema upgrades and UI patch updates need a separate plan.
 
-## Share a new store with a team
+## Back up, restore, or move
 
-On the server, check out the same repository revision and run `./packages/align-mlflow/scripts/setup.sh` to install the locked environment and session UI. Copy the [server environment example](examples/server.env.example), edit it, then start MLflow:
+- **Back up:** stop imports and the service, then copy the entire data directory, including remaining SQLite working files. Restart afterward.
+- **Restore:** stop the service, retain the current directory as a rollback copy, restore the complete backup at the configured path, and restart. Check `/health`, existing trace links, annotations, and artifact downloads.
+- **Move:** preserve IDs and copy the database and artifacts together. Update configuration and any recorded absolute artifact locations; verify the copied store before cutover.
+- **Concurrent use:** browsing and annotations can continue during an import. Initially, run **one bulk import at a time** to limit SQLite contention. Never overlap imports of the same source run into the same experiment.
 
-```bash
-cp packages/align-mlflow/examples/server.env.example .env
-uv run --no-sync mlflow --env-file .env server
-```
-
-The example uses a fresh SQLite database at `/data/shared/mlflow/mlflow.db`, artifacts at `/data/shared/mlflow/artifacts`, and port 5000 on ITM. The server account must be able to write there. MLflow creates the database's parent directory and artifact directories as needed.
-
-These are native MLflow settings. With no configuration, the server normally uses `sqlite:///mlflow.db` and `./mlartifacts` in its working directory; artifact serving is enabled by default. The example makes storage paths and HTTP artifact serving explicit. `MLFLOW_TRACKING_URI` is the client destination, not the server's backend configuration.
-
-Choose another file with `--env-file /path/to/server.env` (before `server`). MLflow 3.16.1 loads it explicitly; it does not automatically load `.env`. Existing shell variables take precedence over the file, and explicit CLI options take precedence over both. The checkout's `.env` is ignored by Git.
-
-If you change the address or port, update both the host allowlist (`host:port`) and browser-origin allowlist (`scheme://host:port`); browser POSTs can fail even when the HTML page loads if the actual Origin is missing. Provide access through the team's private network or authenticated gateway. These allowlists do not authenticate users.
-
-In another terminal, on this server or an importing computer with the same checkout and dependencies:
-
-```bash
-export MLFLOW_TRACKING_URI=http://10.50.57.47:5000
-./packages/align-mlflow/scripts/ingest.sh /path/to/open-world-runs
-./packages/align-mlflow/scripts/views.sh "$MLFLOW_TRACKING_URI"
-```
-
-Teammates open that HTTP address in a browser. The server owns the database and artifact files; clients do not need a shared filesystem. New imports include readable episode cards, and the last command installs the optional comparison tables.
-
-Create experiments through the HTTP connection for this setup. Experiments previously created by direct SQLite ingestion keep their file artifact locations; changing server settings does not migrate them. Use your server's process manager to keep MLflow running between logins.
-
-Multiple HTTP clients can use the server concurrently. SQLite permits one write transaction at a time and queues competing writes; sustained contention can cause lock errors. For the initial SQLite setup, run bulk imports one at a time while other users browse or annotate. Do not overlap imports of the same source run into the same experiment: the importer's resume checks are not atomic, regardless of the database backend. See SQLite's [concurrency guidance](https://sqlite.org/whentouse.html).
-
-## Deployment and maintenance
-
-The local server script uses SQLite and direct artifact access (`MLFLOW_SERVE_ARTIFACTS=false`). For a server that is already running, clients select it with `MLFLOW_TRACKING_URI=http://server:5000`; its administrator controls storage. Complete imports also require clients to access the experiment's recorded artifact location. With local `file://` artifacts, that means filesystem permissions; with proxied artifacts, uploads go through HTTP.
-
-For PostgreSQL, separate artifact storage, or artifact proxying, use `mlflow server` directly with its native settings: `MLFLOW_BACKEND_STORE_URI`, `MLFLOW_DEFAULT_ARTIFACT_ROOT`, or `MLFLOW_ARTIFACTS_DESTINATION`. MLflow has no single native directory variable that combines all of those deployment choices.
-
-Back up the database and artifact storage together. For SQLite, stop writers and the server before making a filesystem copy, retaining any remaining working files. Do not delete the WAL manually. Changing artifact roots for future experiments does not migrate existing artifacts.
-
-See MLflow's [server configuration](https://mlflow.org/docs/latest/self-hosting/architecture/tracking-server/) and [CLI environment variables](https://mlflow.org/docs/latest/api_reference/cli.html#server).
+See MLflow's [server configuration](https://mlflow.org/docs/latest/self-hosting/architecture/tracking-server/) and [CLI settings](https://mlflow.org/docs/latest/api_reference/cli.html#server).

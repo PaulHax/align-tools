@@ -1,43 +1,71 @@
-# Ingestion
+# Import Align runs into MLflow
 
-For the short directory-import workflow, start with the [researcher quickstart](RESEARCHER-QUICKSTART.md).
+## Quick Start
 
-Run `uv sync --frozen --dev` from the repository root, then [configure storage](SERVER.md#configure-storage) in the shell used for ingestion.
+1. **Install the importer once.** Requires Git and `uv`.
+
+   ```bash
+   git clone --branch open-world-traces https://github.com/PaulHax/align-tools.git
+   cd align-tools
+   uv sync --frozen --dev
+   ```
+
+2. **Import a run or study directory.** From the repository root, change the experiment name and source path:
+
+   ```bash
+   MLFLOW_TRACKING_URI='http://10.50.57.47:5000' \
+   MLFLOW_EXPERIMENT_NAME='My study' \
+   ./packages/align-mlflow/scripts/ingest.sh /data/shared/my-study
+   ```
+
+   Supply **one run folder** or a **parent directory containing several runs**.
+
+3. **Open the results:** <http://10.50.57.47:5000>. Select your experiment and open **Traces**. Choose **All time** for older runs.
+
+**Rerun step 2** to resume or add records. Initially, run **one bulk import at a time**; browsing and annotations can continue.
+
+## Supported inputs
+
+- **Required:** `input_output.json` and `.hydra/config.yaml` selecting an `align_system.drivers.itm_open_world*` driver.
+- **Keep when present:** `meta.json`, `raw_align_system.log`, and the other Hydra files.
+- **Recursive scan:** nested run folders are discovered automatically. Relative source paths resolve from the current directory.
+- **Source access:** run the importer on a computer that can read the directory; the destination server receives its data through HTTP.
+- **Unsupported drivers are skipped.** `No open-world runs found` can finish without importing anything; check the source path and driver.
+
+## What gets imported
+
+- **Run:** one source folder, with available Hydra configuration and metadata copied as artifacts.
+- **Session:** one episode, with TA3 completion scores when available.
+- **Trace:** one action, including readable decision cards, original JSON in `source` fields, and recorded component evidence.
+- **Source files stay unchanged.** Complete folder archival is a separate operation; ordinary ingestion does not archive every original file.
+
+## Destination and uploads
+
+- **Shared server:** `MLFLOW_TRACKING_URI=http://10.50.57.47:5000`. Database writes and artifact uploads go through HTTP.
+- **Experiment:** `MLFLOW_EXPERIMENT_NAME` chooses the study's experiment; the wrapper default is `align-system open world`.
+- **Local SQLite:** an absolute `sqlite:////path/to/mlflow.db` URI creates adjacent artifact storage and enables WAL. The server need not be running for direct local ingestion.
+- **Existing experiments keep their artifact locations.** An older experiment with `file://` locations still requires filesystem access until migrated.
+
+See [server management and storage](SERVER.md) for configuration and backups.
+
+## Resume and troubleshoot
+
+- **Repeat the command:** confirmed actions retain their IDs; unchanged copied run folders are deduplicated.
+- **One importer per source/experiment:** resume checks are not atomic. Overlapping imports of the same run can race, even with PostgreSQL.
+- **Preserve folder names and provenance files** when copying runs so deduplication can recognize them.
+- **Changed provenance:** existing archived files are retained. Use a separate experiment for changed previously imported actions.
+- **Success:** output reports new steps and episode scores.
+- **Failure:** `not synced (...)` reports the error and exits nonzero. Fix the reported problem and rerun.
+
+## Direct CLI and watching
+
+For the shared server:
 
 ```bash
-./packages/align-mlflow/scripts/ingest.sh /path/to/runs
-./packages/align-mlflow/scripts/ingest.sh ../data/some-sweep
+export MLFLOW_TRACKING_URI=http://10.50.57.47:5000
+uv run --no-sync align-mlflow sync /path/to/runs --experiment 'My study'
+uv run --no-sync align-mlflow watch /path/to/growing-runs --experiment 'My study'
 ```
 
-The source directory is required. Relative paths resolve from your current directory. The importer searches nested folders for recognized open-world runs; unsupported drivers are skipped.
-
-Recognized runs contain `input_output.json` and `.hydra/config.yaml` selecting an open-world driver. Keep the complete folder, including `meta.json` and `raw_align_system.log` when present. The importer preserves action records in traces and copies available Hydra files and `meta.json`; full-folder archival is a separate operation.
-
-New traces include readable episode cards with situation text, the chosen action, and its justification. Original JSON remains available in each trace's `source` fields. Pipeline spans include component evidence from `choice_info` and matched logs.
-
-## Destination
-
-`MLFLOW_TRACKING_URI` is the only required environment variable. With an absolute SQLite URI, the script creates the database's parent directory and places artifacts beside it in `artifacts/`. The server script uses the same setting. The server need not be running during direct SQLite ingestion.
-
-To import through an existing server, set `MLFLOW_TRACKING_URI` to its HTTP URL. New experiments then use that server's artifact configuration. With direct file artifacts, the importer must also have access to their filesystem location.
-
-`MLFLOW_EXPERIMENT_NAME` optionally selects the experiment; its default is `align-system open world`. Existing experiments retain their recorded artifact locations. Changing settings does not relocate their files.
-
-## Repeating an import
-
-Repeat the command to resume or add runs. Confirmed actions retain their IDs, and copied run folders are deduplicated. Do not overlap imports of the same source run into the same experiment: resume checks are not atomic. For the initial shared SQLite setup, run bulk imports one at a time to limit write contention; browsing and annotations can continue. Editing previously imported actions requires a separate experiment.
-
-Output goes to the terminal. Redirect it to a chosen log file if needed. Run summaries print after the scan finishes. On failure, address the reported error and rerun.
-
-Successful runs report new steps and episode scores. `not synced (...)` reports an error and the command exits nonzero. `No open-world runs found` can exit successfully without importing anything; check the directory and Hydra driver configuration. Preserve run folder names and provenance files when copying runs so deduplication can recognize them.
-
-## Underlying CLI
-
-For an existing experiment, the CLI also reads `MLFLOW_TRACKING_URI`:
-
-```bash
-uv run align-mlflow sync /path/to/runs
-uv run align-mlflow watch /path/to/growing-runs
-```
-
-Use `--experiment` or `--tracking-uri` to override CLI settings. The setup script additionally creates the experiment with the chosen artifact location and enables WAL for direct SQLite imports.
+- **`--tracking-uri`** overrides the destination; **`--experiment`** selects the experiment.
+- The ingestion wrapper additionally prepares local storage or creates the experiment with the server's artifact configuration.

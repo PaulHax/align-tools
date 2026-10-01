@@ -23,7 +23,7 @@ Experiment tracking and organization utilities for align-system.
 ### [align-mlflow](packages/align-mlflow/README.md)
 Import open-world runs with `sync` and inspect episodes in MLflow; optional `watch` for growing runs.
 
-Start with [importing a run directory](packages/align-mlflow/RESEARCHER-QUICKSTART.md) or [starting a shared MLflow server](packages/align-mlflow/START-SHARED-SERVER.md).
+Start with [importing Align runs](packages/align-mlflow/INGESTION.md) or [managing a shared MLflow server](packages/align-mlflow/SERVER.md). Each guide starts with a Quick Start.
 
 ## Quick Start
 
