@@ -5,22 +5,23 @@
 1. **Install the importer once.** Requires Git and `uv`.
 
    ```bash
-   git clone --branch open-world-traces https://github.com/PaulHax/align-tools.git
+   git clone https://github.com/PaulHax/align-tools.git
    cd align-tools
    uv sync --frozen --dev
    ```
 
-2. **Import a run or study directory.** From the repository root, change the experiment name and source path:
+2. **Add runs to the existing Open World experiment.** From the repository root, change only the source path:
 
    ```bash
    MLFLOW_TRACKING_URI='http://10.50.57.47:5000' \
-   MLFLOW_EXPERIMENT_NAME='My study' \
+   MLFLOW_EXPERIMENT_NAME='Open World Phase 2' \
    ./packages/align-mlflow/scripts/ingest.sh /data/shared/my-study
    ```
 
    Supply **one run folder** or a **parent directory containing several runs**.
+   Keep the experiment name to compare new runs with earlier results over time.
 
-3. **Open the results:** <http://10.50.57.47:5000>. Select your experiment and open **Traces**. Choose **All time** for older runs.
+3. **Open the results:** <http://10.50.57.47:5000>. Select **Open World Phase 2** and open **Traces**. Choose **All time** for older runs.
 
 **Rerun step 2** to resume or add records. Initially, run **one bulk import at a time**; browsing and annotations can continue.
 
@@ -42,7 +43,7 @@
 ## Destination and uploads
 
 - **Shared server:** `MLFLOW_TRACKING_URI=http://10.50.57.47:5000`. Database writes and artifact uploads go through HTTP.
-- **Experiment:** `MLFLOW_EXPERIMENT_NAME` chooses the study's experiment; the wrapper default is `align-system open world`.
+- **Experiment:** use `MLFLOW_EXPERIMENT_NAME='Open World Phase 2'` to reuse the existing collection. Choose another name only when you want a separate collection. Set it explicitly here; the wrapper default is `align-system open world`.
 - **Local SQLite:** an absolute `sqlite:////path/to/mlflow.db` URI creates adjacent artifact storage and enables WAL. The server need not be running for direct local ingestion.
 - **Existing experiments keep their artifact locations.** An older experiment with `file://` locations still requires filesystem access until migrated.
 
@@ -63,8 +64,8 @@ For the shared server:
 
 ```bash
 export MLFLOW_TRACKING_URI=http://10.50.57.47:5000
-uv run --no-sync align-mlflow sync /path/to/runs --experiment 'My study'
-uv run --no-sync align-mlflow watch /path/to/growing-runs --experiment 'My study'
+uv run --no-sync align-mlflow sync /path/to/runs --experiment 'Open World Phase 2'
+uv run --no-sync align-mlflow watch /path/to/growing-runs --experiment 'Open World Phase 2'
 ```
 
 - **`--tracking-uri`** overrides the destination; **`--experiment`** selects the experiment.
