@@ -2,16 +2,10 @@
 
 Import align-system open-world runs into MLflow for episode inspection and ADM comparison. This package owns the importer, server scripts, and setup guides. Keep runtime data outside the checkout.
 
-Start with the short guides:
+The two guides start with a Quick Start:
 
-- [Import an Align run directory](RESEARCHER-QUICKSTART.md).
-- [Start a shared MLflow server](START-SHARED-SERVER.md).
-
-For a local server, run `./packages/align-mlflow/scripts/setup.sh` from the repository root to install dependencies and the session UI, then:
-
-1. [Set `MLFLOW_TRACKING_URI` to choose storage](SERVER.md#configure-storage).
-2. [Import a run or sweep](INGESTION.md).
-3. [Start the server and restore views](SERVER.md#start-and-stop).
+- [Import Align runs](INGESTION.md): ingest a run or study directory and open the results.
+- [Manage a shared MLflow server](SERVER.md): install, configure, start, stop, upgrade, and back up.
 
 Each source folder becomes a run, each episode a session, and each action a trace. Hydra files and metadata are copied as artifacts; source files stay unchanged.
 

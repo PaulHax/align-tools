@@ -1,13 +1,15 @@
 # Session UI
 
-Adds action names and movable, hideable columns to MLflow's grouped session table. Installed on the server for everyone using its UI.
+- **Adds:** action names and movable, hideable columns in grouped sessions.
+- **Install location:** the server; everyone using its UI gets the patch.
 
-Requires Git, `uv`, and Node.js **24.14+ within 24.x** on `PATH`. From the repository root, before starting the server:
+**Requires:** Git, `uv`, and Node.js **24.14+ within 24.x** on `PATH`. From the repository root, before starting the server:
 
 ```bash
 ./packages/align-mlflow/scripts/setup.sh
 ```
 
-Setup installs the locked **MLflow 3.16.1** environment and this UI by default. The first build downloads dependencies and needs several GB of disk space.
+- **Default setup:** installs locked MLflow **3.16.1** and the UI together.
+- **First build:** downloads dependencies and needs several GB of disk space.
 
-To reinstall only the UI, run `./packages/align-mlflow/scripts/install-ui.sh` in the existing locked environment. Stop the server before setup or reinstallation, then restart it and reload the browser. See [Start a shared MLflow server](START-SHARED-SERVER.md) for the setup steps.
+**Reinstall only the UI:** `./packages/align-mlflow/scripts/install-ui.sh`. Stop the server before setup or reinstallation, then restart and reload browsers. See [server setup](SERVER.md#quick-start).
