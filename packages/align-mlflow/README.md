@@ -5,7 +5,7 @@ Import align-system open-world runs into MLflow for episode inspection and ADM c
 Start with the short guides:
 
 - [Import an Align run directory](RESEARCHER-QUICKSTART.md).
-- [Start a shared server](QUICKSTART.md).
+- [Start a shared MLflow server](START-SHARED-SERVER.md).
 
 For a local server, run `./packages/align-mlflow/scripts/setup.sh` from the repository root to install dependencies and the session UI, then:
 
