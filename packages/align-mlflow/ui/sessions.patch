@@ -520,3 +520,31 @@
                  </Tag>
                ) : (
                  flexRender(cell.column.columnDef.cell, cell.getContext())
+diff --git a/mlflow/server/js/src/experiment-tracking/components/experiment-page/components/traces-v4/utils/buildTracesV4SearchParams.ts b/mlflow/server/js/src/experiment-tracking/components/experiment-page/components/traces-v4/utils/buildTracesV4SearchParams.ts
+--- a/mlflow/server/js/src/experiment-tracking/components/experiment-page/components/traces-v4/utils/buildTracesV4SearchParams.ts
++++ b/mlflow/server/js/src/experiment-tracking/components/experiment-page/components/traces-v4/utils/buildTracesV4SearchParams.ts
+@@ -124,7 +124,9 @@
+   const direction = dir === 'asc' ? 'ASC' : 'DESC';
+   switch (sort) {
+     case 'start_time':
+-      return [`timestamp ${direction}`];
++      // The server already orders by descending timestamp. An explicit sort adds a
++      // null-ordering expression that prevents SQLite from using its time index.
++      return dir === 'desc' ? undefined : [`timestamp ${direction}`];
+     case 'duration':
+       return [`execution_time ${direction}`];
+     default:
+diff --git a/mlflow/server/js/src/experiment-tracking/components/experiment-page/components/traces-v4/utils/buildTracesV4SearchParams.test.ts b/mlflow/server/js/src/experiment-tracking/components/experiment-page/components/traces-v4/utils/buildTracesV4SearchParams.test.ts
+--- a/mlflow/server/js/src/experiment-tracking/components/experiment-page/components/traces-v4/utils/buildTracesV4SearchParams.test.ts
++++ b/mlflow/server/js/src/experiment-tracking/components/experiment-page/components/traces-v4/utils/buildTracesV4SearchParams.test.ts
+@@ -92,8 +92,8 @@
+ });
+ 
+ describe('buildOrderBy', () => {
+-  test('start_time maps to timestamp with direction', () => {
+-    expect(buildOrderBy('start_time', 'desc')).toEqual(['timestamp DESC']);
++  test('descending start_time uses the indexed server default; ascending is explicit', () => {
++    expect(buildOrderBy('start_time', 'desc')).toBeUndefined();
+     expect(buildOrderBy('start_time', 'asc')).toEqual(['timestamp ASC']);
+   });
+ 

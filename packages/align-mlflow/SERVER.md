@@ -2,10 +2,12 @@
 
 ## Quick Start
 
+These steps create a new instance. For the installed ITM server, use the [service commands](#manage-the-instance-on-itm).
+
 1. **Install the server and session UI.** Requires Git, `uv`, and Node.js **24.14+ within 24.x** on `PATH`.
 
    ```bash
-   git clone --branch open-world-traces https://github.com/PaulHax/align-tools.git
+   git clone https://github.com/PaulHax/align-tools.git
    cd align-tools
    ./packages/align-mlflow/scripts/setup.sh
    ```
@@ -49,12 +51,11 @@ journalctl --user -u open-world-mlflow.service -n 50 -f
 | `/data/shared/mlflow/.env` | Server configuration |
 | `/data/shared/mlflow/mlflow.db` | Runs, traces, sessions, scores, annotations, and saved views |
 | `/data/shared/mlflow/artifacts/` | Run artifacts and original source archives |
-| `/data/shared/mlflow/migration-verification.json` | Verification of the copied store and artifact hashes |
 
-- **Runtime data stays outside Git.** Code, the UI patch, and the configuration example belong in this repository.
+- **Runtime data stays outside Git.** Keep code, the UI patch, and configuration examples in the repository.
 - **The server account owns writes.** Importers use HTTP and need no direct access to the database or artifact directory.
 - **SQLite working files** (`mlflow.db-wal` and `mlflow.db-shm`) may appear while the server runs. Do not delete a live WAL.
-- **Existing IDs are retained** in the ITM copy, including traces, assessments, and saved views. The original store is retained for rollback.
+- **ITM's copied store retains IDs**, annotations, and saved views. Its original store remains available for rollback.
 
 ### Native MLflow settings
 
@@ -70,32 +71,30 @@ The [environment example](examples/server.env.example) uses MLflow's built-in va
 | `MLFLOW_SERVER_ALLOWED_HOSTS` | Allowed `host:port` values |
 | `MLFLOW_SERVER_CORS_ALLOWED_ORIGINS` | Allowed browser `scheme://host:port` origins |
 
-- Choose another file with **`--env-file /path/to/server.env`**, before `server`.
-- MLflow **3.16.1** loads that file explicitly. Existing shell variables override file values; CLI options override both.
+- **`--env-file /path/to/server.env`** selects the configuration file, before `server`. Shell variables override file values; CLI options override both.
 - **Configure both allowlists.** Missing browser origins can cause POST requests to return **403** even when the page loads.
 - **No authentication is configured.** Access is through the intended internal network/VPN.
-- **Client destination:** set `MLFLOW_TRACKING_URI=http://10.50.57.47:5000` when logging or importing.
 
 ### Local SQLite launcher
 
 - `scripts/server.sh` is a **local SQLite launcher**, using an absolute `MLFLOW_TRACKING_URI=sqlite:////path/to/mlflow.db`.
 - It creates adjacent `artifacts/` and disables the HTTP artifact proxy. Use the native startup command above for the shared server.
-- Changing server settings **does not migrate existing data** or convert recorded `file://` locations. Copy files and update recorded artifact locations as a separate, verified migration.
+- Server flags **do not migrate `file://` artifact locations**. Copy artifacts and update their recorded locations as a separate, verified migration.
 
 ## Upgrade
 
-From the deployed checkout, with the service stopped:
+From a clean deployed checkout, after backing up. These commands deploy `origin/main`, including from an older integration checkout:
 
 ```bash
 systemctl --user stop open-world-mlflow.service
-git pull --ff-only
+git fetch origin
+git switch --detach origin/main
 ./packages/align-mlflow/scripts/setup.sh
 systemctl --user start open-world-mlflow.service
 ```
 
-- Setup installs the **locked environment and session UI together**. Reload browsers afterward.
-- The UI and maintenance commands require **MLflow 3.16.1**. A different global installation does not include this patch.
-- Review dependency changes before upgrading MLflow; database schema upgrades and UI patch updates need a separate plan.
+- Setup installs the **locked MLflow 3.16.1 environment and session UI together**. Reload browsers afterward; a global MLflow installation does not include the patch.
+- Review dependency changes first. MLflow version changes may require database schema and UI patch updates.
 
 ## Back up, restore, or move
 
@@ -103,5 +102,17 @@ systemctl --user start open-world-mlflow.service
 - **Restore:** stop the service, retain the current directory as a rollback copy, restore the complete backup at the configured path, and restart. Check `/health`, existing trace links, annotations, and artifact downloads.
 - **Move:** preserve IDs and copy the database and artifacts together. Update configuration and any recorded absolute artifact locations; verify the copied store before cutover.
 - **Concurrent use:** browsing and annotations can continue during an import. Initially, run **one bulk import at a time** to limit SQLite contention. Never overlap imports of the same source run into the same experiment.
+
+## Slow SQLite trace search
+
+Local SQLite `sync` refreshes query statistics automatically; **HTTP imports skip it**. After large HTTP imports, run from the server checkout on the host. This updates planner statistics and retains all data and IDs:
+
+```bash
+uv run --no-sync python - <<'PY'
+import sqlite3
+with sqlite3.connect("file:/data/shared/mlflow/mlflow.db?mode=rw", uri=True) as db:
+    db.execute("ANALYZE")
+PY
+```
 
 See MLflow's [server configuration](https://mlflow.org/docs/latest/self-hosting/architecture/tracking-server/) and [CLI settings](https://mlflow.org/docs/latest/api_reference/cli.html#server).

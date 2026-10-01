@@ -33,6 +33,7 @@ class SyncResult:
     new_steps: int = 0
     new_scores: int = 0
     error: Optional[str] = None
+    warning: Optional[str] = None
 
 
 def run_start_ns(run_dir: Path) -> int:
@@ -54,7 +55,9 @@ def sync_run(experiment_id: str, run_dir: Path) -> SyncResult:
         provenance = read_provenance(run_dir)
         logs = read_decision_logs(run_dir, run.records)
     except (OSError, ValueError) as error:
-        return SyncResult(run_dir, error=str(error))
+        return SyncResult(
+            run_dir, error=f"Could not read run; no new data imported: {error}"
+        )
 
     try:
         source_run_id = preserve_run(experiment_id, run, provenance)
@@ -79,9 +82,19 @@ def sync_run(experiment_id: str, run_dir: Path) -> SyncResult:
             log_session_score(trace_ids[score.first_record_index], score)
         MlflowClient().set_terminated(source_run_id)
     except (MlflowException, OSError, ValueError) as error:
-        return SyncResult(run_dir, run_label(run), error=str(error))
+        return SyncResult(
+            run_dir,
+            run_label(run),
+            error=f"Import interrupted; partial data may be present: {error}",
+        )
 
-    return SyncResult(run_dir, run_label(run), len(new_steps), len(new_scores))
+    return SyncResult(
+        run_dir,
+        run_label(run),
+        len(new_steps),
+        len(new_scores),
+        warning=run.score_warning,
+    )
 
 
 def sync_tree(experiment_id: str, root: Path) -> Tuple[SyncResult, ...]:

@@ -1,67 +1,31 @@
 # align-utils
 
-Utilities for parsing and processing align-system experiment data.
+Parse align-system run data, load Open World episodes, and export CSV/TSV. Install with the [repository setup](../../README.md#install).
 
-## Installation
-
-```bash
-pip install align-utils
-```
-
-## Usage
-
-### Working with Models
+## Read and write files
 
 ```python
-from align_utils.models import AlignExperiment, AlignDataset
+from align_utils.discovery import load_json, load_yaml, save_json, save_yaml
 
-experiment = AlignExperiment(
-    name="test_experiment",
-    version="1.0.0",
-    description="A test experiment",
-    parameters={"learning_rate": 0.001},
-    results={"accuracy": 0.95}
-)
-
-dataset = AlignDataset(
-    name="training_data",
-    path="/data/train.csv",
-    format="csv",
-    metadata={"size": 10000}
-)
-```
-
-### Parsing Files
-
-```python
-from align_utils.discovery import load_yaml, load_json, save_yaml, save_json
-
-# Load configuration
 config = load_yaml("config.yaml")
 data = load_json("data.json")
-
-# Save data
 save_yaml(config, "output.yaml")
 save_json(data, "output.json")
 ```
 
-### Exporting Data
+## Export rows
 
 ```python
 from align_utils.exporters import export_to_csv, export_to_tsv
 
-data = [
-    {"name": "exp1", "accuracy": 0.95},
-    {"name": "exp2", "accuracy": 0.97}
-]
-
-export_to_csv(data, "results.csv")
-export_to_tsv(data, "results.tsv")
+rows = [{"run": "baseline", "score": 0.8}, {"run": "aligned", "score": 0.9}]
+export_to_csv(rows, "results.csv")
+export_to_tsv(rows, "results.tsv")
 ```
 
-### Open-World Runs
+## Load Open World runs
 
-`align_utils.open_world` loads run directories written by align-system's open-world drivers, including runs still in progress.
+Find runs recursively and load their episodes, including unfinished runs. See [supported files](../align-mlflow/INGESTION.md#supported-files).
 
 ```python
 from pathlib import Path
@@ -72,17 +36,9 @@ for run_dir in find_open_world_runs(Path("outputs")):
     for episode in run.episodes:
         score = episode.outcome.session_alignment_score if episode.outcome else None
         print(episode.scenario_id, episode.alignment_target_id, len(episode.records), score)
-        for record in episode.records:
-            action = record.output.action
-            print("  ", action.action_type, action.character_id, action.parameters)
 ```
 
-- Every record is kept in order; repeated actions are not collapsed.
-- `record.source` retains the complete original JSON values, including unknown fields and explicit nulls, separately from the validated fields. It is excluded from model dumps.
-- A new episode starts when the scenario or target changes or when TA3's clock (`elapsed_time`) restarts, which separates the repeated sessions of unaligned ADMs that record no target.
-- Episode outcomes are the completion lines in `raw_align_system.log`, paired with episodes in order. `EpisodeOutcome.alignment_target_id` is the target TA3 scored against, known even for unaligned runs.
-- `record.chosen_by_driver` marks actions the driver took itself; their `choice_info` may belong to the previous step.
-
-## Development
-
-This package is part of the align-tools monorepo. See the main repository for development instructions.
+- **Records:** actions retain their order, including repeats. `record.source` keeps original JSON values and unknown fields; model dumps exclude it.
+- **Episodes:** scenario or target changes start a new episode. A clock reset in the same or initial scene starts another; entering a later scene can reset its clock within the current episode. Missing scene metadata uses the clock-only fallback.
+- **Scores:** matching completion lines in `raw_align_system.log` supply `episode.outcome`. A mismatch sets `run.score_warning` and omits scores while retaining actions. The scored target is `episode.outcome.alignment_target_id`, including for unaligned ADMs.
+- **Driver actions:** `record.chosen_by_driver` marks actions taken by the driver; their `choice_info` may describe the previous step.

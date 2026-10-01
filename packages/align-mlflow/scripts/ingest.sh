@@ -1,12 +1,25 @@
 #!/usr/bin/env bash
+# Import Open World runs recursively: pass one run folder or a parent, not a JSON file.
+# Each run needs input_output.json and .hydra/config.yaml with an itm_open_world driver.
+# Set MLFLOW_TRACKING_URI (server URL) and MLFLOW_EXPERIMENT_NAME; see ../INGESTION.md.
+
 set -euo pipefail
 
+usage() {
+    printf 'Usage: %s SOURCE_DIRECTORY\n\n' "$0"
+    printf '%s\n' \
+        'Pass one run folder or a parent; nested runs are scanned recursively.' \
+        'Pass a directory, not input_output.json.' \
+        'MLFLOW_TRACKING_URI: server URL or absolute SQLite URI (required).' \
+        'MLFLOW_EXPERIMENT_NAME: experiment (default: align-system open world).'
+}
+
 if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
-    printf 'Usage: %s SOURCE_DIRECTORY\n' "$0"
+    usage
     exit 0
 fi
 if [[ $# -ne 1 ]]; then
-    printf 'Usage: %s SOURCE_DIRECTORY\n' "$0" >&2
+    usage >&2
     exit 2
 fi
 
@@ -17,13 +30,12 @@ source_dir="$(cd -- "$1" && pwd)"
 
 export MLFLOW_DISABLE_AGENT_HINT=1
 export PYTHONUNBUFFERED=1
-experiment="${MLFLOW_EXPERIMENT_NAME:-align-system open world}"
+export MLFLOW_EXPERIMENT_NAME="${MLFLOW_EXPERIMENT_NAME:-align-system open world}"
 
 # Choose artifact storage once; subsequent imports reuse the experiment.
-uv run --project "$repo_dir" --no-sync python - "$experiment" <<'PY'
+uv run --project "$repo_dir" --no-sync python - <<'PY'
 import os
 import sqlite3
-import sys
 
 from mlflow import MlflowClient
 from sqlalchemy.engine import make_url
@@ -39,7 +51,7 @@ else:
     except ValueError as error:
         raise SystemExit(str(error)) from error
 client = MlflowClient()
-name = sys.argv[1]
+name = os.environ["MLFLOW_EXPERIMENT_NAME"]
 if client.get_experiment_by_name(name) is None:
     client.create_experiment(name, artifact_location=artifact_root)
 if tracking_uri.startswith("sqlite:"):
@@ -47,7 +59,5 @@ if tracking_uri.startswith("sqlite:"):
         database.execute("PRAGMA journal_mode=WAL")
 PY
 
-printf 'Importing %s into experiment %s\n' "$source_dir" "$experiment"
-exec uv run --project "$repo_dir" --no-sync align-mlflow sync "$source_dir" \
-    --tracking-uri "$MLFLOW_TRACKING_URI" \
-    --experiment "$experiment"
+printf 'Importing %s into experiment %s\n' "$source_dir" "$MLFLOW_EXPERIMENT_NAME"
+exec uv run --project "$repo_dir" --no-sync align-mlflow sync "$source_dir"

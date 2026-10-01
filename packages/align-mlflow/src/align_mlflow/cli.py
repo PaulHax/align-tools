@@ -1,12 +1,14 @@
 """Import completed open-world runs, or optionally watch growing runs."""
 
+import sqlite3
 from pathlib import Path
 
 import click
 
-from .store import connect
+from .maintenance import refresh_sqlite_statistics
 from .refresh_cards import refresh_cards as refresh_card_payloads
 from .refresh_components import refresh_components as refresh_component_payloads
+from .store import connect
 from .sync import SyncResult, sync_run, sync_tree
 from .watch import watch as watch_runs
 
@@ -18,35 +20,34 @@ _tracking_uri_option = click.option(
     envvar="MLFLOW_TRACKING_URI",
     default="sqlite:///mlflow.db",
     show_default=True,
-    help="MLflow tracking URI. Point `mlflow server --backend-store-uri` at the same store.",
+    show_envvar=True,
+    help="MLflow server URL or local database URI.",
 )
 _experiment_option = click.option(
     "--experiment",
+    envvar="MLFLOW_EXPERIMENT_NAME",
     default="align-system open world",
     show_default=True,
+    show_envvar=True,
     help="MLflow experiment that receives the traces.",
 )
 
 
 def describe(result: SyncResult) -> str:
     if result.error is not None:
-        return f"{result.run_dir}: not synced ({result.error})"
-    return (
+        return f"FAILED {result.run_dir}: {result.error}"
+    summary = (
         f"{result.run_label}: {result.new_steps} new steps, "
         f"{result.new_scores} new episode scores"
     )
+    if result.warning:
+        summary += f"\nWARNING {result.run_dir}: {result.warning}"
+    return summary
 
 
 @click.group()
 def cli() -> None:
-    """Load align-system open-world runs into MLflow.
-
-    Start with sync PATH to import a completed run or sweep, then open the
-    MLflow UI on the same store. Use watch for optional inspection during a run.
-
-    Each step becomes a trace and each episode a session; group traces by
-    session in the MLflow UI to read an episode turn by turn.
-    """
+    """Import align-system Open World runs into MLflow."""
 
 
 @cli.command()
@@ -54,20 +55,42 @@ def cli() -> None:
 @_tracking_uri_option
 @_experiment_option
 def sync(path: Path, tracking_uri: str, experiment: str) -> None:
-    """Import a completed run or sweep at PATH, then exit.
+    """Import Open World runs at PATH, then exit.
 
-    PATH can be one run directory or a parent containing several runs.
-    Rerun to resume interrupted imports or add missing steps and scores.
-    Available steps can be imported even if episode outcomes are absent.
+    Pass one run directory or a parent; nested runs are scanned recursively.
+    Rerun to resume or add records. Completion scores are optional.
     """
     experiment_id = connect(tracking_uri, experiment)
     results = sync_tree(experiment_id, path)
     if not results:
-        click.echo(f"No open-world runs found under {path}")
+        click.echo(f"No open-world runs found under {path}; nothing imported.")
+        return
     for result in results:
         click.echo(describe(result))
-    if any(result.error is not None for result in results):
+
+    try:
+        if refresh_sqlite_statistics(tracking_uri):
+            click.echo("SQLite query statistics refreshed.")
+    except (OSError, ValueError, sqlite3.Error) as error:
+        click.echo(
+            f"WARNING: SQLite statistics refresh failed: {error}. "
+            "Imported data is retained.",
+            err=True,
+        )
+
+    failed = sum(result.error is not None for result in results)
+    if failed:
+        click.echo(
+            f"Import failed: {failed} of {len(results)} runs failed; "
+            f"{len(results) - failed} succeeded. "
+            "Fix the errors above and rerun to resume; existing imports are retained."
+        )
         raise SystemExit(1)
+    click.echo(
+        f"Import successful: {len(results)} run{'s' if len(results) != 1 else ''}, "
+        f"{sum(result.new_steps for result in results)} new traces, "
+        f"{sum(result.new_scores for result in results)} new episode scores."
+    )
 
 
 @cli.command()

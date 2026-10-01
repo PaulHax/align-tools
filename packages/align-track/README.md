@@ -1,47 +1,13 @@
 # align-track
 
-Organizing utilities for align-system experiments.
+List align-system run folders, ADM names, and alignment targets. Install with the [repository setup](../../README.md#install).
 
-## Overview
+## List runs
 
-The `align-track` package provides tools for organzing experimental data from the align-system.
-
-## Installation
+From the repository root, pass one run folder or a parent containing runs:
 
 ```bash
-pip install align-track
+uv run --no-sync list-runs /path/to/runs
 ```
 
-## Development
-
-This package is part of the align-tools monorepo and depends on `align-utils`.
-
-For local development:
-```bash
-uv pip install -e .
-```
-
-## Features
-
-- Experiment tracking
-- Data aggregation and analysis
-- Integration with align-utils for data parsing
-
-## Usage
-
-### List Experiment Runs
-
-To list all experiment runs in a directory:
-
-```bash
-uv run python -m align_track.list_runs <experiment_directory>
-
-# Example
-uv run python -m align_track.list_runs ../align-utils/experiment-data/test-experiments
-```
-
-This will display a table with:
-- Run Path: The experiment run identifier
-- ADM Name: The ADM configuration used
-- Alignment: The alignment configuration
-- Scenarios: Number of scenarios in the run
+Run folders need `input_output.json`; `.hydra/config.yaml`, `timing.json`, and `scores.json` are read when present. The table shows **Run Path**, **ADM Name**, **Alignment**, and **Scenarios** (currently the input record count).
