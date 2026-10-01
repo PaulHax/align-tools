@@ -21,7 +21,7 @@
    Supply **one run folder** or a **parent directory containing several runs**.
    Keep the experiment name to compare new runs with earlier results over time.
 
-3. **Open the results:** <http://10.50.57.47:5000>. Select **Open World Phase 2** and open **Traces**. Choose **All time** for older runs.
+3. **Open the results:** [Open World sessions](http://10.50.57.47:5000/#/experiments/1/traces?workflowType=genai&startTimeLabel=ALL&groupBy=session). This opens **Open World Phase 2** with **All time** selected and traces grouped by **session**.
 
 **Rerun step 2** to resume or add records. Initially, run **one bulk import at a time**; browsing and annotations can continue.
 
