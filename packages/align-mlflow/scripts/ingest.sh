@@ -1,12 +1,25 @@
 #!/usr/bin/env bash
+# Import Open World runs into MLflow; scan SOURCE_DIRECTORY recursively.
+# Pass a timestamp folder for one run, or a parent folder for multiple runs.
+# Each run needs input_output.json and .hydra/config.yaml.
+# Set MLFLOW_TRACKING_URI and MLFLOW_EXPERIMENT_NAME; see ../INGESTION.md.
+
 set -euo pipefail
 
+usage() {
+    printf 'Usage: %s SOURCE_DIRECTORY\n\n' "$0"
+    printf '%s\n' \
+        'Recursively import Open World run folders under SOURCE_DIRECTORY.' \
+        'Pass one run folder or a parent directory containing several runs.' \
+        'Pass a directory, not input_output.json.'
+}
+
 if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
-    printf 'Usage: %s SOURCE_DIRECTORY\n' "$0"
+    usage
     exit 0
 fi
 if [[ $# -ne 1 ]]; then
-    printf 'Usage: %s SOURCE_DIRECTORY\n' "$0" >&2
+    usage >&2
     exit 2
 fi
 
