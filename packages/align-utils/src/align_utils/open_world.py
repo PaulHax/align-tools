@@ -180,6 +180,7 @@ class OpenWorldRun(BaseModel):
     version: Optional[str] = None
     username: Optional[str] = None
     timing: Optional[TimingData] = None
+    score_warning: Optional[str] = None
 
     @property
     def records(self) -> Tuple[OpenWorldRecord, ...]:
@@ -190,30 +191,44 @@ def parse_records(raw_records: Iterable[Dict[str, Any]]) -> Tuple[OpenWorldRecor
     return tuple(OpenWorldRecord.model_validate(raw) for raw in raw_records)
 
 
-def starts_episode(previous: OpenWorldRecord, current: OpenWorldRecord) -> bool:
+def starts_episode(
+    previous: OpenWorldRecord,
+    current: OpenWorldRecord,
+    first_scene_id: Optional[str] = None,
+) -> bool:
     """Whether ``current`` begins a new scenario session.
 
     input_output.json has no session marker. Unaligned ADMs record a null
-    target for every session of a scenario, so TA3's clock restarting is what
-    separates repeated sessions.
+    target for every session of a scenario. A clock restart in the initial
+    scene separates repeated sessions; later scenes may reset their own clocks.
     """
     previous_key = (previous.input.scenario_id, previous.input.alignment_target_id)
     current_key = (current.input.scenario_id, current.input.alignment_target_id)
+    if current_key != previous_key:
+        return True
+    before = previous.input.full_state
+    after = current.input.full_state
+    if after.elapsed_time >= before.elapsed_time:
+        return False
+    previous_scene = before.meta_info.scene_id
+    current_scene = after.meta_info.scene_id
     return (
-        current_key != previous_key
-        or current.input.full_state.elapsed_time
-        < previous.input.full_state.elapsed_time
+        first_scene_id is None
+        or previous_scene is None
+        or current_scene is None
+        or current_scene == previous_scene
+        or current_scene == first_scene_id
     )
 
 
 def split_episodes(records: Sequence[OpenWorldRecord]) -> Tuple[Episode, ...]:
     if not records:
         return ()
-    starts = [0] + [
-        index
-        for index in range(1, len(records))
-        if starts_episode(records[index - 1], records[index])
-    ]
+    starts = [0]
+    for index in range(1, len(records)):
+        first_scene = records[starts[-1]].input.full_state.meta_info.scene_id
+        if starts_episode(records[index - 1], records[index], first_scene):
+            starts.append(index)
     ends = starts[1:] + [len(records)]
     return tuple(
         Episode(
@@ -324,8 +339,8 @@ def load_run(run_dir: Path) -> OpenWorldRun:
     """Load an open-world run directory.
 
     Raises OSError when input_output.json is missing and ValueError when it is
-    not complete JSON (it may be mid-write) or when logged completions cannot
-    be paired with episodes. Config, meta and timing files are optional.
+    not complete JSON (it may be mid-write). Unmatched optional scores are
+    omitted and reported in score_warning. Config, meta and timing are optional.
     """
     log_path = run_dir / RAW_LOG_FILE
     # Completions are logged after their episode's records are saved, so
@@ -336,11 +351,20 @@ def load_run(run_dir: Path) -> OpenWorldRun:
         else ()
     )
     records = parse_records(json.loads((run_dir / INPUT_OUTPUT_FILE).read_text()))
+    episodes = split_episodes(records)
+    score_warning = None
+    try:
+        episodes = pair_outcomes(episodes, outcomes)
+    except ValueError:
+        score_warning = (
+            f"Session scores skipped: {RAW_LOG_FILE} does not match the action data."
+        )
     meta = _as_dict(_read_optional(run_dir / META_FILE, json.loads))
     raw_config = _as_dict(_read_optional(run_dir / CONFIG_FILE, yaml.safe_load))
     return OpenWorldRun(
         path=run_dir,
-        episodes=pair_outcomes(split_episodes(records), outcomes),
+        episodes=episodes,
+        score_warning=score_warning,
         config=_experiment_config(raw_config),
         adm_profile=_optional_str(
             _as_dict(raw_config.get("interface")).get("adm_profile")

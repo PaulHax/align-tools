@@ -9,11 +9,13 @@ import sys
 from pathlib import Path
 
 import pytest
+from click.testing import CliRunner
 from mlflow import MlflowClient
 from mlflow.exceptions import MlflowException
 from mlflow.tracing.client import TracingClient
 from open_world_fixtures import SCENARIO, completion_line, episode_records, write_run
 
+from align_mlflow.cli import cli
 from align_mlflow.store import connect
 from align_mlflow.sync import sync_run
 
@@ -76,6 +78,51 @@ def child_names(trace):
     return [span.name for span in sorted(children, key=lambda span: span.start_time_ns)]
 
 
+def test_cli_uses_destination_environment_and_explicit_overrides(tmp_path):
+    source = write_run(
+        tmp_path / "source" / "2026-08-31__09-17-11", episode_records(None)[:1], []
+    )
+    destinations = []
+    for name in ("environment experiment", "explicit experiment"):
+        uri = f"sqlite:///{tmp_path / (name + '.db')}"
+        client = MlflowClient(tracking_uri=uri)
+        eid = client.create_experiment(
+            name, artifact_location=(tmp_path / name).as_uri()
+        )
+        destinations.append((uri, name, client, eid))
+    environment_uri, environment_name, environment_client, environment_eid = (
+        destinations[0]
+    )
+    explicit_uri, explicit_name, explicit_client, explicit_eid = destinations[1]
+    env = {
+        "MLFLOW_TRACKING_URI": environment_uri,
+        "MLFLOW_EXPERIMENT_NAME": environment_name,
+        "MLFLOW_DISABLE_AGENT_HINT": "1",
+    }
+
+    result = CliRunner().invoke(cli, ["sync", str(source)], env=env)
+    assert result.exit_code == 0, result.output
+    assert len(environment_client.search_traces(locations=[environment_eid])) == 1
+    assert not explicit_client.search_traces(locations=[explicit_eid])
+
+    result = CliRunner().invoke(
+        cli,
+        [
+            "sync",
+            str(source),
+            "--tracking-uri",
+            explicit_uri,
+            "--experiment",
+            explicit_name,
+        ],
+        env=env,
+    )
+    assert result.exit_code == 0, result.output
+    assert len(explicit_client.search_traces(locations=[explicit_eid])) == 1
+    assert len(environment_client.search_traces(locations=[environment_eid])) == 1
+    assert explicit_client.get_experiment_by_name(environment_name) is None
+
+
 def session(trace):
     return trace.info.trace_metadata["mlflow.trace.session"]
 
@@ -92,6 +139,10 @@ def test_sync_logs_each_step_as_a_trace_in_its_episode_session(tmp_path):
 
     assert result.returncode == 0, result.stderr
     assert f"{RUN}: 14 new steps, 2 new episode scores" in result.stdout
+    assert (
+        "Import successful: 1 run, 14 new traces, 2 new episode scores."
+        in result.stdout
+    )
     traces = logged_traces(tracking_uri)
     assert {trace.info.tags["align.source_version"] for trace in traces} == {"0.5.11"}
     key = traces[0].info.tags["align.run_key"]
@@ -158,10 +209,57 @@ def test_sync_again_adds_nothing(tmp_path):
     again = sync(tmp_path, tracking_uri)
 
     assert f"{RUN}: 0 new steps, 0 new episode scores" in again.stdout
+    assert (
+        "Import successful: 1 run, 0 new traces, 0 new episode scores." in again.stdout
+    )
     assert len(logged_traces(tracking_uri)) == 7
     client = MlflowClient(tracking_uri=tracking_uri)
     experiment = client.get_experiment_by_name(EXPERIMENT)
     assert len(client.search_runs([experiment.experiment_id])) == 1
+
+
+def test_bad_optional_scores_warn_without_blocking_actions_and_can_be_retried(tmp_path):
+    source = write_run(
+        tmp_path / "2026-08-31__09-17-11",
+        episode_records(MERIT_LOW) + episode_records(MERIT_HIGH),
+        [completion_line(MERIT_LOW, 0.83), completion_line(MERIT_LOW, 0.31)],
+    )
+    tracking_uri = f"sqlite:///{tmp_path}/mlflow.db"
+
+    imported = sync(source, tracking_uri)
+
+    assert imported.returncode == 0, imported.stderr
+    assert "WARNING" in imported.stdout
+    assert (
+        "Session scores skipped: raw_align_system.log does not match the action data."
+        in imported.stdout
+    )
+    assert (
+        "Import successful: 1 run, 14 new traces, 0 new episode scores."
+        in imported.stdout
+    )
+    before = logged_traces(tracking_uri)
+    assert len(before) == 14
+    assert all(not trace.info.assessments for trace in before)
+
+    (source / "raw_align_system.log").write_text(
+        completion_line(MERIT_LOW, 0.83) + completion_line(MERIT_HIGH, 0.31)
+    )
+    resumed = sync(source, tracking_uri)
+
+    assert resumed.returncode == 0, resumed.stderr
+    assert "WARNING" not in resumed.stdout
+    assert (
+        "Import successful: 1 run, 0 new traces, 2 new episode scores."
+        in resumed.stdout
+    )
+    after = logged_traces(tracking_uri)
+    assert [trace.info.trace_id for trace in after] == [
+        trace.info.trace_id for trace in before
+    ]
+    assert [
+        assessment.value for trace in after for assessment in trace.info.assessments
+    ] == [0.83, 0.31]
 
 
 def test_cli_creates_readable_session_cards_without_losing_source(tmp_path):
@@ -318,8 +416,39 @@ def test_sync_follows_a_run_while_it_is_written(tmp_path):
     (run_dir / "input_output.json").write_text(text[: len(text) // 2])
     mid_write = sync(tmp_path, tracking_uri)
     assert mid_write.returncode == 1
-    assert "not synced" in mid_write.stdout
+    assert "FAILED" in mid_write.stdout
+    assert "Could not read run; no new data imported" in mid_write.stdout
+    assert "Import failed: 1 of 1 runs failed; 0 succeeded." in mid_write.stdout
     assert len(logged_traces(tracking_uri)) == 9
+
+
+def test_failed_run_summary_preserves_successful_imports(tmp_path):
+    good = write_run(
+        tmp_path / "good" / "2026-08-31__09-17-11",
+        episode_records(MERIT_LOW)[:2],
+        [completion_line(MERIT_LOW, 0.83)],
+    )
+    bad = write_run(
+        tmp_path / "bad" / "2026-08-31__10-17-11",
+        episode_records(MERIT_LOW)[:1],
+    )
+    (bad / "input_output.json").write_text("[")
+    uri = f"sqlite:///{tmp_path}/mlflow.db"
+    result = sync(tmp_path, uri)
+    assert result.returncode == 1
+    assert f"FAILED {bad}: Could not read run; no new data imported" in result.stdout
+    assert "Import failed: 1 of 2 runs failed; 1 succeeded." in result.stdout
+    assert "rerun to resume; existing imports are retained" in result.stdout
+    before = logged_traces(uri)
+    assert len(before) == 2
+    retry = sync(good, uri)
+    assert retry.returncode == 0
+    assert (
+        "Import successful: 1 run, 0 new traces, 0 new episode scores." in retry.stdout
+    )
+    assert [t.info.trace_id for t in logged_traces(uri)] == [
+        t.info.trace_id for t in before
+    ]
 
 
 def test_unaligned_episode_scores_name_the_target_ta3_used(tmp_path):

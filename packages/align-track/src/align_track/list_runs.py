@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""CLI tool to display a table of runs from an align-utils manifest."""
+"""List align-system runs in a directory tree."""
 
 import sys
 from pathlib import Path
@@ -62,7 +62,7 @@ def format_table(runs: List[Dict]) -> List[str]:
 
 
 def process_manifest_path(manifest_path: Path) -> List[Dict]:
-    """Process a manifest file or directory containing runs using align-utils."""
+    """Parse one run directory or a parent containing runs using align-utils."""
     # Parse experiments using align-utils
     experiments = parse_experiments_directory(manifest_path)
 
@@ -95,13 +95,10 @@ def main(args: Optional[List[str]] = None) -> int:
         args = sys.argv[1:]
 
     if not args or args[0] in ["-h", "--help"]:
-        print("Usage: list_runs <manifest_file_or_directory>")
-        print(
-            "\nDisplay a table of all runs from an align-utils manifest or directory."
-        )
-        print("\nA run is defined as a directory containing:")
-        print("  - input_output.json")
-        print("  - .hydra/config.yaml")
+        print("Usage: list-runs RUN_DIRECTORY")
+        print("\nPass one run folder or a parent; nested runs are scanned recursively.")
+        print("Each run needs input_output.json.")
+        print("Optional: .hydra/config.yaml, timing.json, scores.json.")
         return 0
 
     manifest_path = Path(args[0])
@@ -121,7 +118,7 @@ def main(args: Optional[List[str]] = None) -> int:
         return 0
 
     except Exception as e:
-        print(f"Error processing manifest: {e}", file=sys.stderr)
+        print(f"Error reading runs: {e}", file=sys.stderr)
         return 1
 
 

@@ -4,8 +4,10 @@ import json
 import os
 import re
 import signal
+import sqlite3
 import subprocess
 import threading
+from contextlib import closing
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.request import urlopen
@@ -84,6 +86,15 @@ def test_import_server_and_views_share_configured_storage(tmp_path, transport):
             )
             assert result.returncode == 0, result.stderr
             assert expected in result.stdout
+            assert "Import successful: 1 run," in result.stdout
+            assert ("SQLite query statistics refreshed." in result.stdout) == (
+                transport == "sqlite"
+            )
+        with closing(sqlite3.connect(storage / "tracking.db")) as db:
+            stats_exist = db.execute(
+                "SELECT 1 FROM sqlite_master WHERE name='sqlite_stat1'"
+            ).fetchone()
+            assert bool(stats_exist) == (transport == "sqlite")
 
     if transport == "sqlite":
         import_twice(env)

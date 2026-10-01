@@ -1,123 +1,41 @@
 # align-tools
 
-A monorepo containing utility packages and tools to support the align-system codebase. Built with `uv` workspaces for dependency management and automated semantic versioning for PyPI publishing.
+Tools for reading align-system runs and importing Open World results into MLflow.
 
-## Overview
+| Package | Use |
+| --- | --- |
+| [align-mlflow](packages/align-mlflow/README.md) | [Import runs](packages/align-mlflow/INGESTION.md) or [manage a shared server](packages/align-mlflow/SERVER.md) |
+| [align-utils](packages/align-utils/README.md) | Parse run data, load Open World episodes, and export CSV/TSV |
+| [align-track](packages/align-track/README.md) | List run folders, ADMs, and alignment targets |
 
-The `align-tools` repository is organized as a monorepo using `uv`'s workspace feature.
+## Install
 
+Requires Git and [uv](https://docs.astral.sh/uv/getting-started/installation/); Python 3.10+.
 
-## Packages
-
-### [align-utils](packages/align-utils/README.md)
-Utilities for parsing and processing align-system experiment data.
-- Pydantic models for align-system input_output.json data structures
-- Open-world run loading: ordered steps split into episodes with TA3 outcomes
-- YAML/JSON parsing utilities
-- Data export utilities (CSV)
-
-### [align-track](packages/align-track/README.md)
-Experiment tracking and organization utilities for align-system.
-- Experiment tracking capabilities
-
-### [align-mlflow](packages/align-mlflow/README.md)
-Import open-world runs with `sync` and inspect episodes in MLflow; optional `watch` for growing runs.
-
-Start with [importing Align runs](packages/align-mlflow/INGESTION.md) or [managing a shared MLflow server](packages/align-mlflow/SERVER.md). Each guide starts with a Quick Start.
-
-## Quick Start
-
-### Installation
-
-Install uv if you haven't already:
 ```bash
-curl -LsSf https://astral.sh/uv/install.sh | sh
-```
-
-Clone the repository and set up the development environment:
-```bash
-git clone https://github.com/paulhax/align-tools.git
+git clone https://github.com/PaulHax/align-tools.git
 cd align-tools
-uv sync --dev
+uv sync --frozen --dev
 ```
 
-### Using Published Packages
-
-Individual packages are published to PyPI and can be installed directly:
-```bash
-pip install align-utils
-```
+Server setup also installs the session UI; follow the [server guide](packages/align-mlflow/SERVER.md#quick-start).
 
 ## Development
 
-### Running Tests
+Run the CI checks from the repository root:
 
-Test all packages:
 ```bash
-uv run pytest packages/
+uv run --no-sync ruff check .
+uv run --no-sync ruff format --check .
+uv run --no-sync mypy packages/
+uv run --no-sync pytest packages/
 ```
 
-Test a specific package:
-```bash
-uv run pytest packages/align-utils/
-```
+- **Format:** `uv run --no-sync ruff format .`
+- **Package tests:** `uv run --no-sync pytest packages/align-mlflow/`
+- **Dependencies:** `uv add --package align-utils requests`; `uv add --dev pytest-mock` for workspace development dependencies.
+- **Contribute:** branch from `main`, run the checks, and open a pull request. Use `feat:` or `fix:` commit prefixes; mark breaking changes with `BREAKING CHANGE:`.
 
-### Code Quality
+## Releases
 
-Format code:
-```bash
-uv run ruff format .
-```
-
-Lint code:
-```bash
-uv run ruff check . --fix
-```
-
-Type checking:
-```bash
-uv run mypy packages/
-```
-
-### Adding Dependencies
-
-Add a dependency to a specific package:
-```bash
-cd packages/align-utils
-uv add requests
-```
-
-Add a development dependency to the workspace:
-```bash
-uv add --dev pytest-mock
-```
-
-## Release Process
-
-This repository uses semantic versioning and automated releases:
-
-1. Commit messages follow the Angular convention:
-   - `feat:` - New features (minor version bump)
-   - `fix:` - Bug fixes (patch version bump)
-   - `BREAKING CHANGE:` - Breaking changes (major version bump)
-
-2. When changes are merged to `main`, the release workflow:
-   - Analyzes commits since the last release
-   - Bumps versions for all packages according to semantic versioning
-   - Updates changelog
-   - Creates git tag
-   - Builds and publishes to PyPI
-   - Creates GitHub release
-
-## Contributing
-
-1. Create a feature branch from `main`
-2. Make your changes following the commit message convention
-3. Ensure tests pass and code is formatted
-4. Create a pull request
-5. Once merged, automated release will handle versioning and publishing
-
-## Links
-
-- [PyPI - align-utils](https://pypi.org/project/align-utils/)
-- [PyPI - align-track](https://pypi.org/project/align-track/)
+The [release workflow](.github/workflows/release.yml) runs on `main`, tags semantic versions, builds the packages, and publishes [align-utils](https://pypi.org/project/align-utils/) and [align-track](https://pypi.org/project/align-track/) to PyPI. Install `align-mlflow` from this checkout.
