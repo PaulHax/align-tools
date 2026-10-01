@@ -1,6 +1,6 @@
 # MLflow server and storage
 
-For a short startup recipe, see the [server quickstart](QUICKSTART.md).
+For startup instructions, see [Start a shared MLflow server](START-SHARED-SERVER.md).
 
 MLflow has three parts:
 
