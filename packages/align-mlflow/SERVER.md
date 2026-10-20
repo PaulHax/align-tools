@@ -32,12 +32,12 @@ These steps create a new instance. For the installed ITM server, use the [servic
    ```bash
    export MLFLOW_TRACKING_URI='http://10.50.57.47:5000'
    export MLFLOW_EXPERIMENT_NAME='Open World Phase 2'
-   ./packages/align-mlflow/scripts/views.sh "$MLFLOW_TRACKING_URI"
+   ./packages/align-mlflow/scripts/views.sh "$MLFLOW_TRACKING_URI" --by-adm
    ```
 
-   Open the printed **Session comparison** link, or select it from the Views menu. The grouped table shows scenario, ADM, KDMA alignment target, driver, model, and run columns, with Input and Output previews hidden. Use the filter control to select a tag such as `adm`, `scenario_id`, or `alignment_target_id`.
+   Open the printed **Session comparison** link, or select it from the Views menu. The grouped table shows scenario, ADM, KDMA alignment target, driver, model, and run columns, with Input and Output previews hidden. Select an **ADM:** view for a recorded ADM without typing a filter value.
 
-   Run this command once per experiment or again to restore the named presets. Other named views are retained. Save personal changes under another view name before restoring a preset. See [session UI](SESSION-UI.md) for display controls.
+   Rerun after importing new ADMs or to restore the named presets. Other named views are retained. Save personal changes under another view name before restoring a preset. See [saved views](SESSION-UI.md#saved-views) for definitions, version requirements, and filtering limits.
 
 ## Manage the instance on ITM
 

@@ -1,10 +1,12 @@
 """Install the example views using MLflow 3.16.1's internal saved-view format.
 
 This is an optional UI recipe, independent of ingestion. It updates only the
-named views in views.json. The server version must match the verified format.
+named presets and, with --by-adm, comparison views for recorded ADM labels.
+The server version must match the verified format.
 """
 
 import argparse
+import hashlib
 import json
 import time
 from pathlib import Path
@@ -17,11 +19,41 @@ from mlflow.utils.rest_utils import http_request
 PREFIX = "mlflow.tracesV4ViewState."
 
 
+def adm_views(client: MlflowClient, experiment_id: str, comparison: dict) -> list[dict]:
+    labels: set[str] = set()
+    token = None
+    while True:
+        page = client.search_runs([experiment_id], max_results=1000, page_token=token)
+        labels.update(label for run in page if (label := run.data.tags.get("adm")))
+        token = page.token
+        if not token:
+            break
+    return [
+        {
+            "id": "open-world-adm-" + hashlib.sha256(label.encode()).hexdigest()[:12],
+            "name": f"ADM: {label}",
+            "state": {
+                **comparison,
+                "single": {**comparison["single"], "startTimeLabel": "ALL"},
+                "filters": [
+                    {"field": "tag", "key": "adm", "operator": "=", "value": label}
+                ],
+            },
+        }
+        for label in sorted(labels)
+    ]
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--tracking-uri", required=True)
     parser.add_argument("--ui-url", required=True)
     parser.add_argument("--experiment", default="align-system open world")
+    parser.add_argument(
+        "--by-adm",
+        action="store_true",
+        help="Also create a Session comparison view for each recorded run tag 'adm'",
+    )
     args = parser.parse_args()
     ui_url = args.ui_url.rstrip("/")
     response = http_request(get_default_host_creds(ui_url), "/version", "GET")
@@ -43,6 +75,13 @@ def main() -> None:
             saved[key] = json.loads(value)
 
     views = json.loads(Path(__file__).with_name("views.json").read_text())
+    if args.by_adm:
+        comparison = next(
+            view["state"]
+            for view in views
+            if view["id"] == "open-world-session-comparison"
+        )
+        views.extend(adm_views(client, experiment.experiment_id, comparison))
     destinations = []
     for view in views:
         matches = [key for key, value in saved.items() if value["name"] == view["name"]]
