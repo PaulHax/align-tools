@@ -89,31 +89,33 @@ _CORRUPTED_PLAN_FIELDS: list[dict[str, object]] = [
 
 
 @pytest.mark.parametrize(
-    "raw_times",
+    "raw_times, expected",
     [
-        None,
-        [0.5],
-        [0.5, 0.5, 0.5],
-        [0.5, float("nan")],
-        [float("inf"), 0.5],
-        [-0.5, 0.5],
+        (None, [1_000, 1_000]),
+        ([0.5], [1_000, 1_000]),
+        ([0.5, 0.5, 0.5], [1_000, 1_000]),
+        ([0.5, float("nan")], [500_000_000, 1_000]),
+        ([float("inf"), 0.5], [1_000, 500_000_000]),
+        ([-0.5, 0.5], [1_000, 500_000_000]),
+        ([1e300, 0.5], [1_000, 500_000_000]),
     ],
 )
-def test_incomplete_or_invalid_action_timing_keeps_minimum_timeline(
-    tmp_path, raw_times
+def test_unresolved_action_timing_uses_explicit_unknown_spans(
+    tmp_path, raw_times, expected
 ):
     run = load_run(_generic_source(tmp_path, raw_times=raw_times))
 
     traces = step_traces(run, 500, timing_plan=resolve_timing_plan(run, 500))
 
-    assert [trace.root.start_ns for trace in traces] == [500, 1_001_500]
-    assert [trace.root.end_ns - trace.root.start_ns for trace in traces] == [
-        1_000,
-        1_000,
+    assert [trace.root.start_ns for trace in traces] == [
+        500,
+        500 + expected[0] + 1_000_000,
     ]
-    assert {trace.tags["align.timing_source"] for trace in traces} == {
-        "synthetic_minimum"
-    }
+    assert [trace.root.end_ns - trace.root.start_ns for trace in traces] == expected
+    assert [trace.tags["align.timing_source"] for trace in traces] == [
+        "unknown" if duration == 1_000 else "timing.json.raw_times_s"
+        for duration in expected
+    ]
 
 
 def test_captured_timeline_ignores_later_timing_and_copy_origin(tmp_path):
@@ -137,7 +139,7 @@ def test_legacy_import_does_not_select_later_action_timing(tmp_path):
     assert step_traces(run, 100_000, timing_plan=plan) == step_traces(run, 100_000)
 
 
-def test_raw_timeline_rejects_appended_action_without_captured_duration(tmp_path):
+def test_uncaptured_action_has_unknown_duration(tmp_path):
     path = _generic_source(tmp_path, raw_times=[1.25, 0.375])
     plan = resolve_timing_plan(load_run(path), 100_000)
     records = episode_records(None)[:3]
@@ -148,8 +150,10 @@ def test_raw_timeline_rejects_appended_action_without_captured_duration(tmp_path
         json.dumps({"scenarios": [], "raw_times_s": [1.25, 0.375, 0.5]})
     )
 
-    with pytest.raises(ValueError, match="no raw duration for record 2"):
-        step_traces(load_run(path), 100_000, timing_plan=plan)
+    traces = step_traces(load_run(path), 100_000, timing_plan=plan)
+
+    assert traces[2].root.end_ns - traces[2].root.start_ns == 1_000
+    assert traces[2].tags["align.timing_source"] == "unknown"
 
 
 @pytest.mark.parametrize(

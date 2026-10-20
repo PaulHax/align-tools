@@ -5,8 +5,8 @@ how align-system calls the ADM once per step. The ADM pipeline components
 reported in ``choice_info.per_step_timing_stats`` become child spans.
 
 Records carry no wall-clock times, so spans are laid out on a synthetic
-timeline from a captured origin and duration basis. Component timing remains
-the default; new runs without it may use captured timing.json action durations.
+timeline from a captured origin and duration basis. Component timelines include
+timed child spans; raw action timelines retain component context in source JSON.
 """
 
 import hashlib
@@ -22,9 +22,13 @@ from .cards import CARD_FORMAT, card_inputs, card_outputs
 from .evidence import DecisionLog, component_evidence
 from .timing import (
     COMPONENT_TIMING_SOURCE,
+    MIN_SPAN_NS as _MIN_SPAN_NS,
     RAW_TIMING_SOURCE,
+    STEP_GAP_NS as _STEP_GAP_NS,
     SYNTHETIC_TIMING_SOURCE,
+    UNKNOWN_TIMING_SOURCE,
     TimingPlan,
+    duration_ns,
 )
 
 SESSION_METADATA_KEY = "mlflow.trace.session"
@@ -33,10 +37,6 @@ RUN_KEY_TAG = "align.run_key"
 RECORD_INDEX_TAG = "align.record_index"
 SCORE_ASSESSMENT = "ta3_session_alignment_score"
 
-# Components that report zero seconds still need a visible span.
-_MIN_SPAN_NS = 1_000
-# Keeps start times strictly increasing so the session view orders turns.
-_STEP_GAP_NS = 1_000_000
 _URL_UNSAFE = re.compile(r"[#?/]")
 
 
@@ -119,7 +119,8 @@ def component_spans(
         record.choice_info.per_step_timing_stats or [],
         key=lambda timing: timing.step_num,
     )
-    durations = [max(round(timing.elapsed_s * 1e9), _MIN_SPAN_NS) for timing in timings]
+    measured = _component_durations(record, start_ns)
+    durations = [max(duration or 0, _MIN_SPAN_NS) for duration in measured]
     starts = accumulate(durations, initial=start_ns)
     return tuple(
         SpanSpec(
@@ -129,19 +130,46 @@ def component_spans(
             end_ns=start + duration,
             inputs=evidence[0],
             outputs=evidence[1],
-            attributes={"component": timing.step, **evidence[2]},
+            attributes={
+                "component": timing.step,
+                "align.timing_source": (
+                    COMPONENT_TIMING_SOURCE
+                    if measurement is not None
+                    else UNKNOWN_TIMING_SOURCE
+                ),
+                **evidence[2],
+            },
         )
-        for timing, start, duration in zip(timings, starts, durations)
+        for timing, start, duration, measurement in zip(
+            timings, starts, durations, measured
+        )
         for evidence in [component_evidence(record, timing.step, record_index, log)]
     )
 
 
-def step_duration_ns(record: OpenWorldRecord) -> int:
+def _component_durations(
+    record: OpenWorldRecord, start_ns: int
+) -> Tuple[Optional[int], ...]:
+    timings = sorted(
+        record.choice_info.per_step_timing_stats or [],
+        key=lambda timing: timing.step_num,
+    )
+    measured = []
+    for timing in timings:
+        duration = duration_ns(timing.elapsed_s, start_ns=start_ns)
+        measured.append(duration)
+        start_ns += max(duration or 0, _MIN_SPAN_NS)
+    return tuple(measured)
+
+
+def step_duration_ns(record: OpenWorldRecord, start_ns: int = 0) -> int:
     if record.chosen_by_driver:
         return _MIN_SPAN_NS
-    timings = record.choice_info.per_step_timing_stats or []
     return (
-        sum(max(round(t.elapsed_s * 1e9), _MIN_SPAN_NS) for t in timings)
+        sum(
+            max(duration or 0, _MIN_SPAN_NS)
+            for duration in _component_durations(record, start_ns)
+        )
         or _MIN_SPAN_NS
     )
 
@@ -161,16 +189,21 @@ def step_traces(
         for episode in run.episodes
         for step, record in enumerate(episode.records, start=1)
     ]
-    durations = tuple(
-        timing_plan.raw_duration_ns(record_index)
-        if timing_plan is not None and timing_plan.basis == "raw_times_s"
-        else step_duration_ns(record)
-        for _, _, record_index, record in placed
-    )
-    starts = accumulate(
-        (duration + _STEP_GAP_NS for duration in durations),
-        initial=timing_plan.origin_ns if timing_plan is not None else run_start_ns,
-    )
+    if timing_plan is not None:
+        placed = placed[timing_plan.resume_index :]
+    start = timing_plan.origin_ns if timing_plan is not None else run_start_ns
+    positions = []
+    for _, _, record_index, record in placed:
+        measured = (
+            timing_plan.raw_duration_ns(record_index, start_ns=start)
+            if timing_plan is not None and timing_plan.basis == "raw_times_s"
+            else step_duration_ns(record, start)
+        )
+        duration = measured if measured is not None else _MIN_SPAN_NS
+        positions.append(
+            (start, duration, _timing_source(record, timing_plan, record_index, start))
+        )
+        start += duration + _STEP_GAP_NS
     return tuple(
         StepTrace(
             record_index=record_index,
@@ -183,31 +216,53 @@ def step_traces(
                 record_index=record_index,
                 log=logs[record_index] if logs is not None else None,
                 duration_ns=duration,
-                timing_source=_timing_source(record, timing_plan),
+                timing_source=timing_source,
             ),
-            children=component_spans(
-                record,
-                start,
-                record_index,
-                logs[record_index] if logs is not None else None,
+            children=(
+                component_spans(
+                    record,
+                    start,
+                    record_index,
+                    logs[record_index] if logs is not None else None,
+                )
+                if timing_plan is None or timing_plan.basis == "component_durations"
+                else ()
             ),
             tags={
                 **_step_tags(run, label, key, episode, step, record_index, record),
-                "align.timing_source": _timing_source(record, timing_plan),
+                "align.timing_source": timing_source,
                 "align.timeline_type": "synthetic",
             },
         )
-        for (episode, step, record_index, record), start, duration in zip(
-            placed, starts, durations
-        )
+        for (episode, step, record_index, record), (
+            start,
+            duration,
+            timing_source,
+        ) in zip(placed, positions)
     )
 
 
-def _timing_source(record: OpenWorldRecord, plan: Optional[TimingPlan]) -> str:
+def _timing_source(
+    record: OpenWorldRecord,
+    plan: Optional[TimingPlan],
+    record_index: int,
+    start_ns: int,
+) -> str:
     if plan is not None and plan.basis == "raw_times_s":
-        return RAW_TIMING_SOURCE
+        return (
+            RAW_TIMING_SOURCE
+            if plan.raw_duration_ns(record_index, start_ns=start_ns) is not None
+            else UNKNOWN_TIMING_SOURCE
+        )
     if not record.chosen_by_driver and record.choice_info.per_step_timing_stats:
-        return COMPONENT_TIMING_SOURCE
+        return (
+            COMPONENT_TIMING_SOURCE
+            if all(
+                duration is not None
+                for duration in _component_durations(record, start_ns)
+            )
+            else UNKNOWN_TIMING_SOURCE
+        )
     return SYNTHETIC_TIMING_SOURCE
 
 

@@ -4,14 +4,15 @@ import hashlib
 import json
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import Optional, Sequence
+from typing import Mapping, Optional, Sequence
 
 from align_utils.open_world import RAW_LOG_FILE, OpenWorldRun
 from mlflow import MlflowClient
-from mlflow.entities import Run
+from mlflow.entities import Run, Trace
+from mlflow.exceptions import MlflowException
 
 from .evidence import DecisionLog
-from .timing import TIMELINE_TAG, TimingPlan, resolve_timing_plan
+from .timing import STEP_GAP_NS, TIMELINE_TAG, TimingPlan, resolve_timing_plan
 
 LOG_SNAPSHOT_TAG = "align.log_snapshot"
 
@@ -45,47 +46,74 @@ def _upload_bytes(client: MlflowClient, run_id: str, path: str, content: bytes) 
 
 
 def captured_timing(
-    client: MlflowClient, source: Run, run: OpenWorldRun, origin_ns: int
-) -> TimingPlan:
+    client: MlflowClient,
+    source: Run,
+    run: OpenWorldRun,
+    origin_ns: int,
+    logged: Mapping[int, Trace],
+    recovery_origin_ns: int,
+) -> tuple[TimingPlan, Optional[str]]:
     """Reuse the captured plan; an older source run retains its prior timeline."""
     value = source.data.tags.get(TIMELINE_TAG)
     if value is None:
-        return resolve_timing_plan(run, origin_ns, legacy=True)
+        return resolve_timing_plan(run, origin_ns, legacy=True), None
+    captured: Optional[TimingPlan] = None
     try:
-        manifest = json.loads(value)
-        digest = manifest["sha256"]
-        path = manifest["artifact_path"]
-        if path != f"evidence/timing/{digest}.json":
-            raise ValueError("Invalid timing artifact path")
-        available = client.list_artifacts(source.info.run_id, str(Path(path).parent))
-        if not any(item.path == path for item in available):
-            candidate = resolve_timing_plan(
-                run,
-                manifest["origin_ns"],
-                legacy=manifest["basis"] == "component_durations",
-            )
-            if timing_manifest(candidate) != manifest:
-                raise ValueError(
-                    "Captured timing upload is incomplete and the original durations "
-                    "are unavailable; confirmed traces were retained."
-                )
-            preserve_timing(client, source.info.run_id, candidate)
+        captured = _read_timing(client, source.info.run_id, run, value)
+    except (KeyError, TypeError, ValueError, OSError, MlflowException):
+        resume_index = next(
+            (index for index in range(len(run.records)) if index not in logged),
+            len(run.records),
+        )
+        origin = recovery_origin_ns
+        if logged:
+            latest = max(logged.values(), key=lambda trace: trace.info.timestamp_ms)
+            trace = client.get_trace(latest.info.trace_id)
+            root = next(span for span in trace.data.spans if span.parent_id is None)
+            origin = root.end_time_ns + STEP_GAP_NS
+        plan = TimingPlan(
+            "raw_times_s", origin, (None,) * len(run.records), resume_index
+        )
+        warning: Optional[str] = (
+            "Captured timing was unavailable; earlier traces were retained and "
+            "new action durations are unknown."
+        )
+    else:
+        plan = resolve_timing_plan(run, origin_ns, existing=captured)
+        warning = None
+    if plan != captured:
+        preserve_timing(client, source.info.run_id, plan)
+        client.set_tag(
+            source.info.run_id,
+            TIMELINE_TAG,
+            json.dumps(timing_manifest(plan), sort_keys=True),
+        )
+    return plan, warning
+
+
+def _read_timing(
+    client: MlflowClient, run_id: str, run: OpenWorldRun, value: str
+) -> TimingPlan:
+    manifest = json.loads(value)
+    digest, path = manifest["sha256"], manifest["artifact_path"]
+    if path != f"evidence/timing/{digest}.json":
+        raise ValueError("Invalid timing artifact path")
+    available = client.list_artifacts(run_id, str(Path(path).parent))
+    if any(item.path == path for item in available):
         with TemporaryDirectory() as destination:
-            local = client.download_artifacts(source.info.run_id, path, destination)
+            local = client.download_artifacts(run_id, path, destination)
             text = Path(local).read_text(encoding="utf-8")
-        if text_digest(text) != digest:
-            candidate = resolve_timing_plan(
-                run,
-                manifest["origin_ns"],
-                legacy=manifest["basis"] == "component_durations",
-            )
-            if timing_manifest(candidate) != manifest:
-                raise ValueError("Captured timing artifact does not match its digest")
-            preserve_timing(client, source.info.run_id, candidate)
-            text = candidate.to_json()
-        return TimingPlan.from_json(text)
-    except (KeyError, TypeError, json.JSONDecodeError) as error:
-        raise ValueError("Invalid captured timing metadata") from error
+        if text_digest(text) == digest:
+            return TimingPlan.from_json(text)
+    candidate = resolve_timing_plan(
+        run,
+        manifest["origin_ns"],
+        legacy=manifest["basis"] == "component_durations",
+    )
+    if timing_manifest(candidate) != manifest:
+        raise ValueError("Original captured timing is unavailable")
+    preserve_timing(client, run_id, candidate)
+    return candidate
 
 
 def preserve_timing(client: MlflowClient, run_id: str, plan: TimingPlan) -> None:
