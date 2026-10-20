@@ -7,6 +7,7 @@ import os
 import shutil
 import subprocess
 import sys
+from datetime import datetime
 from pathlib import Path
 
 import mlflow
@@ -15,6 +16,11 @@ import yaml
 from mlflow import MlflowClient
 from mlflow.entities import AssessmentSource
 from open_world_fixtures import completion_line, episode_records, write_run
+
+from align_mlflow.provenance import preserve_run, read_provenance
+from align_mlflow.store import connect, log_step
+from align_mlflow.traces import step_traces
+from align_utils.open_world import load_run
 
 EXPERIMENT = "generic open world"
 TARGET = "ADEPT-June2025-merit-0.0"
@@ -263,3 +269,123 @@ def test_late_timing_file_preserves_imported_trace_and_append_timeline(tmp_path)
     )
     plan = read_timing_plan(client, source_after, tmp_path / "timing-download")
     assert plan["basis"] == "component_durations"
+
+
+@pytest.mark.parametrize("name", ["3813", "2026-09-24__16-05-25"])
+def test_recorded_start_date_survives_download_and_copied_rerun(tmp_path, name):
+    run = generic_run(tmp_path / name, generic_records())
+    write_timing(run, [1.25, 2.5])
+    log = run / "align_system.log"
+    log.write_text(
+        "Undated diagnostic\n"
+        "[99/99/99 14:55:28] invalid date\n"
+        "[09/18/26 14:55:28] INFO Recorded startup\n"
+        "[09/19/26 12:00:00] INFO Later message\n"
+    )
+    copied_mtime = int(datetime(2026, 10, 19, 20, 0).timestamp()) * 1_000_000_000
+    config = run / ".hydra/config.yaml"
+    os.utime(config, ns=(copied_mtime, copied_mtime))
+    original_files = {
+        path.relative_to(run): path.read_bytes()
+        for path in run.rglob("*")
+        if path.is_file()
+    }
+    expected_start = (
+        int(
+            (
+                datetime(2026, 9, 18, 14, 55, 28)
+                if name == "3813"
+                else datetime(2026, 9, 24, 16, 5, 25)
+            ).timestamp()
+        )
+        * 1_000_000_000
+    )
+    uri, client, experiment_id = create_store(tmp_path)
+
+    imported = command(run, uri)
+
+    assert imported.returncode == 0, imported.stdout + imported.stderr
+    traces = read_traces(client, experiment_id)
+    assert [root_span(trace).start_time_ns for trace in traces] == [
+        expected_start,
+        expected_start + 1_251_000_000,
+    ]
+    assert all(
+        root_span(trace).attributes["align.timeline_type"] == "synthetic"
+        for trace in traces
+    )
+    source = client.search_runs([experiment_id])[0]
+    plan = read_timing_plan(client, source, tmp_path / "timing-before")
+    assert plan["origin_ns"] == expected_start
+    assert config.stat().st_mtime_ns == copied_mtime
+    assert {
+        path: (run / path).read_bytes() for path in original_files
+    } == original_files
+
+    copied = tmp_path / "copied" / name
+    shutil.copytree(run, copied)
+    (copied / "align_system.log").write_text(
+        "[10/19/27 20:00:00] INFO Different copied log\n"
+    )
+    later_mtime = copied_mtime + 86_400_000_000_000
+    os.utime(copied / ".hydra/config.yaml", ns=(later_mtime, later_mtime))
+
+    repeated = command(copied, uri)
+
+    assert repeated.returncode == 0, repeated.stdout + repeated.stderr
+    assert "0 new traces, 0 new episode scores" in repeated.stdout
+    assert [trace.to_dict() for trace in read_traces(client, experiment_id)] == [
+        trace.to_dict() for trace in traces
+    ]
+    sources = client.search_runs([experiment_id])
+    assert len(sources) == 1
+    assert sources[0].info.run_id == source.info.run_id
+    assert read_timing_plan(client, sources[0], tmp_path / "timing-after") == plan
+
+
+@pytest.mark.parametrize("log_kind", ["missing", "unrecognized", "unreadable"])
+def test_optional_start_log_uses_config_time_when_unavailable(tmp_path, log_kind):
+    run = generic_run(tmp_path / "3813", generic_records())
+    log = run / "align_system.log"
+    if log_kind == "unrecognized":
+        log.write_text("Unrecognized startup diagnostic\n")
+    elif log_kind == "unreadable":
+        log.mkdir()
+    origin = int(datetime(2026, 9, 18, 14, 55, 28).timestamp()) * 1_000_000_000
+    os.utime(run / ".hydra/config.yaml", ns=(origin, origin))
+    uri, client, experiment_id = create_store(tmp_path)
+
+    imported = command(run, uri)
+
+    assert imported.returncode == 0, imported.stdout + imported.stderr
+    assert root_span(read_traces(client, experiment_id)[0]).start_time_ns == origin
+
+
+def test_legacy_numeric_run_without_plan_keeps_config_origin_when_appending(tmp_path):
+    records = generic_records()
+    run = generic_run(tmp_path / "3813", records[:1])
+    (run / "align_system.log").write_text("[09/18/26 14:55:28] INFO Recorded startup\n")
+    origin = int(datetime(2026, 10, 19, 20, 0).timestamp()) * 1_000_000_000
+    os.utime(run / ".hydra/config.yaml", ns=(origin, origin))
+    uri, client, experiment_id = create_store(tmp_path)
+    connect(uri, EXPERIMENT)
+    loaded = load_run(run)
+    source_id = preserve_run(experiment_id, loaded, read_provenance(run))
+    first_id = log_step(experiment_id, source_id, step_traces(loaded, origin)[0])
+    first_root = root_span(client.get_trace(first_id)).to_dict()
+    assert "align.timeline" not in client.get_run(source_id).data.tags
+    (run / "input_output.json").write_text(json.dumps(records))
+    write_timing(run, [1.25, 2.5])
+
+    appended = command(run, uri)
+
+    assert appended.returncode == 0, appended.stdout + appended.stderr
+    assert "1 new traces" in appended.stdout
+    traces = read_traces(client, experiment_id)
+    assert len(traces) == 2
+    assert [root_span(trace).start_time_ns for trace in traces] == [
+        origin,
+        origin + 1_001_000,
+    ]
+    assert root_span(traces[0]).to_dict() == first_root
+    assert "align.timeline" not in client.get_run(source_id).data.tags

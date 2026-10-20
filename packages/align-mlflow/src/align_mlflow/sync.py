@@ -31,6 +31,8 @@ from .traces import run_key, run_label, session_scores, step_traces
 # align-system's Hydra run directories are named by start time.
 _RUN_DIR_TIME_FORMAT = "%Y-%m-%d__%H-%M-%S"
 _RUN_DIR_NAME = re.compile(r"\d{4}-\d{2}-\d{2}__\d{2}-\d{2}-\d{2}")
+_LOG_TIME = re.compile(r"^\[(\d{2}/\d{2}/\d{2} \d{2}:\d{2}:\d{2})\]")
+_LOG_TIME_FORMAT = "%m/%d/%y %H:%M:%S"
 
 
 @dataclass(frozen=True)
@@ -49,6 +51,27 @@ def run_start_ns(run_dir: Path) -> int:
         started = datetime.strptime(run_dir.name, _RUN_DIR_TIME_FORMAT)
         return int(started.timestamp()) * 1_000_000_000
     return (run_dir / CONFIG_FILE).stat().st_mtime_ns
+
+
+def _new_run_start_ns(run_dir: Path, fallback_ns: int) -> int:
+    """Prefer a recorded log date over a copied file's modification time."""
+    if _RUN_DIR_NAME.fullmatch(run_dir.name):
+        return fallback_ns
+    try:
+        with (run_dir / "align_system.log").open(
+            encoding="utf-8", errors="replace"
+        ) as source:
+            for line in source:
+                match = _LOG_TIME.match(line)
+                if match is not None:
+                    try:
+                        started = datetime.strptime(match[1], _LOG_TIME_FORMAT)
+                    except ValueError:
+                        continue
+                    return int(started.timestamp()) * 1_000_000_000
+    except OSError:
+        pass
+    return fallback_ns
 
 
 def sync_run(
@@ -91,7 +114,10 @@ def sync_run(
 
     try:
         source_run_id = preserve_run(
-            experiment_id, run, provenance, origin_ns=origin_ns
+            experiment_id,
+            run,
+            provenance,
+            origin_ns=_new_run_start_ns(run_dir, origin_ns),
         )
         client = MlflowClient()
         source = client.get_run(source_run_id)
