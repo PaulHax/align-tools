@@ -47,19 +47,15 @@ def output_summary(record: OpenWorldRecord) -> str:
         ),
         action.action_type.replace("_", " ").capitalize(),
     )
-    details = (
-        [action.character_id]
-        if action.character_id
-        and not re.search(
-            rf"(?<!\w){re.escape(action.character_id)}(?!\w)", description
-        )
-        else []
-    )
-    details.extend(
+    if action.character_id and not re.search(
+        rf"(?<!\w){re.escape(action.character_id)}(?!\w)", description
+    ):
+        description = f"{description}: {action.character_id}"
+    details = [
         f"{name}: {_display_value(value)}"
         for name, value in (action.parameters or {}).items()
-    )
-    sections = [description]
+    ]
+    sections = [f"### {description}"]
     if details:
         sections.append(" · ".join(details))
     if record.chosen_by_driver:
