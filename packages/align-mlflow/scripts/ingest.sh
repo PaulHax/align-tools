@@ -11,7 +11,8 @@ usage() {
         'Pass one run folder or a parent; nested runs are scanned recursively.' \
         'Pass a directory, not input_output.json.' \
         'MLFLOW_TRACKING_URI: server URL or absolute SQLite URI (required).' \
-        'MLFLOW_EXPERIMENT_NAME: experiment (default: align-system open world).'
+        'MLFLOW_EXPERIMENT_NAME: experiment (default: align-system open world).' \
+        'MLFLOW_INCLUDE_LOG=1: retain captured raw logs as run artifacts (optional).'
 }
 
 if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then

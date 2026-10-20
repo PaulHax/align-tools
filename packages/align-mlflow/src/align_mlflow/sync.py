@@ -1,15 +1,22 @@
 """Bring MLflow up to date with open-world run directories."""
 
+import hashlib
 import re
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Optional, Tuple
 
-from align_utils.open_world import CONFIG_FILE, find_open_world_runs, load_run
+from align_utils.open_world import (
+    CONFIG_FILE,
+    RAW_LOG_FILE,
+    find_open_world_runs,
+    load_run,
+)
 from mlflow import MlflowClient
 from mlflow.exceptions import MlflowException
 
+from .artifacts import captured_timing, preserve_log
 from .evidence import read_decision_logs
 from .provenance import preserve_run, read_provenance
 from .store import (
@@ -44,29 +51,59 @@ def run_start_ns(run_dir: Path) -> int:
     return (run_dir / CONFIG_FILE).stat().st_mtime_ns
 
 
-def sync_run(experiment_id: str, run_dir: Path) -> SyncResult:
+def sync_run(
+    experiment_id: str, run_dir: Path, *, include_log: bool = False
+) -> SyncResult:
     """Log the run's steps and episode scores that MLflow does not have yet.
 
     Runs that cannot be read yet, for example while input_output.json is
     being rewritten, are reported in ``error`` and change nothing.
     """
+    log_warning = None
     try:
-        run = load_run(run_dir)
+        log_content = (run_dir / RAW_LOG_FILE).read_bytes()
+    except FileNotFoundError:
+        log_content = None
+    except OSError as error:
+        log_content = None
+        log_warning = f"Optional log could not be read: {error}"
+    log_text = (
+        log_content.decode("utf-8", errors="replace")
+        if log_content is not None
+        else None
+    )
+    try:
+        run = load_run(run_dir, log_text=log_text)
         provenance = read_provenance(run_dir)
-        logs = read_decision_logs(run_dir, run.records)
+        logs = read_decision_logs(
+            run_dir,
+            run.records,
+            log_text=log_text,
+            snapshot_sha256=hashlib.sha256(log_content).hexdigest()
+            if log_content is not None
+            else None,
+        )
+        origin_ns = run_start_ns(run_dir)
     except (OSError, ValueError) as error:
         return SyncResult(
             run_dir, error=f"Could not read run; no new data imported: {error}"
         )
 
     try:
-        source_run_id = preserve_run(experiment_id, run, provenance)
+        source_run_id = preserve_run(
+            experiment_id, run, provenance, origin_ns=origin_ns
+        )
+        client = MlflowClient()
+        source = client.get_run(source_run_id)
+        timeline = captured_timing(client, source, run, origin_ns)
+        if include_log:
+            preserve_log(client, source, log_content, logs)
         logged = logged_steps(experiment_id, run_key(run))
         sync_source_version(logged.values(), run.version)
         trace_ids = {index: trace.info.trace_id for index, trace in logged.items()}
         new_steps = [
             step
-            for step in step_traces(run, run_start_ns(run_dir), logs)
+            for step in step_traces(run, origin_ns, logs, timeline)
             if step.record_index not in logged
         ]
         for step in new_steps:
@@ -93,11 +130,14 @@ def sync_run(experiment_id: str, run_dir: Path) -> SyncResult:
         run_label(run),
         len(new_steps),
         len(new_scores),
-        warning=run.score_warning,
+        warning="; ".join(filter(None, [run.score_warning, log_warning])) or None,
     )
 
 
-def sync_tree(experiment_id: str, root: Path) -> Tuple[SyncResult, ...]:
+def sync_tree(
+    experiment_id: str, root: Path, *, include_log: bool = False
+) -> Tuple[SyncResult, ...]:
     return tuple(
-        sync_run(experiment_id, run_dir) for run_dir in find_open_world_runs(root)
+        sync_run(experiment_id, run_dir, include_log=include_log)
+        for run_dir in find_open_world_runs(root)
     )

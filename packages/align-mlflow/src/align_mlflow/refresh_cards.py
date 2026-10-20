@@ -37,6 +37,11 @@ def refreshed_root(
     record = _source_record(root)
     card_format = root.get_attribute("align.card_format")
     inputs, outputs = card_inputs(record, previous), card_outputs(record)
+    recorded_evidence = root.outputs.get("evidence")
+    if card_format == CARD_FORMAT and isinstance(recorded_evidence, dict):
+        for key in ("record_index", "log"):
+            if key in recorded_evidence:
+                outputs["evidence"][key] = recorded_evidence[key]
     if card_format == CARD_FORMAT and root.inputs == inputs and root.outputs == outputs:
         return None
     data = copy.deepcopy(root.to_dict())

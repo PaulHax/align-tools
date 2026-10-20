@@ -5,9 +5,8 @@ how align-system calls the ADM once per step. The ADM pipeline components
 reported in ``choice_info.per_step_timing_stats`` become child spans.
 
 Records carry no wall-clock times, so spans are laid out on a synthetic
-timeline: the run's start plus the cumulative component time of earlier
-steps. Records are only ever appended, so a step's timestamps do not change
-as the run grows.
+timeline from a captured origin and duration basis. Component timing remains
+the default; new runs without it may use captured timing.json action durations.
 """
 
 import hashlib
@@ -21,6 +20,12 @@ from mlflow.entities import SpanType
 
 from .cards import CARD_FORMAT, card_inputs, card_outputs
 from .evidence import DecisionLog, component_evidence
+from .timing import (
+    COMPONENT_TIMING_SOURCE,
+    RAW_TIMING_SOURCE,
+    SYNTHETIC_TIMING_SOURCE,
+    TimingPlan,
+)
 
 SESSION_METADATA_KEY = "mlflow.trace.session"
 SOURCE_RUN_METADATA_KEY = "mlflow.sourceRun"
@@ -69,6 +74,13 @@ class SessionScore:
 def run_label(run: OpenWorldRun) -> str:
     """Readable run name built from the run itself, so it does not depend on
     which directory was synced or where the run was copied."""
+    return " ".join(
+        filter(None, [run.metadata.adm_name, run.adm_profile, run.path.name])
+    )
+
+
+def identity_label(run: OpenWorldRun) -> str:
+    """The original run label used by persisted run and session identifiers."""
     adm = run.config.adm.name if run.config else None
     return " ".join(filter(None, [adm, run.adm_profile, run.path.name]))
 
@@ -76,7 +88,7 @@ def run_label(run: OpenWorldRun) -> str:
 def run_key(run: OpenWorldRun) -> str:
     """Identity used to find a run's logged steps. Includes the TA3 session
     name when present, which is unique per live run."""
-    identity = f"{run_label(run)}\n{run.username or ''}"
+    identity = f"{identity_label(run)}\n{run.username or ''}"
     return hashlib.sha256(identity.encode()).hexdigest()[:16]
 
 
@@ -138,25 +150,40 @@ def step_traces(
     run: OpenWorldRun,
     run_start_ns: int,
     logs: Optional[Tuple[DecisionLog, ...]] = None,
+    timing_plan: Optional[TimingPlan] = None,
 ) -> Tuple[StepTrace, ...]:
     if logs is not None and len(logs) != len(run.records):
         raise ValueError("Decision log count does not match source records")
     label, key = run_label(run), run_key(run)
+    session_label = identity_label(run)
     placed = [
         (episode, step, episode.first_record_index + step - 1, record)
         for episode in run.episodes
         for step, record in enumerate(episode.records, start=1)
     ]
+    durations = tuple(
+        timing_plan.raw_duration_ns(record_index)
+        if timing_plan is not None and timing_plan.basis == "raw_times_s"
+        else step_duration_ns(record)
+        for _, _, record_index, record in placed
+    )
     starts = accumulate(
-        (step_duration_ns(record) + _STEP_GAP_NS for *_, record in placed),
-        initial=run_start_ns,
+        (duration + _STEP_GAP_NS for duration in durations),
+        initial=timing_plan.origin_ns if timing_plan is not None else run_start_ns,
     )
     return tuple(
         StepTrace(
             record_index=record_index,
-            session_id=session_id(episode, label, key),
+            session_id=session_id(episode, session_label, key),
             root=_root_span(
-                record, step, start, episode.records[step - 2] if step > 1 else None
+                record,
+                step,
+                start,
+                episode.records[step - 2] if step > 1 else None,
+                record_index=record_index,
+                log=logs[record_index] if logs is not None else None,
+                duration_ns=duration,
+                timing_source=_timing_source(record, timing_plan),
             ),
             children=component_spans(
                 record,
@@ -164,10 +191,24 @@ def step_traces(
                 record_index,
                 logs[record_index] if logs is not None else None,
             ),
-            tags=_step_tags(run, label, key, episode, step, record_index, record),
+            tags={
+                **_step_tags(run, label, key, episode, step, record_index, record),
+                "align.timing_source": _timing_source(record, timing_plan),
+                "align.timeline_type": "synthetic",
+            },
         )
-        for (episode, step, record_index, record), start in zip(placed, starts)
+        for (episode, step, record_index, record), start, duration in zip(
+            placed, starts, durations
+        )
     )
+
+
+def _timing_source(record: OpenWorldRecord, plan: Optional[TimingPlan]) -> str:
+    if plan is not None and plan.basis == "raw_times_s":
+        return RAW_TIMING_SOURCE
+    if not record.chosen_by_driver and record.choice_info.per_step_timing_stats:
+        return COMPONENT_TIMING_SOURCE
+    return SYNTHETIC_TIMING_SOURCE
 
 
 def _root_span(
@@ -175,18 +216,26 @@ def _root_span(
     step: int,
     start_ns: int,
     previous: Optional[OpenWorldRecord] = None,
+    *,
+    record_index: int = 0,
+    log: Optional[DecisionLog] = None,
+    duration_ns: Optional[int] = None,
+    timing_source: str = COMPONENT_TIMING_SOURCE,
 ) -> SpanSpec:
     action = record.output.action
     return SpanSpec(
         name=f"{step:02d} {action.action_type} {action.character_id or ''}".rstrip(),
         span_type=SpanType.AGENT,
         start_ns=start_ns,
-        end_ns=start_ns + step_duration_ns(record),
+        end_ns=start_ns
+        + (duration_ns if duration_ns is not None else step_duration_ns(record)),
         inputs=card_inputs(record, previous),
-        outputs=card_outputs(record),
+        outputs=card_outputs(record, record_index=record_index, log=log),
         attributes={
             "align.choice_info_applies_to_action": not record.chosen_by_driver,
             "align.card_format": CARD_FORMAT,
+            "align.timing_source": timing_source,
+            "align.timeline_type": "synthetic",
         },
     )
 
@@ -206,8 +255,9 @@ def _step_tags(
         "scene_id": record.input.full_state.meta_info.scene_id,
         "character_id": action.character_id,
         "action_detail": " ".join(str(v) for v in (action.parameters or {}).values()),
-        "adm": run.config.adm.name if run.config else None,
-        "llm": run.config.adm.llm_backbone if run.config else None,
+        "adm": run.metadata.adm_name,
+        "llm": run.metadata.llm_name,
+        "align.driver": run.metadata.driver_class,
         "align.source_version": run.version,
     }
     return {
@@ -224,7 +274,7 @@ def _step_tags(
 
 
 def session_scores(run: OpenWorldRun) -> Tuple[SessionScore, ...]:
-    label, key = run_label(run), run_key(run)
+    label, key = identity_label(run), run_key(run)
     return tuple(
         SessionScore(
             session_id=session_id(episode, label, key),

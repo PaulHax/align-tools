@@ -6,6 +6,7 @@ from typing import Any, Optional
 
 from align_utils.open_world import OpenWorldRecord
 
+from .evidence import DecisionLog, decision_evidence
 from .observations import input_summary
 
 CARD_FORMAT = "situation-action-v1"
@@ -17,9 +18,15 @@ def card_inputs(
     return {"input": input_summary(record, previous), "source": record.source["input"]}
 
 
-def card_outputs(record: OpenWorldRecord) -> dict[str, Any]:
+def card_outputs(
+    record: OpenWorldRecord,
+    *,
+    record_index: Optional[int] = None,
+    log: Optional[DecisionLog] = None,
+) -> dict[str, Any]:
     return {
         "response": output_summary(record),
+        "evidence": decision_evidence(record, record_index=record_index, log=log),
         "source": {
             key: value for key, value in record.source.items() if key != "input"
         },

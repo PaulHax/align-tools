@@ -3,6 +3,7 @@
 import hashlib
 import json
 import re
+from ast import literal_eval
 from bisect import bisect_right
 from dataclasses import dataclass
 from pathlib import Path
@@ -11,7 +12,19 @@ from typing import Any, Mapping, Optional, Sequence
 from align_utils.open_world import OpenWorldRecord, RAW_LOG_FILE
 
 EVIDENCE_VERSION = "choice-info-log-v1"
-_ACTION = re.compile(r"^\[bold\]\*ACTION BEING TAKEN\*\[/bold\][ \t]*$", re.M)
+_READ_LOG = object()
+_PREVIEW_LIMIT = 256
+_ACTION = re.compile(r"^\[bold\]\*ACTION BEING TAKEN\*\[/bold\][ \t]*\r?$", re.M)
+_EXCEPTION_LINE = re.compile(
+    r"^(?:\(\d{3}\)\r?$|\(\d{0,3}\Z|Reason:|HTTP response (?:headers|body):)",
+    re.M,
+)
+_REJECTION = re.compile(
+    r"\A[ \t]*\r?\n\((?:400|500)\)\r?\n"
+    r"Reason: [^\r\n]+\r?\n"
+    r"HTTP response headers: HTTPHeaderDict\((?P<headers>\{[^\r\n]*\})\)\r?\n"
+    r"HTTP response body: (?P<body>[^\r\n]+)\r?\n(?:[ \t]*\r?\n)+"
+)
 _HEADER = re.compile(r"^\[bold\]\*(.*?)\*\[/bold\]$")
 _CACHE = re.compile(r"^Cache (hit|miss) for `([^`]+)`")
 _REGRESSION = {
@@ -42,12 +55,13 @@ class Section:
     first_line: int
     last_line: int
 
-    def reference(self) -> dict:
+    def reference(self, snapshot_sha256: Optional[str] = None) -> dict:
         return {
             "file": RAW_LOG_FILE,
             "lines": [self.first_line, self.last_line],
             "sha256": hashlib.sha256(self.text.encode()).hexdigest(),
             "title": self.title,
+            **({"snapshot_sha256": snapshot_sha256} if snapshot_sha256 else {}),
         }
 
 
@@ -55,6 +69,9 @@ class Section:
 class DecisionLog:
     status: str
     sections: tuple[Section, ...] = ()
+    excerpt: Optional[Section] = None
+    snapshot_sha256: Optional[str] = None
+    skipped_rejected_attempts: int = 0
 
 
 def _sections(text: str, first_line: int) -> tuple[Section, ...]:
@@ -85,48 +102,210 @@ def _sections(text: str, first_line: int) -> tuple[Section, ...]:
     return tuple(sections)
 
 
+def _rejection_end(suffix: str) -> Optional[int]:
+    """Accept only a complete immediate exception with one bounded outcome."""
+    if _EXCEPTION_LINE.search(suffix) is None:
+        return None
+    match = _REJECTION.match(suffix)
+    if match is None or _EXCEPTION_LINE.search(suffix, match.end()) is not None:
+        raise ValueError("Unverified action outcome")
+    try:
+        headers = literal_eval(match["headers"])
+        json.loads(match["body"])
+    except (ValueError, SyntaxError, RecursionError):
+        raise ValueError("Unverified action outcome") from None
+    if not isinstance(headers, dict):
+        raise ValueError("Unverified action outcome")
+    return match.end()
+
+
 def read_decision_logs(
-    path: Path, records: Sequence[OpenWorldRecord]
+    path: Path,
+    records: Sequence[OpenWorldRecord],
+    *,
+    log_text: Any = _READ_LOG,
+    snapshot_sha256: Optional[str] = None,
 ) -> tuple[DecisionLog, ...]:
     """Match a log prefix against complete action objects before using any excerpts.
 
     A growing log can lag the JSON snapshot. Unmatched trailing records get no
-    excerpts. Any mismatched or malformed complete action invalidates the join.
+    excerpts. A mismatched or malformed action stops subsequent attribution;
+    earlier exact matches remain usable. Complete immediate rejection blocks
+    exclude failed attempts and their evidence from the saved-action sequence.
+    An explicit log_text=None represents a missing captured log, while omitting
+    it reads the file. The digest identifies bytes before UTF-8 decoding.
     """
-    try:
-        text = (path / RAW_LOG_FILE).read_text()
-    except FileNotFoundError:
+    if log_text is _READ_LOG:
+        try:
+            raw_log = (path / RAW_LOG_FILE).read_bytes()
+            log_text = raw_log.decode("utf-8", errors="replace")
+            snapshot_sha256 = hashlib.sha256(raw_log).hexdigest()
+        except FileNotFoundError:
+            log_text = None
+        except OSError:
+            return tuple(DecisionLog("unreadable_log") for _ in records)
+    if log_text is None:
         return tuple(DecisionLog("missing_log") for _ in records)
+    text = log_text
+    digest = snapshot_sha256 or hashlib.sha256(text.encode("utf-8")).hexdigest()
     markers = list(_ACTION.finditer(text))
     empty = "no_action_markers" if not markers else "action_not_yet_logged"
-    result = [DecisionLog(empty) for _ in records]
+    result = [DecisionLog(empty, snapshot_sha256=digest) for _ in records]
     newlines = [m.start() for m in re.finditer("\n", text)]
     decoder = json.JSONDecoder()
     previous_end = 0
-    for index, marker in enumerate(markers[: len(records)]):
+    index = 0
+    skipped_rejections = 0
+    for attempt_index, marker in enumerate(markers):
+        if index >= len(records):
+            break
         start = marker.end()
         while start < len(text) and text[start].isspace():
             start += 1
+        boundary = (
+            markers[attempt_index + 1].start()
+            if attempt_index + 1 < len(markers)
+            else len(text)
+        )
         try:
-            action, end = decoder.raw_decode(text, start)
+            action, length = decoder.raw_decode(text[start:boundary])
+            end = start + length
         except json.JSONDecodeError:
             # A final action may still be in flight. Earlier matched records stand.
-            if index == len(markers) - 1 and not text.endswith("\n"):
+            if attempt_index == len(markers) - 1 and not text.endswith("\n"):
                 break
-            return tuple(
-                DecisionLog(f"invalid_action_at_record_{index}") for _ in records
-            )
+            result[index:] = [
+                DecisionLog(f"invalid_action_at_record_{index}", snapshot_sha256=digest)
+                for _ in records[index:]
+            ]
+            break
+        try:
+            rejected_end = _rejection_end(text[end:boundary])
+        except ValueError:
+            result[index:] = [
+                DecisionLog(
+                    f"unverified_action_outcome_at_record_{index}",
+                    snapshot_sha256=digest,
+                )
+                for _ in records[index:]
+            ]
+            break
+        if rejected_end is not None:
+            if not isinstance(action, dict) or not all(
+                isinstance(action.get(key), str)
+                for key in ("action_id", "action_type", "unstructured")
+            ):
+                result[index:] = [
+                    DecisionLog(
+                        f"invalid_action_at_record_{index}", snapshot_sha256=digest
+                    )
+                    for _ in records[index:]
+                ]
+                break
+            previous_end = end + rejected_end
+            skipped_rejections += 1
+            continue
         if action != records[index].source["output"]["action"]:
-            return tuple(
-                DecisionLog(f"action_mismatch_at_record_{index}") for _ in records
-            )
+            result[index:] = [
+                DecisionLog(
+                    f"action_mismatch_at_record_{index}", snapshot_sha256=digest
+                )
+                for _ in records[index:]
+            ]
+            break
         begin_line = bisect_right(newlines, previous_end - 1) + 1
+        excerpt_start = previous_end
+        while excerpt_start < marker.start() and text[excerpt_start] in "\r\n":
+            excerpt_start += 1
+        excerpt_text = text[excerpt_start : marker.start()].rstrip("\r\n")
+        excerpt = (
+            Section(
+                "Log before recorded action",
+                excerpt_text,
+                bisect_right(newlines, excerpt_start - 1) + 1,
+                bisect_right(newlines, excerpt_start + len(excerpt_text) - 1) + 1,
+            )
+            if excerpt_text
+            else None
+        )
         result[index] = DecisionLog(
             "exact_action_sequence",
             _sections(text[previous_end : marker.start()], begin_line),
+            excerpt,
+            digest,
+            skipped_rejections,
         )
         previous_end = end
+        skipped_rejections = 0
+        index += 1
     return tuple(result)
+
+
+def _preview(value: Any) -> dict[str, Any]:
+    kind = (
+        "null"
+        if value is None
+        else "boolean"
+        if isinstance(value, bool)
+        else "object"
+        if isinstance(value, dict)
+        else "array"
+        if isinstance(value, list)
+        else "string"
+        if isinstance(value, str)
+        else "number"
+    )
+    text = json.dumps(value, ensure_ascii=False)
+    return {
+        "type": kind,
+        "preview": text[:_PREVIEW_LIMIT],
+        "preview_truncated": len(text) > _PREVIEW_LIMIT,
+        **({"items": len(value)} if isinstance(value, (dict, list)) else {}),
+    }
+
+
+def decision_evidence(
+    record: OpenWorldRecord,
+    *,
+    record_index: Optional[int] = None,
+    log: Optional[DecisionLog] = None,
+) -> dict[str, Any]:
+    """Describe arbitrary saved context without assigning it to model calls."""
+    info = record.source.get("choice_info")
+    choice_info = {
+        "source": "source.choice_info",
+        "present": "choice_info" in record.source,
+        "applies_to_action": not record.chosen_by_driver,
+        **(
+            {
+                "type": "object",
+                "items": len(info),
+                "fields": {key: _preview(value) for key, value in info.items()},
+            }
+            if isinstance(info, dict)
+            else _preview(info)
+        ),
+    }
+    evidence: dict[str, Any] = {"choice_info": choice_info}
+    if record_index is not None:
+        evidence["record_index"] = record_index
+    if log is not None:
+        source = {"file": RAW_LOG_FILE}
+        if log.snapshot_sha256:
+            source["snapshot_sha256"] = log.snapshot_sha256
+        if log.excerpt is not None:
+            source.update(log.excerpt.reference(log.snapshot_sha256))
+        evidence["log"] = {
+            "status": log.status,
+            "source": source,
+            **({"text": log.excerpt.text} if log.excerpt is not None else {}),
+            **(
+                {"skipped_rejected_attempts": log.skipped_rejected_attempts}
+                if log.skipped_rejected_attempts
+                else {}
+            ),
+        }
+    return evidence
 
 
 def _owner_sections(
@@ -141,7 +320,8 @@ def _owner_sections(
         found = [name for name in components if name in candidates]
         return found[0] if len(found) == 1 else None
 
-    info = record.source.get("choice_info") or {}
+    raw_info = record.source.get("choice_info")
+    info = raw_info if isinstance(raw_info, dict) else {}
     alignment = info.get("alignment_info") or {}
     alignment_source = alignment.get("source") if isinstance(alignment, dict) else None
     alignment_owner = (
@@ -198,7 +378,8 @@ def component_evidence(
 ) -> tuple[Any, Any, Mapping[str, Any]]:
     """Display final JSON context separately from attributed log emissions."""
     short = component.rsplit(".", 1)[-1]
-    info = record.source.get("choice_info") or {}
+    raw_info = record.source.get("choice_info")
+    info = raw_info if isinstance(raw_info, dict) else {}
     log = log or DecisionLog("not_loaded")
     sections = _owner_sections(record, log).get(short, [])
     inputs: dict[str, Any] = {}
@@ -280,7 +461,7 @@ def component_evidence(
                 if fields
                 else []
             ),
-            *(section.reference() for section in sections),
+            *(section.reference(log.snapshot_sha256) for section in sections),
         ],
     }
     if cache_status:
