@@ -37,11 +37,21 @@ Rerun the command to resume or add records. Run **one bulk import at a time**; b
 | `.hydra/config.yaml` | Yes | Driver and ADM settings; uploaded as an artifact |
 | `.hydra/overrides.yaml`, `.hydra/hydra.yaml` | No | Launch settings; uploaded when present |
 | `meta.json` | No | Version and TA3 username; uploaded when present |
-| `raw_align_system.log` | No | Decision evidence and TA3 completion scores; not uploaded |
+| `timing.json` | No | Recorded action durations when aligned with the saved actions |
+| `align_system.log` | No | Recorded start date when the run folder has no timestamp |
+| `raw_align_system.log` | No | Decision evidence and TA3 completion scores; upload is optional |
 
 - **Driver:** `driver._target_` in `.hydra/config.yaml` must start with `align_system.drivers.itm_open_world`. Other drivers and folders missing required files are skipped.
 - **Import location:** run the script on a computer that can read the source directory. Relative paths resolve from your current directory.
 - **MLflow mapping:** source folder → run; episode → session; action → trace. Traces retain original action JSON in `source` fields. Source files stay unchanged; the entire directory is not archived.
+- **Metadata:** ADM settings or recorded driver, architecture, toolkit, and chat-model settings supply display labels. Labels do not change run or session identity.
+- **Evidence:** additional outputs expose arbitrary recorded `choice_info` through the existing JSON viewer. Plain-text excerpts include source references only when action association is verified. Unrecognized or ambiguous logs remain unassigned.
+- **Durations:** timing is optional. Missing or invalid values produce a warning and an unknown duration with a minimum display placeholder. New imports without component timings use aligned `raw_times_s` values for whole actions. Reruns preserve captured durations, including unknowns; appended actions use raw timing only when the complete file agrees with previously measured durations.
+- **Timestamps:** absolute times are synthetic. The origin is the run folder's timestamp, then the first dated `align_system.log` entry, then the config file's modification time. Dates without a timezone use local time. Reruns retain the captured origin.
+
+To retain the full raw log and its association index as downloadable run artifacts, use `--include-log` with the CLI, or set `MLFLOW_INCLUDE_LOG=1` with `ingest.sh`. Snapshots use content digests and leave launch provenance unchanged. With `watch --include-log`, each changed log is retained as a full snapshot; use a final `sync --include-log` to retain one completed snapshot. Without this option, the complete log remains only in its source directory. Recorded configuration, logged assessments, and evaluation targets are separate evidence; the importer does not infer which target governed a decision.
+
+If a saved timing snapshot cannot be recovered, imports warn and new actions resume after the last confirmed trace with unknown durations. Existing traces keep their timestamps.
 
 ## Server and experiment
 

@@ -70,6 +70,7 @@ def test_import_server_and_views_share_configured_storage(tmp_path, transport):
         "MLFLOW_TRACKING_URI": f"sqlite:///{storage}/tracking.db",
         "MLFLOW_EXPERIMENT_NAME": "script configuration test",
         "MLFLOW_PORT": "0",
+        "MLFLOW_INCLUDE_LOG": "1",
     }
 
     def import_twice(import_env):
@@ -174,6 +175,29 @@ def test_import_server_and_views_share_configured_storage(tmp_path, transport):
                 )
                 assert Path(downloaded).read_bytes() == (source / relative).read_bytes()
 
+        log_reference = json.loads(runs[0].data.tags["align.log_snapshot"])
+        download = tmp_path / "evidence-downloads"
+        download.mkdir()
+        log_artifact = client.download_artifacts(
+            runs[0].info.run_id, log_reference["artifact_path"], str(download)
+        )
+        assert (
+            Path(log_artifact).read_bytes()
+            == (source / "raw_align_system.log").read_bytes()
+        )
+        index_artifact = client.download_artifacts(
+            runs[0].info.run_id, log_reference["index_path"], str(download)
+        )
+        assert len(json.loads(Path(index_artifact).read_text())["records"]) == 1
+        timing_reference = json.loads(runs[0].data.tags["align.timeline"])
+        timing_artifact = client.download_artifacts(
+            runs[0].info.run_id, timing_reference["artifact_path"], str(download)
+        )
+        assert (
+            json.loads(Path(timing_artifact).read_text())["basis"]
+            == "component_durations"
+        )
+
         views = subprocess.run(
             [str(SCRIPTS / "views.sh"), url],
             cwd=tmp_path,
@@ -195,9 +219,51 @@ def test_import_server_and_views_share_configured_storage(tmp_path, transport):
             for key, value in saved.items()
             if key.startswith("mlflow.tracesV4ViewState.")
         } == {"Open-world actions", "Episodes by ADM and target", "Session comparison"}
+        adm = runs[0].data.tags["adm"]
+        other_adm = "reviewer's model + β"
+        for tags in [{"adm": adm}, {"adm": other_adm}, {"adm": ""}, {}]:
+            client.create_run(experiment.experiment_id, tags=tags)
+        adm_command = [str(SCRIPTS / "views.sh"), url, "--by-adm"]
+        adm_saved = {}
+        for _ in range(2):
+            result = subprocess.run(
+                adm_command,
+                cwd=tmp_path,
+                env={**env, "MLFLOW_TRACKING_URI": url},
+                capture_output=True,
+                text=True,
+            )
+            assert result.returncode == 0, result.stderr
+            for label in [adm, other_adm]:
+                assert f"ADM: {label}: " in result.stdout
+            current = client.get_experiment(experiment.experiment_id).tags
+            if adm_saved:
+                assert current == adm_saved
+            adm_saved = current
+        adm_presets = {
+            key: json.loads(value)
+            for key, value in adm_saved.items()
+            if key.startswith("mlflow.tracesV4ViewState.")
+            and json.loads(value)["name"].startswith("ADM:")
+        }
+        assert {view["name"] for view in adm_presets.values()} == {
+            f"ADM: {adm}",
+            f"ADM: {other_adm}",
+        }
+        for view in adm_presets.values():
+            state = json.loads(view["state"])
+            assert state["single"]["startTimeLabel"] == "ALL"
+            assert state["single"]["groupBy"] == "session"
+            assert state["filters"] == [
+                {
+                    "field": "tag",
+                    "key": "adm",
+                    "operator": "=",
+                    "value": view["name"].removeprefix("ADM: "),
+                }
+            ]
         # A renamed preset belongs to the user and cannot be silently overwritten.
-        key = "mlflow.tracesV4ViewState.open-world-session-comparison"
-        custom = json.loads(saved[key])
+        key, custom = next(iter(adm_presets.items()))
         custom["name"] = "Team decisions"
         client.set_experiment_tag(experiment.experiment_id, key, json.dumps(custom))
         first_key = "mlflow.tracesV4ViewState.open-world-actions"
@@ -208,7 +274,7 @@ def test_import_server_and_views_share_configured_storage(tmp_path, transport):
         )
         before = client.get_experiment(experiment.experiment_id).tags
         collision = subprocess.run(
-            [str(SCRIPTS / "views.sh"), url],
+            adm_command,
             cwd=tmp_path,
             env={**env, "MLFLOW_TRACKING_URI": url},
             capture_output=True,

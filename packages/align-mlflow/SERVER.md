@@ -27,6 +27,18 @@ These steps create a new instance. For the installed ITM server, use the [servic
 
    Open <http://10.50.57.47:5000>. Stop a foreground server with **Ctrl-C**. Follow [Import Align runs](INGESTION.md) to add data.
 
+4. **Install the comparison views after importing.** Saved views belong to an experiment, so configure each new experiment explicitly:
+
+   ```bash
+   export MLFLOW_TRACKING_URI='http://10.50.57.47:5000'
+   export MLFLOW_EXPERIMENT_NAME='Open World Phase 2'
+   ./packages/align-mlflow/scripts/views.sh "$MLFLOW_TRACKING_URI" --by-adm
+   ```
+
+   Open the printed **Session comparison** link, or select it from the Views menu. The grouped table shows scenario, ADM, KDMA alignment target, driver, model, and run columns, with Input and Output previews hidden. Select an **ADM:** view for a recorded ADM without typing a filter value.
+
+   Rerun after importing new ADMs or to restore the named presets. Other named views are retained. Save personal changes under another view name before restoring a preset. See [saved views](SESSION-UI.md#saved-views) for definitions, version requirements, and filtering limits.
+
 ## Manage the instance on ITM
 
 The installed instance uses the **user service** `open-world-mlflow.service`.

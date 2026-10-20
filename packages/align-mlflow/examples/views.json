@@ -29,11 +29,13 @@
       ],
       "customColumns": {
         "tag:adm": true,
+        "tag:align.driver": true,
         "tag:llm": true,
         "tag:align.source_version": true,
         "tag:scenario_id": true,
         "tag:alignment_target_id": true,
-        "tag:episode": true
+        "tag:episode": true,
+        "tag:run": true
       }
     }
   },
@@ -44,16 +46,18 @@
       "single": {
         "startTimeLabel": "ALL",
         "groupBy": "session",
-        "cols": "session,tag:adm,tag:llm,tag:align.source_version,tag:alignment_target_id,tag:scenario_id,tag:episode,start_time"
+        "cols": "session,tag:scenario_id,tag:adm,tag:alignment_target_id,tag:align.driver,tag:llm,tag:run,tag:align.source_version,tag:episode,duration,start_time"
       },
       "multi": {},
       "customColumns": {
         "tag:adm": true,
+        "tag:align.driver": true,
         "tag:llm": true,
         "tag:align.source_version": true,
         "tag:alignment_target_id": true,
         "tag:scenario_id": true,
-        "tag:episode": true
+        "tag:episode": true,
+        "tag:run": true
       }
     }
   }
