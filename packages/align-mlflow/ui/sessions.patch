@@ -1,3 +1,60 @@
+--- /dev/null
++++ b/mlflow/server/js/src/experiment-tracking/components/experiment-page/components/traces-v3/TracesV3Toolbar.test.tsx
+@@ -0,0 +1,28 @@
++import { describe, expect, jest, test } from '@jest/globals';
++import { screen } from '@testing-library/react';
++import userEvent from '@testing-library/user-event';
++import { renderWithProviders } from '@databricks/web-shared/traces-table/test-utils/renderWithProviders';
++import { TracesV3Toolbar } from './TracesV3Toolbar';
++
++const mockClipboardCopy = jest.fn();
++jest.mock('use-clipboard-copy', () => ({
++  useClipboard: () => ({ copy: mockClipboardCopy }),
++}));
++
++describe('single-session title', () => {
++  test('displays a readable label while copying the persisted session ID', async () => {
++    const sessionId = 'scenario | target | unknown_adm profile run-1 | episode 1 | recorded-key';
++    const displayName = 'Recorded ADM profile run-1 | model-v1 | scenario | target | episode 1';
++    await renderWithProviders(
++      <TracesV3Toolbar viewState="single-chat-session" sessionId={sessionId} sessionDisplayName={displayName} />,
++    );
++    expect(screen.getByRole('heading', { name: displayName })).toHaveAttribute('title', sessionId);
++    await userEvent.click(screen.getByRole('button', { name: 'Copy' }));
++    expect(mockClipboardCopy).toHaveBeenCalledWith(sessionId);
++  });
++
++  test('retains the session ID when no display label is available', async () => {
++    await renderWithProviders(<TracesV3Toolbar viewState="single-chat-session" sessionId="original-session" />);
++    expect(screen.getByRole('heading', { name: 'original-session' })).toBeInTheDocument();
++  });
++});
+--- a/mlflow/server/js/src/experiment-tracking/components/experiment-page/components/traces-v3/TracesV3Toolbar.tsx
++++ b/mlflow/server/js/src/experiment-tracking/components/experiment-page/components/traces-v3/TracesV3Toolbar.tsx
+@@ -6,10 +6,12 @@
+ export const TracesV3Toolbar = ({
+   viewState,
+   sessionId,
++  sessionDisplayName,
+   className,
+ }: {
+   viewState: string;
+   sessionId?: string;
++  sessionDisplayName?: string;
+   className?: string;
+ }) => {
+   // eslint-disable-next-line react-hooks/rules-of-hooks
+@@ -47,8 +49,8 @@
+               </Typography.Text>
+             </span>
+           </Tag>
+-          <Typography.Title level={3} withoutMargins>
+-            {sessionId}
++          <Typography.Title level={3} withoutMargins title={sessionId} aria-label={sessionDisplayName || sessionId}>
++            {sessionDisplayName || sessionId}
+           </Typography.Title>
+           {sessionId && <CopyActionButton copyText={sessionId} componentId="mlflow.chat-sessions.copy-session-id" />}
+         </div>
 --- a/mlflow/server/js/src/experiment-tracking/components/experiment-page/components/traces-v4/components/TracesV4PageContent.test.tsx
 +++ b/mlflow/server/js/src/experiment-tracking/components/experiment-page/components/traces-v4/components/TracesV4PageContent.test.tsx
 @@ -748,6 +748,41 @@
@@ -303,6 +360,32 @@
      visibilityById: visibility,
      setVisibility: restoreVisibility,
      toggle,
+--- a/mlflow/server/js/src/experiment-tracking/components/experiment-page/components/traces-v4/utils/buildTracesV4SearchParams.test.ts
++++ b/mlflow/server/js/src/experiment-tracking/components/experiment-page/components/traces-v4/utils/buildTracesV4SearchParams.test.ts
+@@ -92,8 +92,8 @@
+ });
+ 
+ describe('buildOrderBy', () => {
+-  test('start_time maps to timestamp with direction', () => {
+-    expect(buildOrderBy('start_time', 'desc')).toEqual(['timestamp DESC']);
++  test('descending start_time uses the indexed server default; ascending is explicit', () => {
++    expect(buildOrderBy('start_time', 'desc')).toBeUndefined();
+     expect(buildOrderBy('start_time', 'asc')).toEqual(['timestamp ASC']);
+   });
+ 
+--- a/mlflow/server/js/src/experiment-tracking/components/experiment-page/components/traces-v4/utils/buildTracesV4SearchParams.ts
++++ b/mlflow/server/js/src/experiment-tracking/components/experiment-page/components/traces-v4/utils/buildTracesV4SearchParams.ts
+@@ -124,7 +124,9 @@
+   const direction = dir === 'asc' ? 'ASC' : 'DESC';
+   switch (sort) {
+     case 'start_time':
+-      return [`timestamp ${direction}`];
++      // The server already orders by descending timestamp. An explicit sort adds a
++      // null-ordering expression that prevents SQLite from using its time index.
++      return dir === 'desc' ? undefined : [`timestamp ${direction}`];
+     case 'duration':
+       return [`execution_time ${direction}`];
+     default:
 --- a/mlflow/server/js/src/experiment-tracking/pages/experiment-chat-sessions/single-chat-view/ExperimentSingleChatConversation.tsx
 +++ b/mlflow/server/js/src/experiment-tracking/pages/experiment-chat-sessions/single-chat-view/ExperimentSingleChatConversation.tsx
 @@ -80,11 +80,13 @@
@@ -324,6 +407,24 @@
                </Typography.Text>
                <div css={{ flex: 1 }} />
                <Button
+--- a/mlflow/server/js/src/experiment-tracking/pages/experiment-chat-sessions/single-chat-view/ExperimentSingleChatSessionPage.tsx
++++ b/mlflow/server/js/src/experiment-tracking/pages/experiment-chat-sessions/single-chat-view/ExperimentSingleChatSessionPage.tsx
+@@ -49,6 +49,7 @@
+ import { AssistantAwareDrawer } from '@mlflow/mlflow/src/common/components/AssistantAwareDrawer';
+ import { first } from 'lodash';
+ import { useRunScorerInTracesViewConfiguration } from '../../experiment-scorers/hooks/useRunScorerInTracesViewConfiguration';
++import { getSessionDisplayName } from '@databricks/web-shared/traces-table';
+ 
+ const ContextProviders = ({
+   children,
+@@ -152,6 +153,7 @@
+           // prettier-ignore
+           viewState="single-chat-session"
+           sessionId={sessionId}
++          sessionDisplayName={getSessionDisplayName(sessionId, sortedTraceInfos?.[0])}
+           css={
+             shouldEnableAssessmentsInSessions()
+               ? {
 --- a/mlflow/server/js/src/experiment-tracking/pages/experiment-chat-sessions/single-chat-view/ExperimentSingleChatSessionSidebar.tsx
 +++ b/mlflow/server/js/src/experiment-tracking/pages/experiment-chat-sessions/single-chat-view/ExperimentSingleChatSessionSidebar.tsx
 @@ -1,5 +1,5 @@
@@ -375,9 +476,149 @@
          borderRight: `1px solid ${theme.colors.border}`,
          gap: theme.spacing.xs,
          paddingTop: theme.spacing.sm,
+--- a/mlflow/server/js/src/shared/web-shared/traces-table/TraceCell.test.tsx
++++ b/mlflow/server/js/src/shared/web-shared/traces-table/TraceCell.test.tsx
+@@ -2,8 +2,8 @@
+ import { screen } from '@testing-library/react';
+ import userEvent from '@testing-library/user-event';
+ 
+-import { TraceIdCell } from './TraceCell';
+-import { makeTrace } from './test-utils/mockTraces';
++import { TraceIdCell, TraceSessionCell } from './TraceCell';
++import { makeTrace, makeSessionTrace } from './test-utils/mockTraces';
+ import { renderWithProviders } from './test-utils/renderWithProviders';
+ 
+ // Observe the clipboard write at its boundary: useCopyController copies via `use-clipboard-copy`'s
+@@ -44,3 +44,31 @@
+     expect(mockClipboardCopy).toHaveBeenCalledWith(expectedCopy);
+   });
+ });
++
++describe('TraceSessionCell display labels', () => {
++  test.each<Record<string, string>>([
++    {},
++    { run: 'Other run', scenario_id: 'scenario', episode: '1' },
++    { 'align.run_key': 'recorded-key', run: 'Recorded run', episode: '1' },
++  ])('keeps the session ID for generic or incomplete metadata: %o', async (tags) => {
++    await renderWithProviders(<TraceSessionCell trace={{ ...makeSessionTrace('t1', 'original-session'), tags }} />);
++    expect(screen.getByText('original-session')).toBeInTheDocument();
++  });
++
++  test('omits absent model metadata and labels an absent target as unaligned', async () => {
++    await renderWithProviders(
++      <TraceSessionCell
++        trace={{
++          ...makeSessionTrace('t1', 'original-session'),
++          tags: {
++            'align.run_key': 'recorded-key',
++            run: 'Recorded run',
++            scenario_id: 'scenario',
++            episode: '2',
++          },
++        }}
++      />,
++    );
++    expect(screen.getByText('Recorded run | scenario | unaligned | episode 2')).toBeInTheDocument();
++  });
++});
+--- a/mlflow/server/js/src/shared/web-shared/traces-table/TraceCell.tsx
++++ b/mlflow/server/js/src/shared/web-shared/traces-table/TraceCell.tsx
+@@ -30,6 +30,7 @@
+ import type { SessionHrefGetter } from './types';
+ import type { To } from 'react-router';
+ import { formatTraceDuration } from './formatTraceDuration';
++import { getSessionDisplayName } from './sessionDisplayName';
+ 
+ // Module-local static analytics-id namespace. The `@databricks/no-dynamic-property-value` lint rule
+ // requires every `componentId` to be statically determinable, so a runtime-injected prefix isn't
+@@ -401,7 +402,7 @@
+ }
+ 
+ /**
+- * Session id as flat truncated text (full id in a tooltip), "-" when absent. When `getSessionHref`
++ * Session label as flat truncated text (full label and ID in a tooltip), "-" when absent. When `getSessionHref`
+  * returns a `To` the text is a `Link` to the session (stopPropagation so it doesn't open the drawer;
+  * Cmd/Ctrl-click still opens a new tab), with a hover-revealed arrow; otherwise plain text.
+  */
+@@ -412,13 +413,15 @@
+     if (!sessionId) {
+       return <EmptyValue />;
+     }
+-    const text = <span css={[truncateCss, { color: theme.colors.textPrimary }]}>{sessionId}</span>;
++    const displayName = getSessionDisplayName(sessionId, trace);
++    const tooltip = displayName === sessionId ? sessionId : `${displayName}\nSession ID: ${sessionId}`;
++    const text = <span css={[truncateCss, { color: theme.colors.textPrimary }]}>{displayName}</span>;
+     const to = getSessionHref?.({ trace, sessionId });
+     if (!to) {
+       return (
+         <Tooltip
+           componentId={`${COMPONENT_ID}.cell.session-tooltip`}
+-          content={<WrappedTooltipText>{sessionId}</WrappedTooltipText>}
++          content={<WrappedTooltipText>{tooltip}</WrappedTooltipText>}
+           maxWidth={CELL_OVERLAY_MAX_WIDTH}
+         >
+           <span css={{ display: 'block', maxWidth: '100%' }}>{text}</span>
+@@ -428,7 +431,7 @@
+     return (
+       <Tooltip
+         componentId={`${COMPONENT_ID}.cell.session-tooltip`}
+-        content={<WrappedTooltipText>{sessionId}</WrappedTooltipText>}
++        content={<WrappedTooltipText>{tooltip}</WrappedTooltipText>}
+         maxWidth={CELL_OVERLAY_MAX_WIDTH}
+       >
+         <span
 --- a/mlflow/server/js/src/shared/web-shared/traces-table/TracesTable.test.tsx
 +++ b/mlflow/server/js/src/shared/web-shared/traces-table/TracesTable.test.tsx
-@@ -209,7 +209,7 @@
+@@ -202,6 +202,48 @@
+     expect(screen.getByText('my-session')).toBeInTheDocument();
+   });
+ 
++  test.each([true, false])(
++    'shows recorded run labels while session links retain IDs (grouped: %s)',
++    async (grouped) => {
++      const sessionId = 'scenario | target | unknown_adm profile run-1 | episode 1 | recorded-key';
++      const displayName = 'Recorded ADM profile run-1 | model-v1 | scenario | target | episode 1';
++      const traces = [
++        {
++          ...makeSessionTrace('t1', sessionId),
++          tags: {
++            'align.run_key': 'recorded-key',
++            run: 'Recorded ADM profile run-1',
++            llm: 'model-v1',
++            scenario_id: 'scenario',
++            alignment_target_id: 'target',
++            episode: '1',
++          },
++        },
++      ];
++      await renderWithProviders(
++        <TracesTable
++          {...baseProps({
++            traces,
++            visibleColumns: ['session'],
++            isGroupedBySession: grouped,
++            getSessionHref: ({ sessionId: id }) => `/sessions/${encodeURIComponent(id)}`,
++          })}
++        />,
++      );
++      expect(screen.getByRole('link', { name: displayName })).toHaveAttribute(
++        'href',
++        expect.stringContaining(`/sessions/${encodeURIComponent(sessionId)}`),
++      );
++      expect(screen.queryByText(sessionId)).not.toBeInTheDocument();
++      if (grouped) {
++        const tooltip = `${displayName}\nSession ID: ${sessionId}`;
++        expect(screen.getByTitle(tooltip, { collapseWhitespace: false })).toBeInTheDocument();
++        await userEvent.click(screen.getByRole('button', { name: `Expand session ${sessionId}` }));
++        expect(screen.getByText('Turn 1')).toBeInTheDocument();
++      }
++    },
++  );
++
+   test('groups session traces under a collapsed header and expands them on demand', async () => {
+     const onSessionSelected = jest.fn();
+     const traces = [makeSessionTrace('s1-turn-1', 's1'), makeSessionTrace('s1-turn-2', 's1'), makeTrace('standalone')];
+@@ -209,7 +251,7 @@
        <TracesTable
          {...baseProps({
            traces,
@@ -386,7 +627,7 @@
            isGroupedBySession: true,
            getSessionHref: ({ sessionId }) => `/sessions/${sessionId}`,
            onSessionSelected,
-@@ -217,7 +217,6 @@
+@@ -217,7 +259,6 @@
        />,
      );
  
@@ -394,7 +635,7 @@
      expect(screen.getByRole('columnheader', { name: 'Session' })).toBeInTheDocument();
      expect(screen.getByRole('columnheader', { name: 'Input' })).toBeInTheDocument();
      expect(screen.getByRole('columnheader', { name: 'Output' })).toBeInTheDocument();
-@@ -237,6 +236,50 @@
+@@ -237,6 +278,50 @@
      // The first turn's input now appears twice: in the header preview AND in its expanded row.
      expect(screen.getAllByText('request for s1-turn-1')).toHaveLength(2);
      expect(screen.getByText('request for s1-turn-2')).toBeInTheDocument();
@@ -447,7 +688,15 @@
    test('passes all child traces to an extra column session renderer', async () => {
 --- a/mlflow/server/js/src/shared/web-shared/traces-table/TracesTable.tsx
 +++ b/mlflow/server/js/src/shared/web-shared/traces-table/TracesTable.tsx
-@@ -364,28 +364,11 @@
+@@ -49,6 +49,7 @@
+ import { getVisibleColumnDefs, type TracesTableMeta } from './columns';
+ import { getContentColumnMaxSizes } from './getColumnMaxSizes';
+ import { TraceColumnHeader } from './TraceColumnHeader';
++import { getSessionDisplayName } from './sessionDisplayName';
+ 
+ // No-op sort handlers for non-sortable columns (their header menu omits the sort items anyway).
+ const noop = () => {};
+@@ -364,28 +365,11 @@
        '.table-row-select-cell': { alignItems: 'center', paddingRight: theme.spacing.sm },
      } as const;
  
@@ -478,7 +727,7 @@
          if (column.id === undefined) {
            return column;
          }
-@@ -402,7 +385,7 @@
+@@ -402,7 +386,7 @@
          const maxSize = contentMaxSize ?? Math.max(column.maxSize ?? 0, persistedSize ?? 0);
          return { ...column, maxSize };
        });
@@ -487,7 +736,30 @@
  
      // Product-owned per-column session summary renderers (e.g. assessment aggregates), keyed by
      // column id so a session header cell can look one up.
-@@ -670,6 +653,15 @@
+@@ -643,10 +627,12 @@
+       );
+ 
+     const renderSessionHeaderCell = (sessionId: string, trace: ModelTraceInfoV3) => {
++      const displayName = getSessionDisplayName(sessionId, trace);
++      const tooltip = displayName === sessionId ? sessionId : `${displayName}\nSession ID: ${sessionId}`;
+       const tag = (
+-        <Tag componentId={`${COMPONENT_ID}.session-id`} title={sessionId} css={{ maxWidth: '100%' }}>
++        <Tag componentId={`${COMPONENT_ID}.session-id`} title={tooltip} css={{ maxWidth: '100%' }}>
+           <SpeechBubbleIcon css={{ fontSize: theme.typography.fontSizeBase, marginRight: theme.spacing.xs }} />
+-          <Typography.Text ellipsis>{sessionId}</Typography.Text>
++          <Typography.Text ellipsis>{displayName}</Typography.Text>
+         </Tag>
+       );
+       const sessionHref = getSessionHref?.({ trace, sessionId });
+@@ -654,6 +640,7 @@
+         <Link
+           componentId={`${COMPONENT_ID}.session-link`}
+           to={sessionHref}
++          aria-label={displayName}
+           onClick={(event) => event.stopPropagation()}
+         >
+           {tag}
+@@ -670,6 +657,15 @@
      ) => {
        const isSelected = row.id === selectedTraceId;
        const isBulkChecked = selectedForBulk.has(row.original.trace_id);
@@ -503,7 +775,7 @@
        return (
          <TableRow
            key={row.id}
-@@ -711,14 +703,8 @@
+@@ -711,14 +707,8 @@
            {row.getVisibleCells().map((cell) => (
              <TableCell key={cell.id} css={{ verticalAlign: 'middle' }} style={columnStyles.get(cell.column.id)}>
                {cell.column.id === 'session' && sessionTurnNumber !== undefined ? (
@@ -520,31 +792,37 @@
                  </Tag>
                ) : (
                  flexRender(cell.column.columnDef.cell, cell.getContext())
-diff --git a/mlflow/server/js/src/experiment-tracking/components/experiment-page/components/traces-v4/utils/buildTracesV4SearchParams.ts b/mlflow/server/js/src/experiment-tracking/components/experiment-page/components/traces-v4/utils/buildTracesV4SearchParams.ts
---- a/mlflow/server/js/src/experiment-tracking/components/experiment-page/components/traces-v4/utils/buildTracesV4SearchParams.ts
-+++ b/mlflow/server/js/src/experiment-tracking/components/experiment-page/components/traces-v4/utils/buildTracesV4SearchParams.ts
-@@ -124,7 +124,9 @@
-   const direction = dir === 'asc' ? 'ASC' : 'DESC';
-   switch (sort) {
-     case 'start_time':
--      return [`timestamp ${direction}`];
-+      // The server already orders by descending timestamp. An explicit sort adds a
-+      // null-ordering expression that prevents SQLite from using its time index.
-+      return dir === 'desc' ? undefined : [`timestamp ${direction}`];
-     case 'duration':
-       return [`execution_time ${direction}`];
-     default:
-diff --git a/mlflow/server/js/src/experiment-tracking/components/experiment-page/components/traces-v4/utils/buildTracesV4SearchParams.test.ts b/mlflow/server/js/src/experiment-tracking/components/experiment-page/components/traces-v4/utils/buildTracesV4SearchParams.test.ts
---- a/mlflow/server/js/src/experiment-tracking/components/experiment-page/components/traces-v4/utils/buildTracesV4SearchParams.test.ts
-+++ b/mlflow/server/js/src/experiment-tracking/components/experiment-page/components/traces-v4/utils/buildTracesV4SearchParams.test.ts
-@@ -92,8 +92,8 @@
- });
+--- a/mlflow/server/js/src/shared/web-shared/traces-table/index.ts
++++ b/mlflow/server/js/src/shared/web-shared/traces-table/index.ts
+@@ -102,6 +102,7 @@
+ // Helpers
+ export { formatTraceDuration } from './formatTraceDuration';
+ export { getTextColumnMaxSize } from './getColumnMaxSizes';
++export { getSessionDisplayName } from './sessionDisplayName';
  
- describe('buildOrderBy', () => {
--  test('start_time maps to timestamp with direction', () => {
--    expect(buildOrderBy('start_time', 'desc')).toEqual(['timestamp DESC']);
-+  test('descending start_time uses the indexed server default; ascending is explicit', () => {
-+    expect(buildOrderBy('start_time', 'desc')).toBeUndefined();
-     expect(buildOrderBy('start_time', 'asc')).toEqual(['timestamp ASC']);
-   });
- 
+ // Hooks (presentational state)
+ export { useBulkTraceSelection, type UseBulkTraceSelectionResult } from './hooks/useBulkTraceSelection';
+--- /dev/null
++++ b/mlflow/server/js/src/shared/web-shared/traces-table/sessionDisplayName.ts
+@@ -0,0 +1,21 @@
++import type { ModelTraceInfoV3 } from '../model-trace-explorer/ModelTrace.types';
++
++export const getSessionDisplayName = (sessionId: string, trace?: Pick<ModelTraceInfoV3, 'tags'>): string => {
++  const tags = trace?.tags;
++  const run = tags?.['run']?.trim();
++  const scenario = tags?.['scenario_id']?.trim();
++  const episode = tags?.['episode']?.trim();
++  if (!tags?.['align.run_key'] || !run || !scenario || !episode) {
++    return sessionId;
++  }
++  const model = tags['llm']?.trim();
++  return [
++    run,
++    model && !run.includes(model) ? model : undefined,
++    scenario,
++    tags['alignment_target_id']?.trim() || 'unaligned',
++    `episode ${episode}`,
++  ]
++    .filter(Boolean)
++    .join(' | ');
++};
