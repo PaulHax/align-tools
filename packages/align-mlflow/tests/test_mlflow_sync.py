@@ -295,13 +295,13 @@ def test_cli_creates_readable_session_cards_without_losing_source(tmp_path):
     assert "Unseen patient" not in roots[3].inputs["input"]
     assert "Hidden description" not in roots[3].inputs["input"]
     assert roots[3].outputs["response"] == (
-        "Move to Patient 2 to check vitals.\n\n"
+        "### Move to Patient 2 to check vitals.\n\n"
         "**Justification**\n\nPatient 2 needs assessment."
     )
     assert (
         roots[4]
         .outputs["response"]
-        .startswith("Place the specified triage tag on a patient")
+        .startswith("### Place the specified triage tag on a patient: Patient 2\n\n")
     )
     assert "category: DELAYED" in roots[4].outputs["response"]
     assert "No justification recorded." in roots[4].outputs["response"]
