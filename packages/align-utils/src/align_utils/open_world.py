@@ -13,9 +13,17 @@ from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, Optional, Sequence, Tuple, TypeVar
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
 
 from .models import Action, ChoiceInfo, ExperimentConfig, TimingData
+from .open_world_metadata import OpenWorldMetadata, resolve_metadata
 
 INPUT_OUTPUT_FILE = "input_output.json"
 RAW_LOG_FILE = "raw_align_system.log"
@@ -24,6 +32,7 @@ META_FILE = "meta.json"
 CONFIG_FILE = Path(".hydra") / "config.yaml"
 FINAL_STATE_GLOB = "*.final_state_unstructured.json"
 OPEN_WORLD_DRIVER_PREFIX = "align_system.drivers.itm_open_world"
+_READ_LOG = object()
 
 T = TypeVar("T")
 
@@ -119,6 +128,19 @@ class OpenWorldRecord(BaseModel):
             return {**value, "source": deepcopy(value)}
         return value
 
+    @field_validator("choice_info", mode="before")
+    @classmethod
+    def usable_pipeline_context(cls, value: Any) -> Any:
+        """Project recognized optional fields while preserving all original evidence."""
+        if not isinstance(value, dict):
+            return {}
+        try:
+            ChoiceInfo.model_validate(value)
+        except ValidationError as error:
+            unusable = {item["loc"][0] for item in error.errors() if item["loc"]}
+            return {key: item for key, item in value.items() if key not in unusable}
+        return value
+
     @property
     def chosen_by_driver(self) -> bool:
         justification = self.output.action.justification or ""
@@ -176,6 +198,7 @@ class OpenWorldRun(BaseModel):
     path: Path
     episodes: Tuple[Episode, ...]
     config: Optional[ExperimentConfig] = None
+    metadata: OpenWorldMetadata = Field(default_factory=OpenWorldMetadata)
     adm_profile: Optional[str] = None
     version: Optional[str] = None
     username: Optional[str] = None
@@ -335,21 +358,28 @@ def find_open_world_runs(root: Path) -> Tuple[Path, ...]:
     )
 
 
-def load_run(run_dir: Path) -> OpenWorldRun:
+def load_run(run_dir: Path, *, log_text: Any = _READ_LOG) -> OpenWorldRun:
     """Load an open-world run directory.
 
     Raises OSError when input_output.json is missing and ValueError when it is
     not complete JSON (it may be mid-write). Unmatched optional scores are
     omitted and reported in score_warning. Config, meta and timing are optional.
+    An explicit log_text=None uses a missing captured log; omitting it reads
+    raw_align_system.log.
     """
     log_path = run_dir / RAW_LOG_FILE
     # Completions are logged after their episode's records are saved, so
     # reading the log first never finds a completion without its episode.
-    outcomes = (
-        parse_episode_outcomes(log_path.read_text(encoding="utf-8", errors="replace"))
-        if log_path.is_file()
-        else ()
+    captured_log = (
+        (
+            log_path.read_text(encoding="utf-8", errors="replace")
+            if log_path.is_file()
+            else None
+        )
+        if log_text is _READ_LOG
+        else log_text
     )
+    outcomes = parse_episode_outcomes(captured_log) if captured_log is not None else ()
     records = parse_records(json.loads((run_dir / INPUT_OUTPUT_FILE).read_text()))
     episodes = split_episodes(records)
     score_warning = None
@@ -366,6 +396,7 @@ def load_run(run_dir: Path) -> OpenWorldRun:
         episodes=episodes,
         score_warning=score_warning,
         config=_experiment_config(raw_config),
+        metadata=resolve_metadata(raw_config, meta),
         adm_profile=_optional_str(
             _as_dict(raw_config.get("interface")).get("adm_profile")
         ),

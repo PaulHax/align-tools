@@ -4,11 +4,13 @@ import hashlib
 import json
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import Dict
+from typing import Dict, Optional
 
 from align_utils.open_world import CONFIG_FILE, META_FILE, OpenWorldRun
 from mlflow import MlflowClient
 
+from .artifacts import preserve_timing, timing_manifest
+from .timing import TIMELINE_TAG, resolve_timing_plan
 from .traces import RUN_KEY_TAG, run_key, run_label
 
 PROVENANCE_FILES = (
@@ -29,7 +31,13 @@ def read_provenance(run_dir: Path) -> Dict[str, bytes]:
     }
 
 
-def preserve_run(experiment_id: str, run: OpenWorldRun, files: Dict[str, bytes]) -> str:
+def preserve_run(
+    experiment_id: str,
+    run: OpenWorldRun,
+    files: Dict[str, bytes],
+    *,
+    origin_ns: Optional[int] = None,
+) -> str:
     """Reuse a source run and copy each provenance file once, without overwrites.
 
     One importer must own a source run at a time. A digest is recorded only after
@@ -44,6 +52,11 @@ def preserve_run(experiment_id: str, run: OpenWorldRun, files: Dict[str, bytes])
     )
     if len(matches) > 1:
         raise ValueError(f"Multiple MLflow runs have source key {key}")
+    plan = (
+        resolve_timing_plan(run, origin_ns)
+        if not matches and origin_ns is not None
+        else None
+    )
     source = (
         matches[0]
         if matches
@@ -53,12 +66,18 @@ def preserve_run(experiment_id: str, run: OpenWorldRun, files: Dict[str, bytes])
             tags={
                 RUN_KEY_TAG: key,
                 "align.source_path": str(run.path.resolve()),
+                **(
+                    {TIMELINE_TAG: json.dumps(timing_manifest(plan), sort_keys=True)}
+                    if plan is not None
+                    else {}
+                ),
                 **{
                     name: value
                     for name, value in {
                         "align.source_version": run.version,
-                        "adm": run.config.adm.name if run.config else None,
-                        "llm": run.config.adm.llm_backbone if run.config else None,
+                        "adm": run.metadata.adm_name,
+                        "llm": run.metadata.llm_name,
+                        "align.driver": run.metadata.driver_class,
                         "adm_profile": run.adm_profile,
                     }.items()
                     if value
@@ -77,6 +96,8 @@ def preserve_run(experiment_id: str, run: OpenWorldRun, files: Dict[str, bytes])
                 "the archived file was kept. Import into a new experiment "
                 "if this is a different run."
             )
+    if plan is not None:
+        preserve_timing(client, source.info.run_id, plan)
     with TemporaryDirectory() as staging:
         for name, content in files.items():
             if name in saved:

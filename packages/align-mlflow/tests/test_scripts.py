@@ -70,6 +70,7 @@ def test_import_server_and_views_share_configured_storage(tmp_path, transport):
         "MLFLOW_TRACKING_URI": f"sqlite:///{storage}/tracking.db",
         "MLFLOW_EXPERIMENT_NAME": "script configuration test",
         "MLFLOW_PORT": "0",
+        "MLFLOW_INCLUDE_LOG": "1",
     }
 
     def import_twice(import_env):
@@ -173,6 +174,29 @@ def test_import_server_and_views_share_configured_storage(tmp_path, transport):
                     runs[0].info.run_id, f"source/{relative}", str(download)
                 )
                 assert Path(downloaded).read_bytes() == (source / relative).read_bytes()
+
+        log_reference = json.loads(runs[0].data.tags["align.log_snapshot"])
+        download = tmp_path / "evidence-downloads"
+        download.mkdir()
+        log_artifact = client.download_artifacts(
+            runs[0].info.run_id, log_reference["artifact_path"], str(download)
+        )
+        assert (
+            Path(log_artifact).read_bytes()
+            == (source / "raw_align_system.log").read_bytes()
+        )
+        index_artifact = client.download_artifacts(
+            runs[0].info.run_id, log_reference["index_path"], str(download)
+        )
+        assert len(json.loads(Path(index_artifact).read_text())["records"]) == 1
+        timing_reference = json.loads(runs[0].data.tags["align.timeline"])
+        timing_artifact = client.download_artifacts(
+            runs[0].info.run_id, timing_reference["artifact_path"], str(download)
+        )
+        assert (
+            json.loads(Path(timing_artifact).read_text())["basis"]
+            == "component_durations"
+        )
 
         views = subprocess.run(
             [str(SCRIPTS / "views.sh"), url],
