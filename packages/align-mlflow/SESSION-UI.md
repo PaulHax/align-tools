@@ -14,6 +14,6 @@
 
 **Reinstall only the UI:** `./packages/align-mlflow/scripts/install-ui.sh`. Stop the server before setup or reinstallation, then restart and reload browsers. See [server setup](SERVER.md#quick-start).
 
-After the first import, install the comparison views for the chosen experiment using the [server setup step](SERVER.md#quick-start). Select **Session comparison** from the Views menu to show scenario, ADM, KDMA alignment target, driver, model, and run together. The filter control accepts the same recorded tags. In **Display > Columns**, hide or reorder columns and save the layout as another named view.
+After importing, [install the comparison views](SERVER.md#quick-start) for the experiment. Select **Session comparison** from **Views**, filter by recorded tags, and use **Display > Columns** to hide or reorder columns. Save a custom layout as another named view.
 
-Older imports retain their recorded `adm`, `llm`, `scenario_id`, alignment target, and run values. A missing driver or model stays missing; installing a view does not infer metadata or rewrite traces. Source version shows the recorded version string; a dirty version does not identify the exact executed code.
+Views display recorded metadata without changing traces. Older imports can have missing driver or model values. Source version shows the recorded version string; a dirty version does not identify the exact executed code.

@@ -37,7 +37,7 @@ These steps create a new instance. For the installed ITM server, use the [servic
 
    Open the printed **Session comparison** link, or select it from the Views menu. The grouped table shows scenario, ADM, KDMA alignment target, driver, model, and run columns, with Input and Output previews hidden. Use the filter control to select a tag such as `adm`, `scenario_id`, or `alignment_target_id`.
 
-   Setup installs the session UI; this separate command installs the saved views. Run it once per experiment, or again to restore the named presets. Other named views are retained. Save personal changes under another view name before restoring a preset. See [session UI](SESSION-UI.md) for display controls.
+   Run this command once per experiment or again to restore the named presets. Other named views are retained. Save personal changes under another view name before restoring a preset. See [session UI](SESSION-UI.md) for display controls.
 
 ## Manage the instance on ITM
 

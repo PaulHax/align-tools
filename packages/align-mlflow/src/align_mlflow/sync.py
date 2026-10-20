@@ -26,6 +26,7 @@ from .store import (
     logged_steps,
     sync_source_version,
 )
+from .timing import UNKNOWN_TIMING_SOURCE
 from .traces import run_key, run_label, session_scores, step_traces
 
 # align-system's Hydra run directories are named by start time.
@@ -113,18 +114,21 @@ def sync_run(
         )
 
     try:
+        recovery_origin_ns = _new_run_start_ns(run_dir, origin_ns)
         source_run_id = preserve_run(
             experiment_id,
             run,
             provenance,
-            origin_ns=_new_run_start_ns(run_dir, origin_ns),
+            origin_ns=recovery_origin_ns,
         )
         client = MlflowClient()
         source = client.get_run(source_run_id)
-        timeline = captured_timing(client, source, run, origin_ns)
+        logged = logged_steps(experiment_id, run_key(run))
+        timeline, recovery_warning = captured_timing(
+            client, source, run, origin_ns, logged, recovery_origin_ns
+        )
         if include_log:
             preserve_log(client, source, log_content, logs)
-        logged = logged_steps(experiment_id, run_key(run))
         sync_source_version(logged.values(), run.version)
         trace_ids = {index: trace.info.trace_id for index, trace in logged.items()}
         new_steps = [
@@ -151,12 +155,25 @@ def sync_run(
             error=f"Import interrupted; partial data may be present: {error}",
         )
 
+    timing_warning = (
+        "Some action durations are unknown; synthetic minimum spans are shown."
+        if any(
+            step.tags["align.timing_source"] == UNKNOWN_TIMING_SOURCE
+            for step in new_steps
+        )
+        else None
+    )
     return SyncResult(
         run_dir,
         run_label(run),
         len(new_steps),
         len(new_scores),
-        warning="; ".join(filter(None, [run.score_warning, log_warning])) or None,
+        warning="; ".join(
+            filter(
+                None, [run.score_warning, log_warning, timing_warning, recovery_warning]
+            )
+        )
+        or None,
     )
 
 

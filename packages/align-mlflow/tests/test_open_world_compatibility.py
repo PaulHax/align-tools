@@ -235,7 +235,7 @@ def test_cli_imports_generic_metadata_timings_and_inspectable_evidence(
         assert (run / name).read_bytes() == content
 
 
-def test_late_timing_file_preserves_imported_trace_and_append_timeline(tmp_path):
+def test_late_timing_preserves_unknown_duration_and_measures_new_action(tmp_path):
     records = generic_records()
     run = generic_run(tmp_path / "2026-09-24__16-05-25", records[:1])
     uri, client, experiment_id = create_store(tmp_path)
@@ -253,22 +253,150 @@ def test_late_timing_file_preserves_imported_trace_and_append_timeline(tmp_path)
     traces = read_traces(client, experiment_id)
     assert len(traces) == 2
     assert traces[0].to_dict() == before.to_dict()
-    assert {
+    assert [
         root_span(trace).end_time_ns - root_span(trace).start_time_ns
         for trace in traces
-    } == {1_000}
+    ] == [1_000, 2_500_000_000]
     assert {root_span(trace).attributes["align.timing_source"] for trace in traces} == {
-        "synthetic_minimum"
+        "unknown",
+        "timing.json.raw_times_s",
     }
     assert root_span(traces[1]).start_time_ns > root_span(traces[0]).end_time_ns
     source_after = client.search_runs([experiment_id])[0]
     assert source_after.info.run_id == source_run.info.run_id
     assert (
         source_after.data.tags["align.timeline"]
-        == source_run.data.tags["align.timeline"]
+        != source_run.data.tags["align.timeline"]
     )
     plan = read_timing_plan(client, source_after, tmp_path / "timing-download")
-    assert plan["basis"] == "component_durations"
+    assert plan["basis"] == "raw_times_s"
+    assert plan["raw_times_s"] == [None, 2.5]
+
+
+def test_raw_timing_appends_without_changing_captured_traces_or_artifacts(tmp_path):
+    records = generic_records()
+    run = generic_run(tmp_path / "2026-09-24__16-05-25", records[:1])
+    write_timing(run, [1.25])
+    uri, client, experiment_id = create_store(tmp_path)
+    first_import = command(run, uri)
+    assert first_import.returncode == 0, first_import.stdout + first_import.stderr
+    before = read_traces(client, experiment_id)[0].to_dict()
+    source = client.search_runs([experiment_id])[0]
+    original_plan = read_timing_plan(client, source, tmp_path / "timing-before")
+
+    (run / "input_output.json").write_text(json.dumps(records))
+    write_timing(run, [1.25, 2.5])
+
+    appended = command(run, uri)
+
+    assert appended.returncode == 0, appended.stdout + appended.stderr
+    assert "1 new traces, 0 new episode scores" in appended.stdout
+    traces = read_traces(client, experiment_id)
+    assert len(traces) == 2
+    assert traces[0].to_dict() == before
+    assert root_span(traces[1]).start_time_ns == (
+        root_span(traces[0]).end_time_ns + 1_000_000
+    )
+    assert root_span(traces[1]).end_time_ns - root_span(traces[1]).start_time_ns == (
+        2_500_000_000
+    )
+    source_after = client.get_run(source.info.run_id)
+    plan = read_timing_plan(client, source_after, tmp_path / "timing-after")
+    assert plan == {**original_plan, "raw_times_s": [1.25, 2.5]}
+    assert read_timing_plan(client, source, tmp_path / "timing-original") == (
+        original_plan
+    )
+
+    repeated = command(run, uri)
+
+    assert repeated.returncode == 0, repeated.stdout + repeated.stderr
+    assert "0 new traces, 0 new episode scores" in repeated.stdout
+    assert [trace.to_dict() for trace in read_traces(client, experiment_id)] == [
+        trace.to_dict() for trace in traces
+    ]
+    assert (
+        client.get_run(source.info.run_id).data.tags["align.timeline"]
+        == source_after.data.tags["align.timeline"]
+    )
+
+
+@pytest.mark.parametrize(
+    "durations", [None, [1.25], [9.0, 2.5], [1.25, float("nan")], [1.25, 1e300]]
+)
+def test_unresolved_append_timing_imports_unknown_without_moving_old_traces(
+    tmp_path, durations
+):
+    records = generic_records()
+    run = generic_run(tmp_path / "2026-09-24__16-05-25", records[:1])
+    write_timing(run, [1.25])
+    uri, client, experiment_id = create_store(tmp_path)
+    first_import = command(run, uri)
+    assert first_import.returncode == 0, first_import.stdout + first_import.stderr
+    before = [trace.to_dict() for trace in read_traces(client, experiment_id)]
+    source = client.search_runs([experiment_id])[0]
+    original_plan = read_timing_plan(client, source, tmp_path / "timing-before")
+    (run / "input_output.json").write_text(json.dumps(records))
+    if durations is None:
+        (run / "timing.json").unlink()
+    else:
+        write_timing(run, durations)
+
+    appended = command(run, uri)
+
+    assert appended.returncode == 0, appended.stdout + appended.stderr
+    assert "1 new traces, 0 new episode scores" in appended.stdout
+    assert "durations are unknown" in appended.stdout
+    traces = read_traces(client, experiment_id)
+    assert len(traces) == 2
+    assert traces[0].to_dict() == before[0]
+    root = root_span(traces[1])
+    assert root.attributes["align.timing_source"] == "unknown"
+    assert root.end_time_ns - root.start_time_ns == 1_000
+    assert root.start_time_ns == root_span(traces[0]).end_time_ns + 1_000_000
+    source_after = client.get_run(source.info.run_id)
+    assert read_timing_plan(client, source_after, tmp_path / "timing-after") == (
+        {**original_plan, "raw_times_s": [1.25, None]}
+    )
+    assert (
+        read_timing_plan(client, source, tmp_path / "timing-original") == original_plan
+    )
+
+    write_timing(run, [1.25, 2.5])
+    repeated = command(run, uri)
+
+    assert repeated.returncode == 0, repeated.stdout + repeated.stderr
+    assert "0 new traces, 0 new episode scores" in repeated.stdout
+    assert [trace.to_dict() for trace in read_traces(client, experiment_id)] == [
+        trace.to_dict() for trace in traces
+    ]
+    assert (
+        client.get_run(source.info.run_id).data.tags["align.timeline"]
+        == source_after.data.tags["align.timeline"]
+    )
+
+
+@pytest.mark.parametrize("timing_source", ["raw", "component"])
+def test_unrepresentable_timing_does_not_block_import(tmp_path, timing_source):
+    records = generic_records()[:1]
+    if timing_source == "component":
+        records[0]["choice_info"]["per_step_timing_stats"] = [
+            {"step": "recorded.step", "step_num": 0, "elapsed_s": 1e300}
+        ]
+    run = generic_run(tmp_path / "2026-09-24__16-05-25", records)
+    if timing_source == "raw":
+        write_timing(run, [1e300])
+    uri, client, experiment_id = create_store(tmp_path)
+
+    result = command(run, uri)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "1 new traces, 1 new episode scores" in result.stdout
+    assert "durations are unknown" in result.stdout
+    trace = read_traces(client, experiment_id)[0]
+    root = root_span(trace)
+    assert root.attributes["align.timing_source"] == "unknown"
+    assert root.end_time_ns - root.start_time_ns == 1_000
+    assert {"input": root.inputs["source"], **root.outputs["source"]} == records[0]
 
 
 @pytest.mark.parametrize("name", ["3813", "2026-09-24__16-05-25"])
