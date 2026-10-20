@@ -1,6 +1,6 @@
 # Session UI
 
-- **Adds:** action names and movable, hideable columns in grouped sessions.
+- **Adds:** readable session titles, action names, and movable, hideable columns in grouped sessions.
 - **Install location:** the server; everyone using its UI gets the patch.
 
 **Requires:** Git, `uv`, and Node.js **24.14+ within 24.x** on `PATH`. From the repository root, before starting the server:
@@ -17,6 +17,8 @@
 After importing, [install the comparison views](#saved-views) for the experiment. Select **Session comparison** from **Views** and use **Display > Columns** to hide or reorder columns. Save a custom layout as another named view.
 
 Views display recorded metadata without changing traces. Older imports can have missing driver or model values. Source version shows the recorded version string; a dirty version does not identify the exact executed code.
+
+Session titles use recorded run, model, scenario, alignment target, and episode tags. Existing session IDs, links, and copied identifiers stay the same, so older IDs containing `unknown_adm` can display the resolved ADM without reimporting. Sessions without the required Open World tags display their original ID.
 
 ## Saved views
 
