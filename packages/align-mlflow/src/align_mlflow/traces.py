@@ -79,16 +79,10 @@ def run_label(run: OpenWorldRun) -> str:
     )
 
 
-def identity_label(run: OpenWorldRun) -> str:
-    """The original run label used by persisted run and session identifiers."""
-    adm = run.config.adm.name if run.config else None
-    return " ".join(filter(None, [adm, run.adm_profile, run.path.name]))
-
-
 def run_key(run: OpenWorldRun) -> str:
     """Identity used to find a run's logged steps. Includes the TA3 session
     name when present, which is unique per live run."""
-    identity = f"{identity_label(run)}\n{run.username or ''}"
+    identity = f"{run_label(run)}\n{run.username or ''}"
     return hashlib.sha256(identity.encode()).hexdigest()[:16]
 
 
@@ -183,7 +177,6 @@ def step_traces(
     if logs is not None and len(logs) != len(run.records):
         raise ValueError("Decision log count does not match source records")
     label, key = run_label(run), run_key(run)
-    session_label = identity_label(run)
     placed = [
         (episode, step, episode.first_record_index + step - 1, record)
         for episode in run.episodes
@@ -207,7 +200,7 @@ def step_traces(
     return tuple(
         StepTrace(
             record_index=record_index,
-            session_id=session_id(episode, session_label, key),
+            session_id=session_id(episode, label, key),
             root=_root_span(
                 record,
                 step,
@@ -329,7 +322,7 @@ def _step_tags(
 
 
 def session_scores(run: OpenWorldRun) -> Tuple[SessionScore, ...]:
-    label, key = identity_label(run), run_key(run)
+    label, key = run_label(run), run_key(run)
     return tuple(
         SessionScore(
             session_id=session_id(episode, label, key),

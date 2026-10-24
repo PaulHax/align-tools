@@ -8,7 +8,6 @@ from open_world_fixtures import completion_line, episode_records, write_run
 
 from align_mlflow.timing import TimingPlan, resolve_timing_plan
 from align_mlflow.traces import (
-    identity_label,
     run_key,
     run_label,
     session_scores,
@@ -181,7 +180,7 @@ def test_corrupted_captured_timing_plan_reports_value_error(stored):
         TimingPlan.from_json(stored)
 
 
-def test_display_metadata_does_not_change_old_identity_or_score_sessions(tmp_path):
+def test_resolved_metadata_identifies_runs_and_score_sessions(tmp_path):
     path = _generic_source(tmp_path, episode_records(None))
     config_path = path / ".hydra/config.yaml"
     config = yaml.safe_load(config_path.read_text())
@@ -194,10 +193,9 @@ def test_display_metadata_does_not_change_old_identity_or_score_sessions(tmp_pat
     run = load_run(path)
     traces = step_traces(run, 100_000)
 
-    assert identity_label(run) == "unknown_adm TEST_OPENWORLD run"
     assert run_label(run) == "recorded_architecture TEST_OPENWORLD run"
-    assert run_key(run) == "ebf1d7594f148e02"
+    assert run_key(run) == "935f0bbf15a1030a"
     assert traces[0].tags["adm"] == "recorded_architecture"
     assert traces[0].tags["llm"] == "provider:model"
-    assert "unknown_adm TEST_OPENWORLD run" in traces[0].session_id
+    assert "recorded_architecture TEST_OPENWORLD run" in traces[0].session_id
     assert session_scores(run)[0].session_id == traces[0].session_id

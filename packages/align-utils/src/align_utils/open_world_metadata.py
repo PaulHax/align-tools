@@ -1,4 +1,4 @@
-"""Display metadata from recorded open-world Hydra and meta files."""
+"""Metadata from recorded open-world Hydra and meta files."""
 
 from typing import Any, Dict, Optional
 
@@ -6,7 +6,7 @@ from pydantic import BaseModel, ConfigDict
 
 
 class OpenWorldMetadata(BaseModel):
-    """Names for display, independent of the configuration used for identity."""
+    """Resolved ADM, model, and driver names from recorded configuration."""
 
     model_config = ConfigDict(frozen=True)
 
