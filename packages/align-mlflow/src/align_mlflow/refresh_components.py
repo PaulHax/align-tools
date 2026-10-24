@@ -1,4 +1,4 @@
-"""Enrich confirmed decision traces in a local MLflow 3.16.1 SQLite store."""
+"""Enrich confirmed decision traces in a local MLflow 3.17.2 SQLite store."""
 
 import json
 import sqlite3
@@ -20,8 +20,8 @@ from .traces import component_spans, run_key
 def refresh_components(
     tracking_uri: str, experiment_name: str, root: Path, dry_run: bool = False
 ):
-    if mlflow.__version__ != "3.16.1":
-        raise ValueError("Component refresh is verified with MLflow 3.16.1 only")
+    if mlflow.__version__ != "3.17.2":
+        raise ValueError("Component refresh is verified with MLflow 3.17.2 only")
     url = make_url(tracking_uri)
     if url.drivername != "sqlite" or not url.database or url.query:
         raise ValueError("Component refresh requires a local sqlite:/// tracking URI")

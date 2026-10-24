@@ -9,7 +9,7 @@
 ./packages/align-mlflow/scripts/setup.sh
 ```
 
-- **Default setup:** installs locked MLflow **3.16.1** and the UI together.
+- **Default setup:** installs locked MLflow **3.17.2** and the UI together.
 - **First build:** downloads dependencies and needs several GB of disk space.
 
 **Reinstall only the UI:** `./packages/align-mlflow/scripts/install-ui.sh`. Stop the server before setup or reinstallation, then restart and reload browsers. See [server setup](SERVER.md#quick-start).
@@ -41,6 +41,6 @@ All views use **All time**, so older runs remain visible. Choose an **ADM:** ent
 
 Rerun after importing new ADMs. Existing named presets are restored, new labels get views, and other views are retained, including views for labels no longer present. Unchanged views are left untouched. Save personal layouts under another name before rerunning; conflicting names or IDs stop setup before any views change. Saved views belong to the experiment and need no server restart.
 
-Definitions live in [views.json](examples/views.json); [configure_views.py](examples/configure_views.py) generates the ADM variants. The recipe uses MLflow's internal saved-view format and checks for **3.16.1** before writing. Use the destination's UI URL as the first argument if it differs from `MLFLOW_TRACKING_URI`; standard MLflow credentials apply.
+Definitions live in [views.json](examples/views.json); [configure_views.py](examples/configure_views.py) generates the ADM variants. The recipe uses MLflow's internal saved-view format and checks for **3.17.2** before writing. Use the destination's UI URL as the first argument if it differs from `MLFLOW_TRACKING_URI`; standard MLflow credentials apply.
 
 Saved views provide filter shortcuts. MLflow still groups the current page of traces into sessions, so a session can span pages and the footer counts traces.

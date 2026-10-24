@@ -67,7 +67,6 @@ journalctl --user -u open-world-mlflow.service -n 50 -f
 - **Runtime data stays outside Git.** Keep code, the UI patch, and configuration examples in the repository.
 - **The server account owns writes.** Importers use HTTP and need no direct access to the database or artifact directory.
 - **SQLite working files** (`mlflow.db-wal` and `mlflow.db-shm`) may appear while the server runs. Do not delete a live WAL.
-- **ITM's copied store retains IDs**, annotations, and saved views. Its original store remains available for rollback.
 
 ### Native MLflow settings
 
@@ -102,10 +101,11 @@ systemctl --user stop open-world-mlflow.service
 git fetch origin
 git switch --detach origin/main
 ./packages/align-mlflow/scripts/setup.sh
+uv run --no-sync mlflow db upgrade sqlite:////data/shared/mlflow/mlflow.db
 systemctl --user start open-world-mlflow.service
 ```
 
-- Setup installs the **locked MLflow 3.16.1 environment and session UI together**. Reload browsers afterward; a global MLflow installation does not include the patch.
+- Setup installs the **locked MLflow 3.17.2 environment and session UI together**. Reload browsers afterward; a global MLflow installation does not include the patch.
 - Review dependency changes first. MLflow version changes may require database schema and UI patch updates.
 
 ## Back up, restore, or move

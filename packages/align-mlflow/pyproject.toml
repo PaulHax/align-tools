@@ -22,7 +22,7 @@ classifiers = [
 dependencies = [
     "align-utils",
     "click>=8.0",
-    "mlflow>=3.16",
+    "mlflow==3.17.2",
 ]
 
 [project.urls]
