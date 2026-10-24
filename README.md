@@ -22,6 +22,8 @@ Server setup also installs the session UI; follow the [server guide](packages/al
 
 ## Development
 
+Install commit-message validation once per clone: `uv run --no-sync pre-commit install --hook-type commit-msg --allow-missing-config`. Commit subjects use Conventional Commits, such as `fix(mlflow): show recorded session titles`, checked with the same parser as releases.
+
 Run the CI checks from the repository root:
 
 ```bash
