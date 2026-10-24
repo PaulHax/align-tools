@@ -57,44 +57,54 @@
          </div>
 --- a/mlflow/server/js/src/experiment-tracking/components/experiment-page/components/traces-v4/components/TracesV4PageContent.test.tsx
 +++ b/mlflow/server/js/src/experiment-tracking/components/experiment-page/components/traces-v4/components/TracesV4PageContent.test.tsx
-@@ -748,6 +748,41 @@
+@@ -748,6 +748,51 @@
      });
    });
  
-+  test('grouped sessions hide previews and reorder custom ADM columns through Display', async () => {
-+    const user = userEvent.setup({ pointerEventsCheck: PointerEventsCheckLevel.Never });
-+    state.pages = {
-+      '': {
-+        traces: [
-+          { ...makeSessionTrace('t1', 'episode-1'), tags: { adm: 'regression', target: 'affiliation-0.2' } },
-+          { ...makeSessionTrace('t2', 'episode-1'), tags: { adm: 'regression', target: 'affiliation-0.2' } },
-+        ],
-+      },
-+    };
-+    setLocalStorageItem(`${TRACE_COLUMN_ORDER_STORAGE_KEY_PREFIX}.${EXPERIMENT_ID}`, 1, true, [
-+      'session',
-+      'tag:target',
-+      'tag:adm',
-+      'input',
-+      'output',
-+    ]);
-+    renderPage({ initialUrl: `${URL}?groupBy=session` });
-+    await screen.findByRole('button', { name: 'Expand session episode-1' });
-+    await openDisplaySubmenu(user, /^Columns/);
-+    await selectSubmenuItem('menuitemcheckbox', 'Input');
-+    await selectSubmenuItem('menuitemcheckbox', 'Output');
-+    await selectSubmenuItem('menuitemcheckbox', 'adm');
-+    await selectSubmenuItem('menuitemcheckbox', 'target');
-+    fireEvent.keyDown(screen.getByRole('menuitemcheckbox', { name: 'adm' }), { key: 'ArrowUp', ctrlKey: true });
-+    await user.keyboard('{Escape}{Escape}');
-+    expect(screen.queryByRole('columnheader', { name: 'Input' })).not.toBeInTheDocument();
-+    expect(screen.queryByRole('columnheader', { name: 'Output' })).not.toBeInTheDocument();
-+    expect(screen.getByText('regression')).toBeInTheDocument();
-+    expect(screen.getByText('affiliation-0.2')).toBeInTheDocument();
-+    const adm = screen.getByRole('columnheader', { name: 'adm' });
-+    const target = screen.getByRole('columnheader', { name: 'target' });
-+    expect(adm.compareDocumentPosition(target) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-+  });
++  test.each([false, true])(
++    'grouped sessions show and reorder descriptive columns (paginated: %s)',
++    async (paginated) => {
++      const user = userEvent.setup({ pointerEventsCheck: PointerEventsCheckLevel.Never });
++      state.pages = {
++        '': {
++          traces: Array.from({ length: paginated ? 25 : 2 }, (_, index) => {
++            const trace = makeSessionTrace(`t${index}`, 'episode-1');
++            return {
++              ...trace,
++              tags: { adm: 'regression', target: 'affiliation-0.2' },
++              trace_metadata: { ...trace.trace_metadata, cohort: 'study-1' },
++            };
++          }),
++          next_page_token: paginated ? 'next' : undefined,
++        },
++      };
++      setLocalStorageItem(`${TRACE_COLUMN_ORDER_STORAGE_KEY_PREFIX}.${EXPERIMENT_ID}`, 1, true, [
++        'session',
++        'tag:target',
++        'tag:adm',
++        'input',
++        'output',
++      ]);
++      renderPage({ initialUrl: `${URL}?groupBy=session` });
++      await screen.findByRole('button', { name: 'Expand session episode-1' });
++      await openDisplaySubmenu(user, /^Columns/);
++      await selectSubmenuItem('menuitemcheckbox', 'Input');
++      await selectSubmenuItem('menuitemcheckbox', 'Output');
++      await selectSubmenuItem('menuitemcheckbox', 'adm');
++      await selectSubmenuItem('menuitemcheckbox', 'target');
++      await selectSubmenuItem('menuitemcheckbox', 'cohort');
++      fireEvent.keyDown(screen.getByRole('menuitemcheckbox', { name: 'adm' }), { key: 'ArrowUp', ctrlKey: true });
++      await user.keyboard('{Escape}{Escape}');
++      expect(screen.queryByRole('columnheader', { name: 'Input' })).not.toBeInTheDocument();
++      expect(screen.queryByRole('columnheader', { name: 'Output' })).not.toBeInTheDocument();
++      expect(screen.getByText('regression')).toBeInTheDocument();
++      expect(screen.getByText('affiliation-0.2')).toBeInTheDocument();
++      expect(screen.getByText('study-1')).toBeInTheDocument();
++      const adm = screen.getByRole('columnheader', { name: 'adm' });
++      const target = screen.getByRole('columnheader', { name: 'target' });
++      expect(adm.compareDocumentPosition(target) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
++    },
++  );
 +
    describe('column reordering', () => {
      test('renders headers in the persisted column order', async () => {
@@ -344,6 +354,28 @@
  
 --- a/mlflow/server/js/src/experiment-tracking/components/experiment-page/components/traces-v4/hooks/useTracesV4CustomColumns.tsx
 +++ b/mlflow/server/js/src/experiment-tracking/components/experiment-page/components/traces-v4/hooks/useTracesV4CustomColumns.tsx
+@@ -117,6 +117,8 @@
+     () =>
+       visibleCandidates.map((candidate) => {
+         const values = traces.map((trace) => valueFor(trace, candidate)?.toString() ?? '');
++        const renderSessionCell = (sessionTraces: ModelTraceInfoV3[]) =>
++          [...new Set(sessionTraces.map((trace) => valueFor(trace, candidate)?.toString()).filter(Boolean))].join(', ');
+         return {
+           id: candidate.id,
+           ...COLUMN_SIZE,
+@@ -142,10 +144,8 @@
+           header: () => <CustomColumnHeader kind={candidate.kind} name={candidate.key} />,
+           cell: ({ row }: { row: { original: ModelTraceInfoV3 } }) =>
+             valueFor(row.original, candidate)?.toString() ?? '',
+-          renderSessionCell: (sessionTraces: ModelTraceInfoV3[]) =>
+-            [...new Set(sessionTraces.map((trace) => valueFor(trace, candidate)?.toString()).filter(Boolean))].join(
+-              ', ',
+-            ),
++          renderSessionCell,
++          renderPartialSessionCell: renderSessionCell,
+         };
+       }),
+     [visibleCandidates, traces, intl],
 @@ -184,10 +184,13 @@
      [setVisibility],
    );
@@ -686,6 +718,52 @@
    });
  
    test('passes all child traces to an extra column session renderer', async () => {
+@@ -279,6 +364,45 @@
+     expect(screen.getByText('2 assessed traces')).toBeInTheDocument();
+     expect(renderSessionCell).toHaveBeenCalledWith(traces);
+   });
++
++  test.each([false, true])(
++    'partial sessions show descriptive cells and hide aggregates (reorderable: %s)',
++    async (reorderable) => {
++      await renderWithProviders(
++        <TracesTable
++          {...baseProps({
++            traces: [makeSessionTrace('t1', 's1')],
++            visibleColumns: ['session'],
++            isGroupedBySession: true,
++            sessionsMayBeIncomplete: true,
++            onReorderColumn: reorderable ? jest.fn() : undefined,
++            extraColumns: [
++              {
++                id: 'tag:adm',
++                header: 'ADM',
++                renderSessionCell: () => 'Recorded ADM',
++                renderPartialSessionCell: () => 'Recorded ADM',
++              },
++              {
++                id: 'metadata:cohort',
++                header: 'Cohort',
++                renderSessionCell: () => 'study-1',
++                renderPartialSessionCell: () => 'study-1',
++              },
++              {
++                id: 'assessment:score',
++                header: 'Score',
++                renderSessionCell: () => 'incomplete score total',
++              },
++            ],
++          })}
++        />,
++      );
++      expect(screen.getByText('Recorded ADM')).toBeInTheDocument();
++      expect(screen.getByText('study-1')).toBeInTheDocument();
++      expect(screen.queryByText('incomplete score total')).not.toBeInTheDocument();
++    },
++  );
+ 
+   test('selecting a session header selects all traces in that session', async () => {
+     const onToggleBulkRows = jest.fn();
 --- a/mlflow/server/js/src/shared/web-shared/traces-table/TracesTable.tsx
 +++ b/mlflow/server/js/src/shared/web-shared/traces-table/TracesTable.tsx
 @@ -49,6 +49,7 @@
@@ -727,7 +805,7 @@
          if (column.id === undefined) {
            return column;
          }
-@@ -408,7 +392,7 @@
+@@ -408,18 +392,19 @@
          const maxSize = contentMaxSize ?? Math.max(column.maxSize ?? 0, persistedSize ?? 0);
          return { ...column, maxSize };
        });
@@ -736,7 +814,23 @@
  
      // Product-owned per-column session summary renderers (e.g. assessment aggregates), keyed by
      // column id so a session header cell can look one up.
-@@ -649,10 +633,12 @@
+     const sessionCellRenderers = useMemo(
+       () =>
+         new Map(
+-          columns.flatMap((column) =>
+-            column.id && column.renderSessionCell ? [[column.id, column.renderSessionCell] as const] : [],
+-          ),
++          columns.flatMap((column) => {
++            const render = sessionsMayBeIncomplete ? column.renderPartialSessionCell : column.renderSessionCell;
++            return column.id && render ? [[column.id, render] as const] : [];
++          }),
+         ),
+-      [columns],
++      [columns, sessionsMayBeIncomplete],
+     );
+ 
+     const meta = useMemo<TracesTableMeta>(
+@@ -649,10 +634,12 @@
        );
  
      const renderSessionHeaderCell = (sessionId: string, trace: ModelTraceInfoV3) => {
@@ -751,7 +845,7 @@
          </Tag>
        );
        const sessionHref = getSessionHref?.({ trace, sessionId });
-@@ -660,6 +646,7 @@
+@@ -660,6 +647,7 @@
          <Link
            componentId={`${COMPONENT_ID}.session-link`}
            to={sessionHref}
@@ -759,7 +853,7 @@
            onClick={(event) => event.stopPropagation()}
          >
            {tag}
-@@ -676,6 +663,15 @@
+@@ -676,6 +664,15 @@
      ) => {
        const isSelected = row.id === selectedTraceId;
        const isBulkChecked = selectedForBulk.has(row.original.trace_id);
@@ -775,7 +869,7 @@
        return (
          <TableRow
            key={row.id}
-@@ -717,14 +713,8 @@
+@@ -717,14 +714,8 @@
            {row.getVisibleCells().map((cell) => (
              <TableCell key={cell.id} css={{ verticalAlign: 'middle' }} style={columnStyles.get(cell.column.id)}>
                {cell.column.id === 'session' && sessionTurnNumber !== undefined ? (
@@ -792,6 +886,31 @@
                  </Tag>
                ) : (
                  flexRender(cell.column.columnDef.cell, cell.getContext())
+@@ -943,12 +934,7 @@
+                                           ? flexRender(firstCell.column.columnDef.cell, firstCell.getContext())
+                                           : header.column.id === 'state' && lastCell
+                                             ? flexRender(lastCell.column.columnDef.cell, lastCell.getContext())
+-                                            : // Suppress product-owned aggregates when the page may not
+-                                              // contain all traces for this session — a partial total is
+-                                              // more confusing than a blank. Mirrors onToggleBulkRows.
+-                                              sessionsMayBeIncomplete
+-                                              ? null
+-                                              : (sessionCellRenderers.get(header.column.id)?.(tracesInSession) ?? null)}
++                                            : (sessionCellRenderers.get(header.column.id)?.(tracesInSession) ?? null)}
+                                 </TableCell>
+                               );
+                             })}
+@@ -1142,9 +1128,7 @@
+                                         ? flexRender(firstCell.column.columnDef.cell, firstCell.getContext())
+                                         : header.column.id === 'state' && lastCell
+                                           ? flexRender(lastCell.column.columnDef.cell, lastCell.getContext())
+-                                          : sessionsMayBeIncomplete
+-                                            ? null
+-                                            : (sessionCellRenderers.get(header.column.id)?.(tracesInSession) ?? null)}
++                                          : (sessionCellRenderers.get(header.column.id)?.(tracesInSession) ?? null)}
+                               </TableCell>
+                             );
+                           })}
 --- a/mlflow/server/js/src/shared/web-shared/traces-table/index.ts
 +++ b/mlflow/server/js/src/shared/web-shared/traces-table/index.ts
 @@ -102,6 +102,7 @@
@@ -826,3 +945,14 @@
 +    .filter(Boolean)
 +    .join(' | ');
 +};
+--- a/mlflow/server/js/src/shared/web-shared/traces-table/types.ts
++++ b/mlflow/server/js/src/shared/web-shared/traces-table/types.ts
+@@ -18,6 +18,8 @@
+ /** A table column definition over a trace row — the type product code passes as an `extraColumns` entry. */
+ export type TraceTableColumn = ColumnDef<ModelTraceInfoV3> & {
+   renderSessionCell?: SessionCellRenderer;
++  /** Renders descriptive values from the loaded traces when a session spans multiple pages. */
++  renderPartialSessionCell?: SessionCellRenderer;
+   /** Plain-text column name for the menu trigger's a11y label when the header is JSX instead of a string. */
+   labelText?: string;
+ };
