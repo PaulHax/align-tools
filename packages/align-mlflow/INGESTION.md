@@ -44,7 +44,7 @@ Rerun the command to resume or add records. Run **one bulk import at a time**; b
 - **Driver:** `driver._target_` in `.hydra/config.yaml` must start with `align_system.drivers.itm_open_world`. Other drivers and folders missing required files are skipped.
 - **Import location:** run the script on a computer that can read the source directory. Relative paths resolve from your current directory.
 - **MLflow mapping:** source folder → run; episode → session; action → trace. Traces retain original action JSON in `source` fields. Source files stay unchanged; the entire directory is not archived.
-- **Metadata:** ADM settings or recorded driver, architecture, toolkit, and chat-model settings supply display labels. Labels do not change run or session identity.
+- **Metadata:** ADM settings or recorded driver, architecture, toolkit, and chat-model settings supply recorded labels. The resolved ADM, profile, folder name, and TA3 username identify each imported run.
 - **Evidence:** additional outputs expose arbitrary recorded `choice_info` through the existing JSON viewer. Plain-text excerpts include source references only when action association is verified. Unrecognized or ambiguous logs remain unassigned.
 - **Durations:** timing is optional. Missing or invalid values produce a warning and an unknown duration with a minimum display placeholder. New imports without component timings use aligned `raw_times_s` values for whole actions. Reruns preserve captured durations, including unknowns; appended actions use raw timing only when the complete file agrees with previously measured durations.
 - **Timestamps:** absolute times are synthetic. The origin is the run folder's timestamp, then the first dated `align_system.log` entry, then the config file's modification time. Dates without a timezone use local time. Reruns retain the captured origin.
@@ -65,6 +65,7 @@ If a saved timing snapshot cannot be recovered, imports warn and new actions res
 - **`Session scores skipped`:** actions were imported, but the optional log could not be matched. Check `raw_align_system.log` and rerun to add scores.
 - **`FAILED`:** identifies the run and error; the final summary exits nonzero. Fix the problem and rerun. `No open-world runs found` means nothing was imported; check the path and driver.
 - **Resume:** confirmed actions retain their IDs. Preserve run folder names and provenance files when copying. Changed provenance is rejected; previously imported actions are not replaced. Use a separate experiment for changed results.
+- **Clean imports:** changing identity fields creates a different run. Rebuild imports made with the older identity rule in an empty database or experiment.
 - **Avoid duplicates:** never overlap imports of the same source run into the same experiment, including with PostgreSQL.
 
 ## CLI options

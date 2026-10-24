@@ -18,7 +18,7 @@ After importing, [install the comparison views](#saved-views) for the experiment
 
 Views display recorded metadata without changing traces. Older imports can have missing driver or model values. Source version shows the recorded version string; a dirty version does not identify the exact executed code.
 
-Session titles use recorded run, model, scenario, alignment target, and episode tags. Existing session IDs, links, and copied identifiers stay the same, so older IDs containing `unknown_adm` can display the resolved ADM without reimporting. Sessions without the required Open World tags display their original ID.
+Session titles use recorded run, model, scenario, alignment target, and episode tags. Sessions without the required Open World tags display their ID.
 
 ## Saved views
 

@@ -9,6 +9,7 @@ import sys
 from pathlib import Path
 
 import pytest
+import yaml
 from click.testing import CliRunner
 from mlflow import MlflowClient
 from mlflow.exceptions import MlflowException
@@ -197,25 +198,59 @@ def test_sync_logs_each_step_as_a_trace_in_its_episode_session(tmp_path):
     }
 
 
-def test_sync_again_adds_nothing(tmp_path):
-    write_run(
+@pytest.mark.parametrize("adm_on_driver", [False, True])
+def test_sync_again_adds_nothing(tmp_path, adm_on_driver):
+    source = write_run(
         tmp_path / "2026-08-31__09-17-11",
         episode_records(MERIT_LOW),
         [completion_line(MERIT_LOW, 0.83)],
     )
+    label = RUN
+    if adm_on_driver:
+        config_path = source / ".hydra/config.yaml"
+        config = yaml.safe_load(config_path.read_text())
+        del config["adm"]
+        config["driver"].update(
+            {"architecture": "recorded_architecture", "model": "provider:model"}
+        )
+        config_path.write_text(yaml.safe_dump(config))
+        label = "recorded_architecture TEST_OPENWORLD 2026-08-31__09-17-11"
     tracking_uri = f"sqlite:///{tmp_path}/mlflow.db"
-    sync(tmp_path, tracking_uri)
+    imported = sync(tmp_path, tracking_uri)
+    assert imported.returncode == 0, imported.stderr
+    before = logged_traces(tracking_uri)
+    key = before[0].info.tags["align.run_key"]
+    expected_session = f"{SCENARIO} | {MERIT_LOW} | {label} | episode 1 | {key}"
+    assert {session(trace) for trace in before} == {expected_session}
+    if adm_on_driver:
+        assert key == "389aeb2b4f243bce"
+        assert {trace.info.tags["adm"] for trace in before} == {"recorded_architecture"}
+        assert {trace.info.tags["llm"] for trace in before} == {"provider:model"}
 
     again = sync(tmp_path, tracking_uri)
 
-    assert f"{RUN}: 0 new steps, 0 new episode scores" in again.stdout
+    assert again.returncode == 0, again.stderr
+    assert f"{label}: 0 new steps, 0 new episode scores" in again.stdout
     assert (
         "Import successful: 1 run, 0 new traces, 0 new episode scores." in again.stdout
     )
-    assert len(logged_traces(tracking_uri)) == 7
+    after = logged_traces(tracking_uri)
+    assert len(after) == 7
+    assert [trace.info.trace_id for trace in after] == [
+        trace.info.trace_id for trace in before
+    ]
+    assert {session(trace) for trace in after} == {expected_session}
+    assert [
+        (score.value, score.metadata["mlflow.trace.session"])
+        for trace in after
+        for score in trace.info.assessments
+    ] == [(0.83, expected_session)]
     client = MlflowClient(tracking_uri=tracking_uri)
     experiment = client.get_experiment_by_name(EXPERIMENT)
-    assert len(client.search_runs([experiment.experiment_id])) == 1
+    runs = client.search_runs([experiment.experiment_id])
+    assert len(runs) == 1
+    assert runs[0].data.tags["mlflow.runName"] == label
+    assert runs[0].data.tags["align.run_key"] == key
 
 
 def test_bad_optional_scores_warn_without_blocking_actions_and_can_be_retried(tmp_path):
