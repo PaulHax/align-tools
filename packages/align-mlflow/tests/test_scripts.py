@@ -314,7 +314,7 @@ def test_view_setup_uses_standard_tracking_credentials(tmp_path):
                 return
             self.send_response(200)
             self.end_headers()
-            self.wfile.write(b"3.16.1")
+            self.wfile.write(b"3.17.2")
 
         def log_message(self, *_args):
             pass

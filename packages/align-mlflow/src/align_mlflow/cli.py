@@ -110,7 +110,7 @@ def sync(path: Path, tracking_uri: str, experiment: str, include_log: bool) -> N
 def refresh_cards(tracking_uri: str, experiment: str, dry_run: bool) -> None:
     """Give previously imported traces readable cards without replacing their IDs.
 
-    Requires a local MLflow 3.16.1 SQLite store. Back up the store first.
+    Requires a local MLflow 3.17.2 SQLite store. Back up the store first.
     New imports already use these cards. Repeating this command skips current cards.
     """
     try:
@@ -133,7 +133,7 @@ def refresh_components(
 ) -> None:
     """Enrich existing component spans using source runs at PATH.
 
-    Requires a local MLflow 3.16.1 SQLite store. Back up the store first and stop
+    Requires a local MLflow 3.17.2 SQLite store. Back up the store first and stop
     other importers. Trace IDs, decision cards, timing, and reviews are retained.
     New imports include component evidence automatically.
     """

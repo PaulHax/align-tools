@@ -409,15 +409,15 @@
                <Button
 --- a/mlflow/server/js/src/experiment-tracking/pages/experiment-chat-sessions/single-chat-view/ExperimentSingleChatSessionPage.tsx
 +++ b/mlflow/server/js/src/experiment-tracking/pages/experiment-chat-sessions/single-chat-view/ExperimentSingleChatSessionPage.tsx
-@@ -49,6 +49,7 @@
- import { AssistantAwareDrawer } from '@mlflow/mlflow/src/common/components/AssistantAwareDrawer';
+@@ -51,6 +51,7 @@
  import { first } from 'lodash';
  import { useRunScorerInTracesViewConfiguration } from '../../experiment-scorers/hooks/useRunScorerInTracesViewConfiguration';
+ import { useOptionalCustomViewDefinition } from '@databricks/web-shared/model-trace-explorer/custom-view/CustomViewDefinitionContext';
 +import { getSessionDisplayName } from '@databricks/web-shared/traces-table';
  
- const ContextProviders = ({
-   children,
-@@ -152,6 +153,7 @@
+ // Custom View pulls in @a2ui (ESM-only) transitively via ExperimentCustomViewProvider.
+ // Lazy-load it so the chat-session route only pulls @a2ui into the graph when enabled.
+@@ -176,6 +177,7 @@
            // prettier-ignore
            viewState="single-chat-session"
            sessionId={sessionId}
@@ -635,10 +635,10 @@
      expect(screen.getByRole('columnheader', { name: 'Session' })).toBeInTheDocument();
      expect(screen.getByRole('columnheader', { name: 'Input' })).toBeInTheDocument();
      expect(screen.getByRole('columnheader', { name: 'Output' })).toBeInTheDocument();
-@@ -237,6 +278,50 @@
-     // The first turn's input now appears twice: in the header preview AND in its expanded row.
-     expect(screen.getAllByText('request for s1-turn-1')).toHaveLength(2);
-     expect(screen.getByText('request for s1-turn-2')).toBeInTheDocument();
+@@ -251,6 +292,50 @@
+ 
+     await userEvent.click(screen.getByRole('button', { name: 'Expand session s1' }));
+     expect(screen.getAllByText('15')).toHaveLength(2);
 +  });
 +
 +  test('grouped sessions honor hidden previews and the selected column order', async () => {
@@ -696,7 +696,7 @@
  
  // No-op sort handlers for non-sortable columns (their header menu omits the sort items anyway).
  const noop = () => {};
-@@ -364,28 +365,11 @@
+@@ -370,28 +371,11 @@
        '.table-row-select-cell': { alignItems: 'center', paddingRight: theme.spacing.sm },
      } as const;
  
@@ -727,7 +727,7 @@
          if (column.id === undefined) {
            return column;
          }
-@@ -402,7 +386,7 @@
+@@ -408,7 +392,7 @@
          const maxSize = contentMaxSize ?? Math.max(column.maxSize ?? 0, persistedSize ?? 0);
          return { ...column, maxSize };
        });
@@ -736,7 +736,7 @@
  
      // Product-owned per-column session summary renderers (e.g. assessment aggregates), keyed by
      // column id so a session header cell can look one up.
-@@ -643,10 +627,12 @@
+@@ -649,10 +633,12 @@
        );
  
      const renderSessionHeaderCell = (sessionId: string, trace: ModelTraceInfoV3) => {
@@ -751,7 +751,7 @@
          </Tag>
        );
        const sessionHref = getSessionHref?.({ trace, sessionId });
-@@ -654,6 +640,7 @@
+@@ -660,6 +646,7 @@
          <Link
            componentId={`${COMPONENT_ID}.session-link`}
            to={sessionHref}
@@ -759,7 +759,7 @@
            onClick={(event) => event.stopPropagation()}
          >
            {tag}
-@@ -670,6 +657,15 @@
+@@ -676,6 +663,15 @@
      ) => {
        const isSelected = row.id === selectedTraceId;
        const isBulkChecked = selectedForBulk.has(row.original.trace_id);
@@ -775,7 +775,7 @@
        return (
          <TableRow
            key={row.id}
-@@ -711,14 +707,8 @@
+@@ -717,14 +713,8 @@
            {row.getVisibleCells().map((cell) => (
              <TableCell key={cell.id} css={{ verticalAlign: 'middle' }} style={columnStyles.get(cell.column.id)}>
                {cell.column.id === 'session' && sessionTurnNumber !== undefined ? (

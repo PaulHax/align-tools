@@ -10,8 +10,8 @@ import tempfile
 from pathlib import Path
 from urllib.request import urlopen
 
-VERSION = "3.16.1"
-ARCHIVE_SHA256 = "362b825f2c9ffa6f85e90e3633ca12031cd8229745553ad73692b837ef3ed494"
+VERSION = "3.17.2"
+ARCHIVE_SHA256 = "104ce3f0b8c6eb5ace763e9495b618d92b5c1de886644a3b5c798d817acfa202"
 SOURCE_URL = f"https://codeload.github.com/mlflow/mlflow/tar.gz/refs/tags/v{VERSION}"
 PATCH = Path(__file__).with_name("sessions.patch")
 

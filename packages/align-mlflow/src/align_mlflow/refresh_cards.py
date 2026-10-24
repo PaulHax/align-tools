@@ -1,4 +1,4 @@
-"""Refresh imported cards in an MLflow 3.16.1 SQLite store."""
+"""Refresh imported cards in an MLflow 3.17.2 SQLite store."""
 
 import copy
 import json
@@ -57,14 +57,14 @@ def refreshed_root(
 
 def _previous_traces(db: sqlite3.Connection, experiment_id: int) -> dict[str, str]:
     rows = db.execute(
-        "SELECT t.request_id,session.value,run.value,step.value,record.value "
+        "SELECT t.request_id,t.session_id,run.value,step.value,record.value "
         "FROM trace_info t "
-        "JOIN trace_request_metadata session ON session.request_id=t.request_id AND session.key='mlflow.trace.session' "
         "JOIN trace_tags run ON run.request_id=t.request_id AND run.key='align.run_key' "
         "JOIN trace_tags step ON step.request_id=t.request_id AND step.key='step' "
         "JOIN trace_tags record ON record.request_id=t.request_id AND record.key='align.record_index' "
         "JOIN trace_tags complete ON complete.request_id=t.request_id AND complete.key='align.import_complete' "
-        "AND complete.value='source-record-v1' WHERE t.experiment_id=?",
+        "AND complete.value='source-record-v1' "
+        "WHERE t.experiment_id=? AND t.session_id IS NOT NULL",
         (experiment_id,),
     ).fetchall()
     by_step = defaultdict(list)
@@ -83,12 +83,12 @@ def refresh_cards(
 ) -> Iterator[tuple[int, int]]:
     """Yield cumulative (updated, already current) counts after each page.
 
-    Uses the 3.16.1 SQLite schema. Only root payloads and their cache generations
+    Uses the 3.17.2 SQLite schema. Only root payloads and their cache generations
     are updated; IDs, timing, tags, child spans and assessments stay intact.
     Run with one writer while refreshing. Each page commits atomically.
     """
-    if mlflow.__version__ != "3.16.1":
-        raise ValueError("Card refresh is verified with MLflow 3.16.1 only")
+    if mlflow.__version__ != "3.17.2":
+        raise ValueError("Card refresh is verified with MLflow 3.17.2 only")
     url = make_url(tracking_uri)
     if url.drivername != "sqlite" or not url.database or url.query:
         raise ValueError("Card refresh requires a local sqlite:/// tracking URI")

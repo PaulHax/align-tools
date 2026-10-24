@@ -1,4 +1,4 @@
-"""Install the example views using MLflow 3.16.1's internal saved-view format.
+"""Install the example views using MLflow 3.17.2's internal saved-view format.
 
 This is an optional UI recipe, independent of ingestion. It updates only the
 named presets and, with --by-adm, comparison views for recorded ADM labels.
@@ -59,9 +59,9 @@ def main() -> None:
     response = http_request(get_default_host_creds(ui_url), "/version", "GET")
     response.raise_for_status()
     version = response.text.strip()
-    if version != "3.16.1":
+    if version != "3.17.2":
         parser.error(
-            f"Server is MLflow {version}; this recipe is verified for 3.16.1. "
+            f"Server is MLflow {version}; this recipe is verified for 3.17.2. "
             "Configure columns and filters manually in the UI for other versions."
         )
 
