@@ -14,7 +14,7 @@
 
 **Reinstall only the UI:** `./packages/align-mlflow/scripts/install-ui.sh`. Stop the server before setup or reinstallation, then restart and reload browsers. See [server setup](SERVER.md#quick-start).
 
-After importing, [install the comparison views](#saved-views) for the experiment. Select **Session comparison** from **Views** and use **Display > Columns** to hide or reorder columns. Save a custom layout as another named view.
+After importing, open **Open World results** or filter the experiment's **Traces** table. Use **Display > Columns** to hide or reorder columns, and **Views** to save a personal layout. [Saved views](#saved-views) are optional.
 
 Views display recorded metadata without changing traces. Older imports can have missing driver or model values. Source version shows the recorded version string; a dirty version does not identify the exact executed code.
 
@@ -22,7 +22,7 @@ Session titles use recorded run, model, scenario, alignment target, and episode 
 
 ## Scenario navigation and evaluation comparisons
 
-The **Traces** and **Evaluation runs** tables have searchable **Scenario** and **Alignment target** selectors. The **Traces** table also has **ADM**, **LLM**, **Invocation**, and **Source version** selectors. Each selector applies an exact recorded value and keeps other filters. Invocation choices show the run label and identity key. **Reset episode filters** clears these metadata filters while preserving unrelated filters and session selections. Options come from all recorded first-action traces in the experiment or selected runs, including later result pages. Selecting a scenario in **Traces** keeps the current view's other filters, such as its invocation. Clear the selectors to return to the full view.
+In **Traces**, use the filter control in a metadata column header to open MLflow's native filter builder for that field. Choose an operator and a suggested recorded value, or type a value. Suggested values include recorded first-action traces across the experiment, including later result pages. An active header control identifies a filtered field; clearing that field preserves other filters and session selections. The native **Filters** control also supports hidden columns and other fields.
 
 In **Evaluation runs**, select two runs and group by session. Open World comparisons show scenario, alignment target, ADM, model, run, session, and recorded score columns by default. **Episode details** restores these columns when a personal layout hides them. Request and response columns remain available in the column selector.
 
@@ -32,7 +32,7 @@ This matching and navigation are part of the frontend patch. They do not change 
 
 ## Compare sessions and decisions
 
-Use the grouped **Traces** table to check the sessions you want, then click **Compare selected sessions**. **Select sessions in table**, available from **Evaluation runs** and session pages, opens the existing **ADM performance** table with scenario, alignment target, ADM, LLM, run, and score columns. Selections stay checked across filters and pages; the selection count identifies sessions outside the current page. **Clear session selection** starts over. Session checkboxes select complete sessions by ID even when only some of their traces are on the current page.
+Use the grouped **Traces** table to check the sessions you want, then click **Compare selected sessions**. **Select sessions in table**, available from **Evaluation runs** and session pages, opens the grouped table. Use **Display > Columns** to choose the metadata and score columns. Selections stay checked across filters and pages; the selection count identifies sessions outside the current page. **Clear session selection** starts over. Session checkboxes select complete sessions by ID even when only some of their traces are on the current page.
 
 Compare two or more sessions without requiring matching scenarios, targets, ADMs, LLMs, or runs. Each pane has a minimum width and the comparison scrolls horizontally, preserving readable content with multiple sessions. Each pane shows its recorded metadata, episode score, independent decision sequence, and the normal session decision sidebar. Clicking a sidebar step selects it and scrolls only that session's conversation to the decision.
 
@@ -127,29 +127,8 @@ is part of the pinned frontend patch; native charts and trace views remain avail
 
 ## Saved views
 
-From the repository root, with the environment installed, point to the destination server and an existing experiment:
+Use MLflow's **Views** menu to save filters and column layouts for the experiment. Filter column headers or use **Filters** to select ADMs and invocations directly. Saved views are optional personal layouts; server setup and ingestion do not create them.
 
-```bash
-export MLFLOW_TRACKING_URI='http://localhost:5000'
-export MLFLOW_EXPERIMENT_NAME='Open World Phase 2'
-./packages/align-mlflow/scripts/views.sh "$MLFLOW_TRACKING_URI" --by-adm --by-run
-```
+Saved views belong to the experiment and need no server restart. Opening a saved view restores its filters and columns. Use **Display > Columns** to adjust the layout and save it under a name in **Views**.
 
-The command prints links and installs:
-
-- **Open-world actions:** individual action traces.
-- **Episodes by ADM and target:** the first action of each episode.
-- **Session comparison:** grouped sessions with scenario, ADM, alignment target, driver, model, and run columns.
-- **ADM performance:** one grouped row per episode, with ADM, model, run, scenario, action target, TA3 alignment score, and TA3 evaluated target. The first-action filter keeps each episode's recorded feedback with its row. Open the session to inspect all its decisions.
-- **ADM: &lt;label&gt;:** one Session comparison view per distinct nonempty `adm` run tag, with an exact ADM filter.
-- **Run: &lt;label&gt; [&lt;key&gt;]:** one Session comparison view per imported invocation. The exact `align.run_key` filter keeps invocations separate even when their readable names match.
-
-All views use **All time**, so older runs remain visible. Choose an **ADM:** or **Run:** entry in **Views** to filter without typing. Labels come from the destination experiment. Both flags are optional; omit them to install only the standard presets.
-
-Rerun after importing new ADMs or invocations. Existing named presets are restored, new labels get views, and other views are retained, including views for labels no longer present. Unchanged views are left untouched. Save personal layouts under another name before rerunning; conflicting names or IDs stop setup before any views change. Saved views belong to the experiment and need no server restart.
-
-Definitions live in [views.json](examples/views.json); [configure_views.py](examples/configure_views.py) generates the ADM and invocation variants. The recipe uses MLflow's internal saved-view format and checks for **3.17.2** before writing. Use the destination's UI URL as the first argument if it differs from `MLFLOW_TRACKING_URI`; standard MLflow credentials apply.
-
-The performance columns require this package's session UI patch. Episode scores are session feedback, not scores for the individual action that stores them. Missing feedback is unavailable, not zero. The evaluated target comes from that feedback and should match the action target; a mismatch indicates a run, scoring, or import problem. When comparing ADMs, use the same scenario/target cases and account for repeated episodes and missing results.
-
-Saved views provide filter shortcuts. MLflow still groups the current page of traces into sessions, so a session can span pages and the footer counts traces.
+MLflow groups the current page of traces into sessions, so a session can span pages and the footer counts traces.

@@ -77,9 +77,9 @@ A run is one align-system invocation, usually one Hydra call with one ADM and mo
 
 This follows [MLflow's tracking concepts](https://mlflow.org/docs/latest/ml/tracking/): a run records an execution, and an experiment groups comparable runs. A new benchmark, evaluation protocol, or study can justify a separate experiment. Creating an experiment for every invocation makes routine comparisons harder to browse.
 
-Use **ADM performance** in the [saved views](SESSION-UI.md#saved-views) for one row per episode, including the recorded TA3 score and its evaluated target. Match scenario and target across invocations before comparing ADMs. The target recorded on an action and the target reported by TA3 are separate evidence; a mismatch needs investigation before treating results as a comparison of the requested targets.
+Use [Open World results](SESSION-UI.md#open-world-results) to compare recorded scores and inspect the sessions behind them. Match scenario and target across invocations before comparing ADMs. The target recorded on an action and the target reported by TA3 are separate evidence; a mismatch needs investigation before treating results as a comparison of the requested targets.
 
-Use **Run:** views to focus on one invocation and **Session comparison** to return to the experiment-wide view. These are filters within the same experiment. They do not copy results or create another experiment.
+In **Traces**, use column-header filters or **Filters** to focus on an invocation, scenario, or target. Saved views are optional layouts within the same experiment. They do not copy results or create another experiment.
 
 ### Run summary scores
 

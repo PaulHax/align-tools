@@ -375,6 +375,247 @@
            </Typography.Title>
            {sessionId && <CopyActionButton copyText={sessionId} componentId="mlflow.chat-sessions.copy-session-id" />}
          </div>
+--- /dev/null
++++ b/mlflow/server/js/src/experiment-tracking/components/experiment-page/components/traces-v4/components/TracesV4ColumnFilters.test.tsx
+@@ -0,0 +1,119 @@
++import { describe, expect, test } from '@jest/globals';
++import { useState } from 'react';
++import { render, screen } from '@testing-library/react';
++import userEvent, { PointerEventsCheckLevel } from '@testing-library/user-event';
++import { DesignSystemProvider } from '@databricks/design-system';
++import { IntlProvider } from '@databricks/i18n';
++import {
++  countActiveFilters,
++  FilterOp,
++  TraceFilterButton,
++  type TraceFilterModel,
++} from '@databricks/web-shared/traces-table';
++import { useMlflowTraceFilterFields } from '../utils/filterModel';
++import { makeTrace } from '../test-utils/mockTraces';
++import { slowlyTypeEachKey } from '@databricks/web-shared/test-utils/slowlyTypeEachKey';
++import { useTracesV4ColumnFilters, useTracesV4EditableFilters } from './TracesV4ColumnFilters';
++
++const traces = [makeTrace('one', { tags: { scenario_id: 'scenario-a', llm: 'model-a' } })];
++const FilterTable = () => {
++  const [filterModel, setFilterModel] = useState<TraceFilterModel>([
++    { field: 'state', operator: FilterOp.EQUALS, value: 'ERROR' },
++    { field: 'tag', key: 'scenario_id', operator: FilterOp.EQUALS, value: 'scenario-a' },
++  ]);
++  const [tagFilters, setTagFilters] = useState([
++    { key: 'scenario_id', value: 'scenario-a' },
++    { key: 'llm', value: 'model-a' },
++  ]);
++  const fields = useMlflowTraceFilterFields();
++  const { filters, onChange } = useTracesV4EditableFilters({ filterModel, tagFilters, setFilterModel, setTagFilters });
++  const headers = useTracesV4ColumnFilters({
++    columnIds: ['tag:scenario_id', 'tag:llm'],
++    fields,
++    filters,
++    onChange,
++    traces,
++  });
++  return (
++    <>
++      <TraceFilterButton
++        fields={fields}
++        filterModel={filters}
++        onChange={onChange}
++        onClearAll={() => onChange([])}
++        activeCount={countActiveFilters(filters)}
++      />
++      <table>
++        <thead>
++          <tr>
++            <th>Scenario{headers['tag:scenario_id']}</th>
++            <th>LLM{headers['tag:llm']}</th>
++          </tr>
++        </thead>
++      </table>
++    </>
++  );
++};
++const renderTable = () =>
++  render(
++    <IntlProvider locale="en">
++      <DesignSystemProvider>
++        <FilterTable />
++      </DesignSystemProvider>
++    </IntlProvider>,
++  );
++
++describe('native column filters', () => {
++  test('header suggestions accept an unlisted value through the native freeform option', async () => {
++    const user = userEvent.setup({ pointerEventsCheck: PointerEventsCheckLevel.Never });
++    renderTable();
++    await user.click(screen.getByRole('button', { name: 'Filter scenario_id' }));
++    await user.click(await screen.findByRole('combobox', { name: 'Filter value' }));
++    expect(await screen.findByRole('option', { name: 'scenario-a' })).toBeVisible();
++    await slowlyTypeEachKey(screen.getByRole('searchbox'), 'new-scenario', { user });
++    await user.click(await screen.findByRole('option', { name: 'Use "new-scenario"' }));
++    await user.click(screen.getByRole('button', { name: 'Apply filters' }));
++    await user.click(screen.getByRole('button', { name: 'Filter scenario_id' }));
++    expect(await screen.findByRole('combobox', { name: 'Filter value' })).toHaveTextContent('new-scenario');
++    expect(screen.getAllByRole('combobox', { name: 'Filter operator' })).toHaveLength(1);
++    expect(screen.getByRole('button', { name: 'Filter llm' })).toHaveAttribute('data-filter-active', 'true');
++  });
++
++  test('editing a seeded equality replaces both sources and preserves unrelated conditions', async () => {
++    const user = userEvent.setup({ pointerEventsCheck: PointerEventsCheckLevel.Never });
++    renderTable();
++    await user.click(screen.getByRole('button', { name: 'Filter scenario_id' }));
++    expect(await screen.findByRole('combobox', { name: 'Filter operator' })).toHaveTextContent('=');
++    expect(screen.getByRole('combobox', { name: 'Filter value' })).toHaveTextContent('scenario-a');
++    await user.click(screen.getByRole('combobox', { name: 'Filter operator' }));
++    await user.click(await screen.findByRole('option', { name: '!=' }));
++    await user.click(screen.getByRole('button', { name: 'Apply filters' }));
++    expect(screen.getByRole('button', { name: 'Filter scenario_id' })).toHaveAttribute('data-filter-active', 'true');
++    await user.click(screen.getByRole('button', { name: /^Filters/ }));
++    expect(await screen.findAllByRole('combobox', { name: 'Filter field' })).toHaveLength(3);
++    expect(screen.getAllByRole('combobox', { name: 'Filter operator' }).map((node) => node.textContent)).toEqual([
++      '=',
++      '!=',
++      '=',
++    ]);
++    expect(
++      screen.getAllByRole('textbox', { name: 'Filter key' }).map((node) => (node as HTMLInputElement).value),
++    ).toEqual(['scenario_id', 'llm']);
++    expect(
++      screen.getAllByRole('textbox', { name: 'Filter value' }).map((node) => (node as HTMLInputElement).value),
++    ).toEqual(['scenario-a', 'model-a']);
++  });
++
++  test('clearing a header removes its URL and native clauses while other headers remain active', async () => {
++    const user = userEvent.setup({ pointerEventsCheck: PointerEventsCheckLevel.Never });
++    renderTable();
++    await user.click(screen.getByRole('button', { name: 'Filter scenario_id' }));
++    await user.click(await screen.findByRole('button', { name: 'Clear filters' }));
++    expect(screen.getByRole('button', { name: 'Filter scenario_id' })).toHaveAttribute('data-filter-active', 'false');
++    expect(screen.getByRole('button', { name: 'Filter llm' })).toHaveAttribute('data-filter-active', 'true');
++    await user.click(screen.getByRole('button', { name: /^Filters/ }));
++    expect(await screen.findAllByRole('combobox', { name: 'Filter field' })).toHaveLength(2);
++    expect(screen.getByRole('textbox', { name: 'Filter key' })).toHaveValue('llm');
++    expect(screen.getByRole('textbox', { name: 'Filter value' })).toHaveValue('model-a');
++  });
++});
+--- /dev/null
++++ b/mlflow/server/js/src/experiment-tracking/components/experiment-page/components/traces-v4/components/TracesV4ColumnFilters.tsx
+@@ -0,0 +1,116 @@
++import { useMemo } from 'react';
++import type { ReactNode } from 'react';
++import type { ModelTraceInfoV3 } from '@databricks/web-shared/model-trace-explorer';
++import {
++  countActiveFilters,
++  FilterOp,
++  TraceFilterButton,
++  type FilterClause,
++  type FilterFieldDef,
++  type TraceFilterModel,
++} from '@databricks/web-shared/traces-table';
++import type { TagFilter } from '../hooks/useTracesV4UrlState';
++import { METADATA_COLUMN_PREFIX, TAG_COLUMN_PREFIX } from '../utils/customColumns';
++
++type ColumnFilter = { field: string; key?: string };
++
++const getColumnFilter = (id: string): ColumnFilter =>
++  id.startsWith(TAG_COLUMN_PREFIX)
++    ? { field: 'tag', key: id.slice(TAG_COLUMN_PREFIX.length) }
++    : id.startsWith(METADATA_COLUMN_PREFIX)
++      ? { field: 'metadata', key: id.slice(METADATA_COLUMN_PREFIX.length) }
++      : { field: id === 'tags' ? 'tag' : id };
++
++const matchesColumn = (clause: FilterClause, column: ColumnFilter) =>
++  clause.field === column.field && (column.key === undefined || clause.key === column.key);
++
++const matchesTag = (clause: FilterClause, tag: TagFilter) =>
++  clause.field === 'tag' && clause.key === tag.key && clause.operator === FilterOp.EQUALS && clause.value === tag.value;
++
++/** Both native filter entry points edit the same applied conditions, including tag links in the URL. */
++export const useTracesV4EditableFilters = ({
++  filterModel,
++  tagFilters,
++  setFilterModel,
++  setTagFilters,
++}: {
++  filterModel: TraceFilterModel;
++  tagFilters: TagFilter[];
++  setFilterModel: (next: TraceFilterModel) => void;
++  setTagFilters: (next: TagFilter[]) => void;
++}) => {
++  const filters = useMemo(
++    () => [
++      ...filterModel,
++      ...tagFilters
++        .filter((tag) => !filterModel.some((clause) => matchesTag(clause, tag)))
++        .map(({ key, value }) => ({ field: 'tag', key, value, operator: FilterOp.EQUALS })),
++    ],
++    [filterModel, tagFilters],
++  );
++  const onChange = (next: TraceFilterModel) => {
++    const retainedTags = tagFilters.filter((tag) => next.some((clause) => matchesTag(clause, tag)));
++    setFilterModel(next.filter((clause) => !retainedTags.some((tag) => matchesTag(clause, tag))));
++    if (retainedTags.length !== tagFilters.length) setTagFilters(retainedTags);
++  };
++  return { filters, onChange };
++};
++
++export const useTracesV4ColumnFilters = ({
++  columnIds,
++  fields,
++  filters,
++  onChange,
++  traces,
++}: {
++  columnIds: string[];
++  fields: FilterFieldDef[];
++  filters: TraceFilterModel;
++  onChange: (next: TraceFilterModel) => void;
++  traces: ModelTraceInfoV3[];
++}): Readonly<Partial<Record<string, ReactNode>>> => {
++  const definitions = useMemo(
++    () =>
++      columnIds.flatMap((id) => {
++        const column = getColumnFilter(id);
++        const baseField = fields.find((field) => field.id === column.field);
++        if (!baseField) return [];
++        const label = column.key ?? baseField.label;
++        const key = column.key;
++        const values = key
++          ? [
++              ...new Set(
++                traces.flatMap((trace) => {
++                  const value = (column.field === 'tag' ? trace.tags : trace.trace_metadata)?.[key];
++                  return value ? [value] : [];
++                }),
++              ),
++            ].sort()
++          : [];
++        const field: FilterFieldDef = values.length
++          ? { ...baseField, valueInput: 'combobox', options: values.map((value) => ({ value, label: value })) }
++          : baseField;
++        return [{ id, column, label, fields: [field] }];
++      }),
++    [columnIds, fields, traces],
++  );
++  return Object.fromEntries(
++    definitions.map(({ id, column, label, fields: columnFields }) => {
++      const scoped = filters.filter((clause) => matchesColumn(clause, column));
++      const replace = (next: TraceFilterModel) =>
++        onChange([...filters.filter((clause) => !matchesColumn(clause, column)), ...next]);
++      return [
++        id,
++        <TraceFilterButton
++          key={id}
++          column={{ label, key: column.key }}
++          fields={columnFields}
++          filterModel={scoped}
++          onChange={replace}
++          onClearAll={() => replace([])}
++          activeCount={countActiveFilters(scoped)}
++        />,
++      ];
++    }),
++  );
++};
 --- a/mlflow/server/js/src/experiment-tracking/components/experiment-page/components/traces-v4/components/TracesV4PageContent.test.tsx
 +++ b/mlflow/server/js/src/experiment-tracking/components/experiment-page/components/traces-v4/components/TracesV4PageContent.test.tsx
 @@ -748,6 +748,51 @@
@@ -443,23 +684,24 @@
    type ModelTraceInfoV3,
  } from '@databricks/web-shared/model-trace-explorer';
  import {
-@@ -11,9 +12,15 @@
-   GenAITracesTableProvider,
+@@ -12,6 +13,7 @@
    MLFLOW_SOURCE_RUN_KEY,
    RunName,
-+  createTraceLocationForExperiment,
  } from '@databricks/web-shared/genai-traces-table';
++import { useOpenWorldEpisodeMetadata } from '@databricks/web-shared/genai-traces-table/components/OpenWorldTraceFilters';
  import {
-+  OpenWorldTraceFilters,
-+  OPEN_WORLD_TAG_COLUMNS,
-+} from '@databricks/web-shared/genai-traces-table/components/OpenWorldTraceFilters';
-+import {
    EMPTY_FILTER_MODEL,
-+  FilterOp,
    TRACE_COLUMN_IDS,
-   TracesErrorAlert,
-   TracesTableView,
-@@ -46,6 +53,7 @@
+@@ -39,6 +41,8 @@
+ import { useTracesV4Notifications } from '../hooks/useTracesV4Notifications';
+ import { useTracesV4TraceActions } from '../hooks/useTracesV4TraceActions';
+ import { TracesV4TraceDrawer } from './TracesV4TraceDrawer';
++import { useTracesV4ColumnFilters, useTracesV4EditableFilters } from './TracesV4ColumnFilters';
++import { useMlflowTraceFilterFields } from '../utils/filterModel';
+ import { useTracesV4ToolbarSlots } from './TracesV4Toolbar';
+ import { TracesV4DeleteModal } from './TracesV4DeleteModal';
+ import { makeTracesV4ErrorDescription } from './TracesV4States';
+@@ -46,6 +50,7 @@
  import { IssueDetectionModal } from '../../traces-v3/IssueDetectionModal';
  import { TracesV4SavedViewsButton, useTracesV4SavedViews } from './TracesV4SavedViews';
  import { type TraceColumnHeaderAction } from '@databricks/web-shared/traces-table';
@@ -467,7 +709,7 @@
  
  interface TracesV4PageContentProps {
    experimentId: string;
-@@ -91,6 +99,53 @@
+@@ -91,6 +96,57 @@
      flags,
    } = controller;
    const { density, setDensity } = useTracesV4Density(experimentId);
@@ -509,19 +751,23 @@
 +      return { experimentId, ids };
 +    });
 +  };
-+  const traceLocations = useMemo(() => [createTraceLocationForExperiment(experimentId)], [experimentId]);
-+  const getEpisodeFilter = (key: string) =>
-+    url.tagFilters.find((filter) => filter.key === key)?.value ??
-+    filterModel.find((filter) => filter.field === 'tag' && filter.key === key && filter.operator === FilterOp.EQUALS)
-+      ?.value;
-+  const setEpisodeFilter = (key: string, value: string | undefined) => {
-+    controller.setFilterModel(filterModel.filter((filter) => filter.field !== 'tag' || filter.key !== key));
-+    url.setTagFilters([...url.tagFilters.filter((filter) => filter.key !== key), ...(value ? [{ key, value }] : [])]);
-+  };
++  const traceLocations = useMemo(
++    () => [{ type: 'MLFLOW_EXPERIMENT' as const, mlflow_experiment: { experiment_id: experimentId } }],
++    [experimentId],
++  );
++  const { data: episodeMetadata } = useOpenWorldEpisodeMetadata({ locations: traceLocations });
++  const filterSuggestions = useMemo(() => [...(episodeMetadata ?? []), ...page.traces], [episodeMetadata, page.traces]);
++  const editableFilters = useTracesV4EditableFilters({
++    filterModel,
++    tagFilters: url.tagFilters,
++    setFilterModel: controller.setFilterModel,
++    setTagFilters: url.setTagFilters,
++  });
++  const filterFields = useMlflowTraceFilterFields(assessments.candidateNames);
  
    // One "Reset to defaults" in the column selector clears standard, assessment, and custom overrides
    // plus the reordered column order.
-@@ -101,12 +156,25 @@
+@@ -101,12 +157,25 @@
      columnOrder.reset();
    }, [columns, assessments, customColumns, columnOrder]);
  
@@ -550,7 +796,37 @@
  
    // Saved views (dirty model): the hook reads/writes view tags, restores a view's columns + order into
    // the user's own store on open, and reports whether the live table has diverged (dirty) so the Views
-@@ -344,7 +412,7 @@
+@@ -178,6 +247,18 @@
+     () => [...customColumns.columnDefs, ...assessments.columnDefs],
+     [customColumns.columnDefs, assessments.columnDefs],
+   );
++
++  const filterColumnIds = useMemo(
++    () => [...TRACE_COLUMN_IDS, ...extraColumns.flatMap((column) => (column.id ? [column.id] : []))],
++    [extraColumns],
++  );
++  const columnHeaderFilters = useTracesV4ColumnFilters({
++    columnIds: filterColumnIds,
++    fields: filterFields,
++    filters: editableFilters.filters,
++    onChange: editableFilters.onChange,
++    traces: filterSuggestions,
++  });
+ 
+   const deleteTracesMutation = useDeleteTracesMutation();
+   const [deleteOpen, setDeleteOpen] = useState(false);
+@@ -328,8 +409,8 @@
+   );
+ 
+   const toolbarSlots = useTracesV4ToolbarSlots({
+-    filterModel,
+-    onFilterChange: controller.setFilterModel,
++    filterModel: editableFilters.filters,
++    onFilterChange: editableFilters.onChange,
+     onClearFilters: clearAllFilters,
+     activeFilterCount: controller.activeFilterCount,
+     visibleColumns: columns.visibleColumns,
+@@ -344,7 +425,7 @@
      onSort: url.setSort,
      density,
      onDensityChange: setDensity,
@@ -559,26 +835,10 @@
      onBulkDelete: openDelete,
      isRefreshing: page.isFetching && !page.isLoading,
      experimentId,
-@@ -400,6 +468,49 @@
+@@ -400,6 +481,33 @@
              marginBottom: -theme.spacing.sm,
            }}
          >
-+          <OpenWorldTraceFilters
-+            locations={traceLocations}
-+            scenario={getEpisodeFilter('scenario_id')}
-+            alignmentTarget={getEpisodeFilter('alignment_target_id')}
-+            onScenarioChange={(value) => setEpisodeFilter('scenario_id', value)}
-+            onAlignmentTargetChange={(value) => setEpisodeFilter('alignment_target_id', value)}
-+            getFilterValue={getEpisodeFilter}
-+            onFilterChange={setEpisodeFilter}
-+            onResetFilters={() => {
-+              const keys = new Set(OPEN_WORLD_TAG_COLUMNS.map(({ key }) => key));
-+              controller.setFilterModel(
-+                filterModel.filter((filter) => filter.field !== 'tag' || !keys.has(filter.key ?? '')),
-+              );
-+              url.setTagFilters(url.tagFilters.filter((filter) => !keys.has(filter.key)));
-+            }}
-+          />
 +          {controller.isGroupedBySession && (
 +            <div css={{ display: 'flex', alignItems: 'center', gap: theme.spacing.sm }}>
 +              <Button
@@ -609,7 +869,15 @@
            <TracesTableView
              viewState={viewState}
              // Table
-@@ -416,15 +527,25 @@
+@@ -407,6 +515,7 @@
+             visibleColumns={columns.visibleColumns}
+             extraColumns={extraColumns}
+             columnHeaderActions={columnHeaderActions}
++            columnHeaderFilters={columnHeaderFilters}
+             columnOrder={columnOrder.columnOrder}
+             initialColumnSizing={columnSizing.columnSizing}
+             onColumnSizingSettled={columnSizing.setColumnSizing}
+@@ -416,15 +525,25 @@
              onTraceSelected={handleTraceSelected}
              selectedTraceId={url.traceId}
              selectedForBulk={bulk.selected}
@@ -1364,7 +1632,7 @@
 +};
 +
 +describe('Select sessions in table', () => {
-+  test('opens the original grouped ADM performance view for the whole experiment', async () => {
++  test('opens the grouped traces table without requiring a saved view', async () => {
 +    const user = userEvent.setup();
 +    render(
 +      <DesignSystemProvider>
@@ -1381,7 +1649,7 @@
 +    );
 +    await user.click(screen.getByRole('button', { name: 'Select sessions in table' }));
 +    expect(await screen.findByRole('heading', { name: 'Traces table' })).toBeInTheDocument();
-+    expect(screen.getByText('open-world-adm-performance')).toBeInTheDocument();
++    expect(screen.queryByText('open-world-adm-performance')).not.toBeInTheDocument();
 +    expect(screen.getByText('ALL')).toBeInTheDocument();
 +    expect(screen.getByText('session')).toBeInTheDocument();
 +    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
@@ -1389,11 +1657,10 @@
 +});
 --- /dev/null
 +++ b/mlflow/server/js/src/experiment-tracking/pages/experiment-chat-sessions/CompareSessionsButton.tsx
-@@ -0,0 +1,35 @@
+@@ -0,0 +1,33 @@
 +import { Button } from '@databricks/design-system';
 +import { useNavigate } from '../../../common/utils/RoutingUtils';
 +import Routes from '../../routes';
-+import { TRACE_V4_SHARE_URL_PARAM_KEY } from '../../components/experiment-page/components/traces-v4/utils/tracesV4SavedViewState';
 +
 +export const SESSION_COMPARISON_QUERY_PARAM = 'compareSessionId';
 +
@@ -1401,7 +1668,6 @@
 +  const params = new URLSearchParams({
 +    startTimeLabel: 'ALL',
 +    groupBy: 'session',
-+    [TRACE_V4_SHARE_URL_PARAM_KEY]: 'open-world-adm-performance',
 +  });
 +  return `${Routes.getExperimentPageTracesTabRoute(experimentId)}?${params.toString()}`;
 +};
@@ -3695,7 +3961,7 @@
 +it.each(['[]', '["gone"]', '{invalid'])(
 +  'keeps an empty or stale episode selection empty until cleared: %s',
 +  async (selection) => {
-+      renderMatrix([episode('a', 0.2)], `/?resultsEpisodes=${encodeURIComponent(selection)}`);
++    renderMatrix([episode('a', 0.2)], `/?resultsEpisodes=${encodeURIComponent(selection)}`);
 +    const sessions = within(screen.getByRole('region', { name: 'Sessions' }));
 +    await sessionTable();
 +    expect(sessions.getByRole('heading', { name: 'Sessions (0)' })).toBeInTheDocument();
@@ -6848,6 +7114,41 @@
          maxWidth={CELL_OVERLAY_MAX_WIDTH}
        >
          <span
+--- a/mlflow/server/js/src/shared/web-shared/traces-table/TraceColumnHeader.tsx
++++ b/mlflow/server/js/src/shared/web-shared/traces-table/TraceColumnHeader.tsx
+@@ -108,6 +108,8 @@
+ };
+ 
+ export interface TraceColumnHeaderProps {
++  /** Consumer-controlled filter editor for this column. */
++  filter?: React.ReactNode;
+   columnId: string;
+   label: React.ReactNode;
+   /** Plain-text column name for the menu trigger's accessible label. */
+@@ -134,6 +136,7 @@
+   onSortDescending,
+   onHide,
+   action,
++  filter,
+ }: TraceColumnHeaderProps): JSX.Element => {
+   const { theme } = useDesignSystemTheme();
+   const intl = useIntl();
+@@ -181,6 +184,7 @@
+         gap: theme.spacing.xs,
+         width: '100%',
+         minWidth: 0,
++        '&:hover .traces-table-column-filter, &:focus-within .traces-table-column-filter': { opacity: 1 },
+       }}
+     >
+       {columnIcon && (
+@@ -218,6 +222,7 @@
+           />
+         </span>
+       )}
++      {filter}
+       {showMenu && (
+         <span
+           className="traces-table-header-menu-trigger"
 --- a/mlflow/server/js/src/shared/web-shared/traces-table/TraceColumnSelector.test.tsx
 +++ b/mlflow/server/js/src/shared/web-shared/traces-table/TraceColumnSelector.test.tsx
 @@ -77,6 +77,7 @@
@@ -6917,6 +7218,545 @@
              />
            </Button>
          </DropdownMenu.Trigger>
+--- a/mlflow/server/js/src/shared/web-shared/traces-table/TraceFilterButton.test.tsx
++++ b/mlflow/server/js/src/shared/web-shared/traces-table/TraceFilterButton.test.tsx
+@@ -197,4 +197,68 @@
+     await userEvent.click(screen.getByRole('button', { name: 'Clear all filters' }));
+     expect(onClearAll).toHaveBeenCalled();
+   });
++  describe('column filters', () => {
++    const tagField: FilterFieldDef = {
++      ...FIELDS[2],
++      valueInput: 'combobox',
++      options: [{ value: 'scenario-a', label: 'Scenario A' }],
++    };
++
++    test('opens from the keyboard, fixes the field/key, and applies a suggested value with its operator', async () => {
++      const onChange = jest.fn();
++      renderButton({ fields: [tagField], column: { label: 'Scenario', key: 'scenario_id' }, onChange });
++      await userEvent.tab();
++      expect(screen.getByRole('button', { name: 'Filter Scenario' })).toHaveFocus();
++      await userEvent.keyboard('{Enter}');
++      expect(screen.queryByRole('combobox', { name: 'Filter field' })).not.toBeInTheDocument();
++      expect(screen.queryByRole('textbox', { name: 'Filter key' })).not.toBeInTheDocument();
++      await userEvent.click(await screen.findByRole('combobox', { name: 'Filter operator' }));
++      await userEvent.click(await screen.findByRole('option', { name: '!=' }));
++      await userEvent.click(screen.getByRole('combobox', { name: 'Filter value' }));
++      await userEvent.click(await screen.findByRole('option', { name: 'Scenario A' }));
++      await userEvent.click(screen.getByRole('button', { name: 'Apply filters' }));
++      expect(onChange).toHaveBeenCalledWith([
++        { field: 'tag', key: 'scenario_id', operator: FilterOp.NOT_EQUALS, value: 'scenario-a' },
++      ]);
++      await userEvent.click(screen.getByRole('button', { name: 'Filter Scenario' }));
++      await userEvent.keyboard('{Escape}');
++      expect(screen.getByRole('button', { name: 'Filter Scenario' })).toHaveAttribute('aria-expanded', 'false');
++    });
++
++    test('allows a value absent from the suggestions', async () => {
++      const onChange = jest.fn();
++      renderButton({ fields: [tagField], column: { label: 'Scenario', key: 'scenario_id' }, onChange });
++      await userEvent.click(screen.getByRole('button', { name: 'Filter Scenario' }));
++      await userEvent.click(await screen.findByRole('combobox', { name: 'Filter value' }));
++      await userEvent.click(screen.getByRole('searchbox'));
++      await userEvent.paste('unlisted-scenario');
++      await userEvent.click(await screen.findByRole('option', { name: 'Use "unlisted-scenario"' }));
++      await userEvent.click(screen.getByRole('button', { name: 'Apply filters' }));
++      expect(onChange).toHaveBeenCalledWith([
++        { field: 'tag', key: 'scenario_id', operator: FilterOp.EQUALS, value: 'unlisted-scenario' },
++      ]);
++    });
++
++    test('loads every existing column clause and delegates scoped clearing', async () => {
++      const onClearAll = jest.fn();
++      renderButton({
++        fields: [FIELDS[2]],
++        column: { label: 'Scenario', key: 'scenario_id' },
++        filterModel: [
++          { field: 'tag', key: 'scenario_id', operator: FilterOp.EQUALS, value: 'scenario-a' },
++          { field: 'tag', key: 'scenario_id', operator: FilterOp.NOT_EQUALS, value: 'scenario-b' },
++        ],
++        activeCount: 2,
++        onClearAll,
++      });
++      expect(screen.getByRole('button', { name: 'Filter Scenario' })).toHaveAttribute('data-filter-active', 'true');
++      await userEvent.click(screen.getByRole('button', { name: 'Filter Scenario' }));
++      const values = await screen.findAllByRole('textbox', { name: 'Filter value' });
++      expect(values[0]).toHaveValue('scenario-a');
++      expect(values[1]).toHaveValue('scenario-b');
++      await userEvent.click(screen.getByRole('button', { name: 'Clear filters' }));
++      expect(onClearAll).toHaveBeenCalledTimes(1);
++      expect(screen.getByRole('button', { name: 'Filter Scenario' })).toHaveAttribute('aria-expanded', 'false');
++    });
++  });
+ });
+--- a/mlflow/server/js/src/shared/web-shared/traces-table/TraceFilterButton.tsx
++++ b/mlflow/server/js/src/shared/web-shared/traces-table/TraceFilterButton.tsx
+@@ -1,4 +1,4 @@
+-import { useEffect, useRef, useState } from 'react';
++import { useCallback, useEffect, useRef, useState } from 'react';
+ import {
+   Button,
+   ChevronDownIcon,
+@@ -46,6 +46,8 @@
+    */
+   onClearAll: () => void;
+   activeCount: number;
++  /** Locks the editor to the first field and optional key, with a compact column-header trigger. */
++  column?: { label: string; key?: string };
+ }
+ 
+ interface FilterClauseRowProps {
+@@ -54,9 +56,10 @@
+   fields: FilterFieldDef[];
+   onChangeClause: (index: number, next: FilterClause) => void;
+   onDelete: (index: number) => void;
++  column?: TraceFilterButtonProps['column'];
+ }
+ 
+-interface FilterKeyComboboxProps {
++interface FilterComboboxProps {
+   id: string;
+   value: string;
+   options: FilterFieldSelectOption[];
+@@ -68,20 +71,12 @@
+ }
+ 
+ /**
+- * Freeform-capable key combobox: suggests `options` and offers a `Use "<typed>"` item so an arbitrary
+- * key can still be entered (the v3 assessment-filter typeahead pattern). Module-scope (not nested)
+- * per the repo nested-component rule; the freeform-search state lives here, and the selected key is
++ * Freeform-capable combobox: suggests `options` and offers a `Use "<typed>"` item so an arbitrary
++ * value can still be entered (the v3 assessment-filter typeahead pattern). Module-scope (not nested)
++ * per the repo nested-component rule; the freeform-search state lives here, and the selected value is
+  * controlled by the parent via `value`/`onChange`.
+  */
+-const FilterKeyCombobox = ({
+-  id,
+-  value,
+-  options,
+-  placeholder,
+-  ariaLabel,
+-  onChange,
+-  zIndex,
+-}: FilterKeyComboboxProps) => {
++const FilterCombobox = ({ id, value, options, placeholder, ariaLabel, onChange, zIndex }: FilterComboboxProps) => {
+   const intl = useIntl();
+   const [searchValue, setSearchValue] = useState('');
+   const trimmedSearch = searchValue.trim();
+@@ -117,7 +112,7 @@
+                 onChange={onChange}
+               >
+                 {intl.formatMessage(
+-                  { defaultMessage: 'Use "{value}"', description: 'Freeform option in the traces filter key combobox' },
++                  { defaultMessage: 'Use "{value}"', description: 'Freeform option in the traces filter combobox' },
+                   { value: searchValue },
+                 )}
+               </DialogComboboxOptionListSelectItem>
+@@ -134,7 +129,7 @@
+  * nested-component rule; all state lives in the parent's draft list. Selecting a new field resets
+  * the operator to that field's default and clears the value.
+  */
+-const FilterClauseRow = ({ clause, index, fields, onChangeClause, onDelete }: FilterClauseRowProps) => {
++const FilterClauseRow = ({ clause, index, fields, onChangeClause, onDelete, column }: FilterClauseRowProps) => {
+   const { theme } = useDesignSystemTheme();
+   const intl = useIntl();
+   const field = fields.find((f) => f.id === clause.field);
+@@ -150,46 +145,48 @@
+ 
+   return (
+     <div css={{ display: 'flex', flexDirection: 'row', gap: theme.spacing.sm, alignItems: 'flex-end' }}>
+-      <div css={{ display: 'flex', flexDirection: 'column' }}>
+-        <FormUI.Label htmlFor={fieldId}>
+-          <FormattedMessage defaultMessage="Field" description="Label for the field selector in the traces filter" />
+-        </FormUI.Label>
+-        <SimpleSelect
+-          id={fieldId}
+-          componentId={`${COMPONENT_ID}.filter.field`}
+-          aria-label={intl.formatMessage({
+-            defaultMessage: 'Filter field',
+-            description: 'Aria label for the trace filter field selector',
+-          })}
+-          width={160}
+-          contentProps={contentProps}
+-          value={clause.field}
+-          onChange={(e) => {
+-            const nextField = fields.find((f) => f.id === e.target.value);
+-            onChangeClause(index, {
+-              field: e.target.value,
+-              operator: nextField?.operators[0] ?? clause.operator,
+-              value: '',
+-              // Seed/clear the key so it exists iff the newly-selected field requires one.
+-              key: nextField?.requiresKey ? '' : undefined,
+-            });
+-          }}
+-        >
+-          {fields.map((f) => (
+-            <SimpleSelectOption key={f.id} value={f.id}>
+-              {f.label}
+-            </SimpleSelectOption>
+-          ))}
+-        </SimpleSelect>
+-      </div>
+-
+-      {field?.requiresKey && (
++      {!column && (
++        <div css={{ display: 'flex', flexDirection: 'column' }}>
++          <FormUI.Label htmlFor={fieldId}>
++            <FormattedMessage defaultMessage="Field" description="Label for the field selector in the traces filter" />
++          </FormUI.Label>
++          <SimpleSelect
++            id={fieldId}
++            componentId={`${COMPONENT_ID}.filter.field`}
++            aria-label={intl.formatMessage({
++              defaultMessage: 'Filter field',
++              description: 'Aria label for the trace filter field selector',
++            })}
++            width={160}
++            contentProps={contentProps}
++            value={clause.field}
++            onChange={(e) => {
++              const nextField = fields.find((f) => f.id === e.target.value);
++              onChangeClause(index, {
++                field: e.target.value,
++                operator: nextField?.operators[0] ?? clause.operator,
++                value: '',
++                // Seed/clear the key so it exists iff the newly-selected field requires one.
++                key: nextField?.requiresKey ? '' : undefined,
++              });
++            }}
++          >
++            {fields.map((f) => (
++              <SimpleSelectOption key={f.id} value={f.id}>
++                {f.label}
++              </SimpleSelectOption>
++            ))}
++          </SimpleSelect>
++        </div>
++      )}
++
++      {field?.requiresKey && column?.key === undefined && (
+         <div css={{ display: 'flex', flexDirection: 'column' }}>
+           <FormUI.Label htmlFor={keyId}>
+             <FormattedMessage defaultMessage="Key" description="Label for the key input in the traces filter" />
+           </FormUI.Label>
+           {field.keyInput === 'combobox' ? (
+-            <FilterKeyCombobox
++            <FilterCombobox
+               id={keyId}
+               value={clause.key ?? ''}
+               options={field.keyOptions ?? []}
+@@ -259,7 +256,23 @@
+         <FormUI.Label htmlFor={valueId}>
+           <FormattedMessage defaultMessage="Value" description="Label for the value input in the traces filter" />
+         </FormUI.Label>
+-        {field?.valueInput === 'select' ? (
++        {field?.valueInput === 'combobox' ? (
++          <FilterCombobox
++            id={valueId}
++            value={clause.value}
++            options={field.options ?? []}
++            ariaLabel={intl.formatMessage({
++              defaultMessage: 'Filter value',
++              description: 'Aria label for the trace filter value input',
++            })}
++            placeholder={
++              field.valuePlaceholder ??
++              intl.formatMessage({ defaultMessage: 'Value', description: 'Placeholder for a filter value input' })
++            }
++            onChange={(value) => onChangeClause(index, { ...clause, value })}
++            zIndex={theme.options.zIndexBase + 100}
++          />
++        ) : field?.valueInput === 'select' ? (
+           <SimpleSelect
+             id={valueId}
+             componentId={`${COMPONENT_ID}.filter.value-select`}
+@@ -332,19 +345,27 @@
+   onChange,
+   onClearAll,
+   activeCount,
++  column,
+ }: TraceFilterButtonProps) => {
+   const { theme } = useDesignSystemTheme();
+   const intl = useIntl();
+   const [open, setOpen] = useState(false);
+   const [draft, setDraft] = useState<FilterClause[]>([]);
++  const wasOpen = useRef(false);
++
++  const emptyClause = useCallback(
++    () => ({ ...makeEmptyClause(fields), ...(column?.key !== undefined ? { key: column.key } : {}) }),
++    [fields, column?.key],
++  );
+ 
+   // Seed the draft from the applied model whenever the popover opens, so it reflects the current
+   // filters (and a fresh blank row when nothing is applied yet).
+   useEffect(() => {
+-    if (open) {
+-      setDraft(filterModel.length > 0 ? filterModel.map((clause) => ({ ...clause })) : [makeEmptyClause(fields)]);
++    if (open && !wasOpen.current) {
++      setDraft(filterModel.length > 0 ? filterModel.map((clause) => ({ ...clause })) : [emptyClause()]);
+     }
+-  }, [open, filterModel, fields]);
++    wasOpen.current = open;
++  }, [open, filterModel, emptyClause]);
+ 
+   const hasActiveFilters = activeCount > 0;
+   const anchorRef = useRef<HTMLDivElement>(null);
+@@ -362,10 +383,10 @@
+   const deleteClause = (index: number) =>
+     setDraft((prev) => {
+       const next = prev.filter((_, i) => i !== index);
+-      return next.length > 0 ? next : [makeEmptyClause(fields)];
++      return next.length > 0 ? next : [emptyClause()];
+     });
+ 
+-  const addClause = () => setDraft((prev) => [...prev, makeEmptyClause(fields)]);
++  const addClause = () => setDraft((prev) => [...prev, emptyClause()]);
+ 
+   const applyFilters = () => {
+     onChange(draft);
+@@ -390,99 +411,146 @@
+           outside-click then reopen, causing a flicker). The child DS Buttons keep their default type
+           (gray icon, not tertiary-blue) and the wrapper owns the single visible border + active fill. */}
+       <Popover.Anchor asChild>
+-        <div
+-          ref={anchorRef}
+-          css={{
+-            display: 'inline-flex',
+-            alignItems: 'center',
+-            borderRadius: theme.borders.borderRadiusSm,
+-            border: `1px solid ${
+-              hasActiveFilters ? theme.colors.actionDefaultBorderFocus : theme.colors.actionDefaultBorderDefault
+-            }`,
+-            backgroundColor: hasActiveFilters ? theme.colors.actionDefaultBackgroundHover : undefined,
+-            '& > button': {
+-              border: 'none !important',
+-              boxShadow: 'none !important',
+-              backgroundColor: 'transparent !important',
+-            },
+-          }}
+-        >
+-          {hasActiveFilters ? (
+-            <>
+-              <Button
+-                componentId={`${COMPONENT_ID}.filter.trigger`}
+-                icon={<FilterIcon />}
+-                onClick={toggleOpen}
+-                // Popover.Anchor (unlike Trigger) adds no ARIA, so announce the popover state ourselves.
+-                aria-haspopup="dialog"
+-                aria-expanded={open}
+-                // Names the button when its label collapses to icon-only.
+-                aria-label={intl.formatMessage({
++        {column ? (
++          <div
++            ref={anchorRef}
++            className="traces-table-column-filter"
++            css={{ display: 'inline-flex', flexShrink: 0, opacity: hasActiveFilters || open ? 1 : 0 }}
++            onClick={(event) => event.stopPropagation()}
++            onPointerDown={(event) => event.stopPropagation()}
++            onKeyDown={(event) => {
++              if (event.key !== 'Escape') event.stopPropagation();
++            }}
++          >
++            <Button
++              componentId={`${COMPONENT_ID}.filter.column-trigger`}
++              size="small"
++              type="tertiary"
++              icon={<FilterIcon />}
++              aria-label={intl.formatMessage(
++                { defaultMessage: 'Filter {column}', description: 'Accessible label for a column filter button' },
++                { column: column.label },
++              )}
++              aria-haspopup="dialog"
++              aria-expanded={open}
++              data-filter-active={hasActiveFilters}
++              css={{
++                color: hasActiveFilters ? theme.colors.actionPrimaryBackgroundDefault : theme.colors.textSecondary,
++              }}
++              onClick={toggleOpen}
++            />
++          </div>
++        ) : (
++          <div
++            ref={anchorRef}
++            css={{
++              display: 'inline-flex',
++              alignItems: 'center',
++              borderRadius: theme.borders.borderRadiusSm,
++              border: `1px solid ${
++                hasActiveFilters ? theme.colors.actionDefaultBorderFocus : theme.colors.actionDefaultBorderDefault
++              }`,
++              backgroundColor: hasActiveFilters ? theme.colors.actionDefaultBackgroundHover : undefined,
++              '& > button': {
++                border: 'none !important',
++                boxShadow: 'none !important',
++                backgroundColor: 'transparent !important',
++              },
++            }}
++          >
++            {hasActiveFilters ? (
++              <>
++                <Button
++                  componentId={`${COMPONENT_ID}.filter.trigger`}
++                  icon={<FilterIcon />}
++                  onClick={toggleOpen}
++                  // Popover.Anchor (unlike Trigger) adds no ARIA, so announce the popover state ourselves.
++                  aria-haspopup="dialog"
++                  aria-expanded={open}
++                  // Names the button when its label collapses to icon-only.
++                  aria-label={intl.formatMessage({
++                    defaultMessage: 'Filters',
++                    description: 'Aria label for the traces table filter button',
++                  })}
++                  // The DS label padding `4px 12px` is importantified, so the override needs `!important` (plus
++                  // `&&&` specificity) to win. Trim the right side below 12px so the × sits closer to (N).
++                  css={{ '&&&': { paddingRight: '6px !important' } }}
++                >
++                  <span css={{ display: 'flex', alignItems: 'center', gap: theme.spacing.xs }}>
++                    <ToolbarCollapsibleLabel>
++                      <FormattedMessage
++                        defaultMessage="Filters"
++                        description="Label for the traces table filter button"
++                      />
++                    </ToolbarCollapsibleLabel>
++                    <Typography.Text color="secondary">({activeCount})</Typography.Text>
++                  </span>
++                </Button>
++                <Button
++                  componentId={`${COMPONENT_ID}.filter.clear-all`}
++                  icon={<XCircleFillIcon />}
++                  aria-label={intl.formatMessage({
++                    defaultMessage: 'Clear all filters',
++                    description: 'Aria label for the clear-all-filters button next to the traces filter button',
++                  })}
++                  onClick={clearAll}
++                  // Icon-only DS Buttons are forced to a fixed square width (`width: heightSm`), which leaves a
++                  // big empty box around the glyph. Unset that, but keep a modest side padding so the × has a
++                  // comfortable click target (rather than hugging the glyph exactly).
++                  css={{
++                    '&&&': { width: 'auto !important', minWidth: '0 !important', paddingLeft: 4, paddingRight: 4 },
++                  }}
++                />
++                <Button
++                  componentId={`${COMPONENT_ID}.filter.chevron`}
++                  icon={<ChevronDownIcon />}
++                  aria-label={intl.formatMessage({
++                    defaultMessage: 'Toggle filters',
++                    description: 'Aria label for the chevron that toggles the traces filter popover',
++                  })}
++                  aria-haspopup="dialog"
++                  aria-expanded={open}
++                  onClick={toggleOpen}
++                  css={{
++                    '&&&': { width: 'auto !important', minWidth: '0 !important', paddingLeft: 2, paddingRight: 2 },
++                  }}
++                />
++              </>
++            ) : (
++              <Tooltip
++                componentId={`${COMPONENT_ID}.filter.trigger.tooltip`}
++                content={intl.formatMessage({
+                   defaultMessage: 'Filters',
+-                  description: 'Aria label for the traces table filter button',
++                  description: 'Tooltip for the traces table filter button',
+                 })}
+-                // The DS label padding `4px 12px` is importantified, so the override needs `!important` (plus
+-                // `&&&` specificity) to win. Trim the right side below 12px so the × sits closer to (N).
+-                css={{ '&&&': { paddingRight: '6px !important' } }}
+               >
+-                <span css={{ display: 'flex', alignItems: 'center', gap: theme.spacing.xs }}>
+-                  <ToolbarCollapsibleLabel>
+-                    <FormattedMessage defaultMessage="Filters" description="Label for the traces table filter button" />
+-                  </ToolbarCollapsibleLabel>
+-                  <Typography.Text color="secondary">({activeCount})</Typography.Text>
+-                </span>
+-              </Button>
+-              <Button
+-                componentId={`${COMPONENT_ID}.filter.clear-all`}
+-                icon={<XCircleFillIcon />}
+-                aria-label={intl.formatMessage({
+-                  defaultMessage: 'Clear all filters',
+-                  description: 'Aria label for the clear-all-filters button next to the traces filter button',
+-                })}
+-                onClick={clearAll}
+-                // Icon-only DS Buttons are forced to a fixed square width (`width: heightSm`), which leaves a
+-                // big empty box around the glyph. Unset that, but keep a modest side padding so the × has a
+-                // comfortable click target (rather than hugging the glyph exactly).
+-                css={{ '&&&': { width: 'auto !important', minWidth: '0 !important', paddingLeft: 4, paddingRight: 4 } }}
+-              />
+-              <Button
+-                componentId={`${COMPONENT_ID}.filter.chevron`}
+-                icon={<ChevronDownIcon />}
+-                aria-label={intl.formatMessage({
+-                  defaultMessage: 'Toggle filters',
+-                  description: 'Aria label for the chevron that toggles the traces filter popover',
+-                })}
+-                aria-haspopup="dialog"
+-                aria-expanded={open}
+-                onClick={toggleOpen}
+-                css={{ '&&&': { width: 'auto !important', minWidth: '0 !important', paddingLeft: 2, paddingRight: 2 } }}
+-              />
+-            </>
+-          ) : (
+-            <Tooltip
+-              componentId={`${COMPONENT_ID}.filter.trigger.tooltip`}
+-              content={intl.formatMessage({
+-                defaultMessage: 'Filters',
+-                description: 'Tooltip for the traces table filter button',
+-              })}
+-            >
+-              <Button
+-                componentId={`${COMPONENT_ID}.filter.trigger`}
+-                icon={<FilterIcon />}
+-                aria-label={intl.formatMessage({
+-                  defaultMessage: 'Filters',
+-                  description: 'Aria label for the traces table filter button',
+-                })}
+-                aria-haspopup="dialog"
+-                aria-expanded={open}
+-                onClick={toggleOpen}
+-              />
+-            </Tooltip>
+-          )}
+-        </div>
++                <Button
++                  componentId={`${COMPONENT_ID}.filter.trigger`}
++                  icon={<FilterIcon />}
++                  aria-label={intl.formatMessage({
++                    defaultMessage: 'Filters',
++                    description: 'Aria label for the traces table filter button',
++                  })}
++                  aria-haspopup="dialog"
++                  aria-expanded={open}
++                  onClick={toggleOpen}
++                />
++              </Tooltip>
++            )}
++          </div>
++        )}
+       </Popover.Anchor>
+       <Popover.Content
+-        align="end"
++        align={column ? 'start' : 'end'}
++        onClick={column ? (event) => event.stopPropagation() : undefined}
++        onPointerDown={column ? (event) => event.stopPropagation() : undefined}
++        onKeyDown={
++          column
++            ? (event) => {
++                if (event.key !== 'Escape') event.stopPropagation();
++              }
++            : undefined
++        }
+         css={{ padding: theme.spacing.md }}
+         // Clicks on the anchor pill (the toggle buttons) must not trigger Radix's outside-close, or the
+         // close races our onClick toggle and reopens — a flicker. Let our toggle own those clicks.
+@@ -503,6 +571,7 @@
+                 fields={fields}
+                 onChangeClause={changeClause}
+                 onDelete={deleteClause}
++                column={column}
+               />
+             ))}
+           </div>
 --- a/mlflow/server/js/src/shared/web-shared/traces-table/TracesTable.test.tsx
 +++ b/mlflow/server/js/src/shared/web-shared/traces-table/TracesTable.test.tsx
 @@ -202,6 +202,48 @@
@@ -7162,7 +8002,16 @@
    onToggleBulkAll: () => void;
    sort: TraceColumnId;
    dir: SortDirection;
-@@ -347,6 +351,8 @@
+@@ -292,6 +296,8 @@
+   onHideColumn: (columnId: string) => void;
+   /** Per-column extra header-menu actions (e.g. "Expand tag columns"), keyed by column id. */
+   columnHeaderActions?: Readonly<Partial<Record<string, TraceColumnHeaderAction>>>;
++  /** Consumer-owned column filter controls, keyed by column id. */
++  columnHeaderFilters?: Readonly<Partial<Record<string, React.ReactNode>>>;
+   /** Groups traces with a session id into collapsible session rows. Standalone traces remain rows. */
+   isGroupedBySession?: boolean;
+   /** Maximum lines shown by input and output previews before truncation. Defaults to one line. */
+@@ -347,6 +353,8 @@
      isSomeOnPageSelected,
      onToggleBulkRow,
      onToggleBulkRows,
@@ -7171,7 +8020,15 @@
      onToggleBulkAll,
      sort,
      dir,
-@@ -365,33 +371,26 @@
+@@ -358,6 +366,7 @@
+     renderRunName,
+     onHideColumn,
+     columnHeaderActions,
++    columnHeaderFilters,
+     isGroupedBySession = false,
+     previewLineClamp = 1,
+     onReorderColumn,
+@@ -365,33 +374,26 @@
    }: TracesTableProps) {
      const { theme } = useDesignSystemTheme();
      const intl = useIntl();
@@ -7217,7 +8074,7 @@
          if (column.id === undefined) {
            return column;
          }
-@@ -408,18 +407,19 @@
+@@ -408,18 +410,19 @@
          const maxSize = contentMaxSize ?? Math.max(column.maxSize ?? 0, persistedSize ?? 0);
          return { ...column, maxSize };
        });
@@ -7242,7 +8099,7 @@
      );
  
      const meta = useMemo<TracesTableMeta>(
-@@ -649,10 +649,12 @@
+@@ -649,10 +652,12 @@
        );
  
      const renderSessionHeaderCell = (sessionId: string, trace: ModelTraceInfoV3) => {
@@ -7257,7 +8114,7 @@
          </Tag>
        );
        const sessionHref = getSessionHref?.({ trace, sessionId });
-@@ -660,6 +662,7 @@
+@@ -660,6 +665,7 @@
          <Link
            componentId={`${COMPONENT_ID}.session-link`}
            to={sessionHref}
@@ -7265,7 +8122,7 @@
            onClick={(event) => event.stopPropagation()}
          >
            {tag}
-@@ -676,6 +679,15 @@
+@@ -676,6 +682,15 @@
      ) => {
        const isSelected = row.id === selectedTraceId;
        const isBulkChecked = selectedForBulk.has(row.original.trace_id);
@@ -7281,7 +8138,7 @@
        return (
          <TableRow
            key={row.id}
-@@ -702,8 +714,13 @@
+@@ -702,8 +717,13 @@
          >
            <TableRowSelectCell
              componentId={`${COMPONENT_ID}.row-select`}
@@ -7296,7 +8153,7 @@
              checkboxLabel={intl.formatMessage(
                {
                  defaultMessage: 'Select trace {traceId}',
-@@ -717,14 +734,8 @@
+@@ -717,14 +737,8 @@
            {row.getVisibleCells().map((cell) => (
              <TableCell key={cell.id} css={{ verticalAlign: 'middle' }} style={columnStyles.get(cell.column.id)}>
                {cell.column.id === 'session' && sessionTurnNumber !== undefined ? (
@@ -7313,7 +8170,7 @@
                  </Tag>
                ) : (
                  flexRender(cell.column.columnDef.cell, cell.getContext())
-@@ -779,10 +790,7 @@
+@@ -779,10 +793,7 @@
                    checked={isAllOnPageSelected}
                    indeterminate={isSomeOnPageSelected && !isAllOnPageSelected}
                    onChange={onToggleBulkAll}
@@ -7325,7 +8182,15 @@
                  />
                  {isGroupedBySession && renderSessionToggleSpacer()}
                  <SortableContext items={reorderableHeaderIds} strategy={horizontalListSortingStrategy}>
-@@ -876,15 +884,25 @@
+@@ -818,6 +829,7 @@
+                           sortDirection={sort === columnId ? dir : 'none'}
+                           onHide={() => onHideColumn(columnId)}
+                           action={columnHeaderActions?.[columnId]}
++                          filter={columnHeaderFilters?.[columnId]}
+                           {...sortHandlers}
+                         />
+                       </SortableTraceTableHeader>
+@@ -876,15 +888,25 @@
                            >
                              <TableRowSelectCell
                                componentId={`${COMPONENT_ID}.session-select`}
@@ -7356,7 +8221,7 @@
                                  },
                                  { sessionId },
                                )}
-@@ -943,12 +961,7 @@
+@@ -943,12 +965,7 @@
                                            ? flexRender(firstCell.column.columnDef.cell, firstCell.getContext())
                                            : header.column.id === 'state' && lastCell
                                              ? flexRender(lastCell.column.columnDef.cell, lastCell.getContext())
@@ -7370,7 +8235,7 @@
                                  </TableCell>
                                );
                              })}
-@@ -983,10 +996,7 @@
+@@ -983,10 +1000,7 @@
                  checked={isAllOnPageSelected}
                  indeterminate={isSomeOnPageSelected && !isAllOnPageSelected}
                  onChange={onToggleBulkAll}
@@ -7382,7 +8247,15 @@
                />
                {isGroupedBySession && renderSessionToggleSpacer()}
                {leafHeaders.map((header) => {
-@@ -1075,15 +1085,25 @@
+@@ -1020,6 +1034,7 @@
+                       sortDirection={sort === columnId ? dir : 'none'}
+                       onHide={() => onHideColumn(columnId)}
+                       action={columnHeaderActions?.[columnId]}
++                      filter={columnHeaderFilters?.[columnId]}
+                       {...sortHandlers}
+                     />
+                   </TableHeader>
+@@ -1075,15 +1090,25 @@
                          >
                            <TableRowSelectCell
                              componentId={`${COMPONENT_ID}.session-select`}
@@ -7413,7 +8286,7 @@
                                },
                                { sessionId },
                              )}
-@@ -1142,9 +1162,7 @@
+@@ -1142,9 +1167,7 @@
                                          ? flexRender(firstCell.column.columnDef.cell, firstCell.getContext())
                                          : header.column.id === 'state' && lastCell
                                            ? flexRender(lastCell.column.columnDef.cell, lastCell.getContext())
@@ -7434,7 +8307,31 @@
  import { TracesTableView, type TracesTableViewProps, type TracesTableViewState } from './TracesTableView';
  import { useBulkTraceSelection } from './hooks/useBulkTraceSelection';
  import { makeSessionTrace, makeTraces } from './test-utils/mockTraces';
-@@ -123,6 +124,47 @@
+@@ -59,6 +60,23 @@
+ };
+ 
+ describe('TracesTableView', () => {
++  test.each([false, true])(
++    'renders column filtering through the view when session grouping is %s',
++    async (isGroupedBySession) => {
++      const onClick = jest.fn();
++      await renderWithProviders(
++        <TracesTableView
++          {...baseProps({
++            isGroupedBySession,
++            columnHeaderFilters: { input: <button onClick={onClick}>Filter Input</button> },
++          })}
++        />,
++      );
++      await userEvent.click(screen.getByRole('button', { name: 'Filter Input' }));
++      expect(onClick).toHaveBeenCalledTimes(1);
++    },
++  );
++
+   test('always renders the toolbar search box', async () => {
+     await renderWithProviders(<TracesTableView {...baseProps({ viewState: 'empty' })} />);
+     expect(screen.getByRole('textbox', { name: /Search traces/ })).toBeInTheDocument();
+@@ -123,6 +141,47 @@
      expect(screen.getByText('30')).toBeInTheDocument();
    });
  
@@ -7493,7 +8390,15 @@
    onToggleBulkAll: () => void;
    sort: TraceColumnId;
    dir: SortDirection;
-@@ -201,6 +203,8 @@
+@@ -69,6 +71,7 @@
+   /** Hides the column with the given id — forwarded to the table's per-header menu. */
+   onHideColumn: (columnId: string) => void;
+   columnHeaderActions?: Readonly<Partial<Record<string, TraceColumnHeaderAction>>>;
++  columnHeaderFilters?: Readonly<Partial<Record<string, React.ReactNode>>>;
+   /** Groups traces with a session id into collapsible session rows — forwarded to the table. */
+   isGroupedBySession?: boolean;
+   /** Blanks session-level column aggregates when the page may not hold every trace of a session — forwarded to the table. */
+@@ -201,6 +204,8 @@
        isSomeOnPageSelected={props.isSomeOnPageSelected}
        onToggleBulkRow={props.onToggleBulkRow}
        onToggleBulkRows={props.onToggleBulkRows}
@@ -7502,6 +8407,34 @@
        onToggleBulkAll={props.onToggleBulkAll}
        sort={props.sort}
        dir={props.dir}
+@@ -212,6 +217,7 @@
+       renderRunName={props.renderRunName}
+       onHideColumn={props.onHideColumn}
+       columnHeaderActions={props.columnHeaderActions}
++      columnHeaderFilters={props.columnHeaderFilters}
+       isGroupedBySession={props.isGroupedBySession}
+       sessionsMayBeIncomplete={props.sessionsMayBeIncomplete}
+       previewLineClamp={props.previewLineClamp}
+--- a/mlflow/server/js/src/shared/web-shared/traces-table/filterModel.ts
++++ b/mlflow/server/js/src/shared/web-shared/traces-table/filterModel.ts
+@@ -20,7 +20,7 @@
+ }
+ 
+ /** How a clause's value input renders: a fixed single-select, a numeric input, or free text. */
+-export type FilterValueInputKind = 'select' | 'number' | 'text';
++export type FilterValueInputKind = 'select' | 'number' | 'text' | 'combobox';
+ 
+ /** One selectable option for a `'select'`-kind value input. `label` is already localized. */
+ export interface FilterFieldSelectOption {
+@@ -40,7 +40,7 @@
+   /** Operators offered for this field. The first entry is the default when the field is selected. */
+   operators: FilterOp[];
+   valueInput: FilterValueInputKind;
+-  /** Options for a `'select'` value input; ignored otherwise. */
++  /** Options for a fixed select or a freeform-capable value combobox. */
+   options?: FilterFieldSelectOption[];
+   /**
+    * Localized placeholder for a `'text'`/`'number'` value input, letting a field surface a required
 --- a/mlflow/server/js/src/shared/web-shared/traces-table/index.ts
 +++ b/mlflow/server/js/src/shared/web-shared/traces-table/index.ts
 @@ -102,6 +102,7 @@

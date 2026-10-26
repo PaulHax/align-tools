@@ -6,9 +6,7 @@ import re
 import signal
 import sqlite3
 import subprocess
-import threading
 from contextlib import closing
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.request import urlopen
 
@@ -38,7 +36,6 @@ def environment():
         ("ingest.sh", [], "SOURCE_DIRECTORY"),
         ("ingest.sh", ["."], "MLFLOW_TRACKING_URI"),
         ("server.sh", [], "MLFLOW_TRACKING_URI"),
-        ("views.sh", ["http://localhost:5000"], "MLFLOW_TRACKING_URI"),
     ],
 )
 def test_scripts_require_explicit_destinations(tmp_path, script, args, message):
@@ -55,7 +52,7 @@ def test_scripts_require_explicit_destinations(tmp_path, script, args, message):
 
 
 @pytest.mark.parametrize("transport", ["sqlite", "http"])
-def test_import_server_and_views_share_configured_storage(tmp_path, transport):
+def test_import_and_server_share_configured_storage(tmp_path, transport):
     target = "ADEPT-June2025-merit-0.4"
     records = episode_records(target)[:1]
     source = write_run(
@@ -198,180 +195,6 @@ def test_import_server_and_views_share_configured_storage(tmp_path, transport):
             == "component_durations"
         )
 
-        views = subprocess.run(
-            [str(SCRIPTS / "views.sh"), url],
-            cwd=tmp_path,
-            env={**env, "MLFLOW_TRACKING_URI": url},
-            capture_output=True,
-            text=True,
-        )
-        assert views.returncode == 0, views.stderr
-        assert "Episodes by ADM and target" in views.stdout
-        session_view = next(
-            line
-            for line in views.stdout.splitlines()
-            if line.startswith("Session comparison:")
-        )
-        assert "groupBy=session" in session_view
-        saved = client.get_experiment(experiment.experiment_id).tags
-        assert {
-            json.loads(value)["name"]
-            for key, value in saved.items()
-            if key.startswith("mlflow.tracesV4ViewState.")
-        } == {
-            "Open-world actions",
-            "Episodes by ADM and target",
-            "Session comparison",
-            "ADM performance",
-        }
-        adm = runs[0].data.tags["adm"]
-        other_adm = "reviewer's model + β"
-        for tags in [{"adm": adm}, {"adm": other_adm}, {"adm": ""}, {}]:
-            client.create_run(experiment.experiment_id, tags=tags)
-        adm_command = [str(SCRIPTS / "views.sh"), url, "--by-adm"]
-        adm_saved = {}
-        for _ in range(2):
-            result = subprocess.run(
-                adm_command,
-                cwd=tmp_path,
-                env={**env, "MLFLOW_TRACKING_URI": url},
-                capture_output=True,
-                text=True,
-            )
-            assert result.returncode == 0, result.stderr
-            for label in [adm, other_adm]:
-                assert f"ADM: {label}: " in result.stdout
-            current = client.get_experiment(experiment.experiment_id).tags
-            if adm_saved:
-                assert current == adm_saved
-            adm_saved = current
-        adm_presets = {
-            key: json.loads(value)
-            for key, value in adm_saved.items()
-            if key.startswith("mlflow.tracesV4ViewState.")
-            and json.loads(value)["name"].startswith("ADM:")
-        }
-        assert {view["name"] for view in adm_presets.values()} == {
-            f"ADM: {adm}",
-            f"ADM: {other_adm}",
-        }
-        for view in adm_presets.values():
-            state = json.loads(view["state"])
-            assert state["single"]["startTimeLabel"] == "ALL"
-            assert state["single"]["groupBy"] == "session"
-            assert state["filters"] == [
-                {
-                    "field": "tag",
-                    "key": "adm",
-                    "operator": "=",
-                    "value": view["name"].removeprefix("ADM: "),
-                }
-            ]
-        other_source = write_run(
-            tmp_path / "another invocation" / source.name,
-            records,
-            [completion_line(target, 0.6)],
-        )
-        (other_source / "meta.json").write_text(
-            json.dumps({"version": "0.5.11", "username": "another-session"})
-        )
-        imported = subprocess.run(
-            [str(SCRIPTS / "ingest.sh"), str(other_source)],
-            cwd=tmp_path,
-            env={**env, "MLFLOW_TRACKING_URI": url},
-            capture_output=True,
-            text=True,
-        )
-        assert imported.returncode == 0, imported.stderr
-        source_runs = {
-            run.data.tags["align.run_key"]: run
-            for run in client.search_runs([experiment.experiment_id])
-            if run.data.tags.get("align.run_key")
-        }
-        assert len(source_runs) == 2
-        assert (
-            len({run.data.tags["mlflow.runName"] for run in source_runs.values()}) == 1
-        )
-        before_traces = {
-            trace.info.trace_id
-            for trace in client.search_traces(locations=[experiment.experiment_id])
-        }
-        run_saved = {}
-        for options in [["--by-run"], ["--by-adm", "--by-run"]]:
-            result = subprocess.run(
-                [str(SCRIPTS / "views.sh"), url, *options],
-                cwd=tmp_path,
-                env={**env, "MLFLOW_TRACKING_URI": url},
-                capture_output=True,
-                text=True,
-            )
-            assert result.returncode == 0, result.stderr
-            current = client.get_experiment(experiment.experiment_id).tags
-            if run_saved:
-                assert current == run_saved
-            run_saved = current
-        run_presets = {
-            key: json.loads(value)
-            for key, value in run_saved.items()
-            if key.startswith("mlflow.tracesV4ViewState.open-world-run-")
-        }
-        assert {view["name"] for view in run_presets.values()} == {
-            f"Run: {run.data.tags['mlflow.runName']} [{key}]"
-            for key, run in source_runs.items()
-        }
-        comparison = json.loads(
-            json.loads(saved["mlflow.tracesV4ViewState.open-world-session-comparison"])[
-                "state"
-            ]
-        )
-        for view in run_presets.values():
-            state = json.loads(view["state"])
-            assert {key: value for key, value in state.items() if key != "filters"} == (
-                comparison
-            )
-            run_key = state["filters"][0]["value"]
-            assert state["filters"] == [
-                {
-                    "field": "tag",
-                    "key": "align.run_key",
-                    "operator": "=",
-                    "value": run_key,
-                }
-            ]
-            matching = client.search_traces(
-                locations=[experiment.experiment_id],
-                filter_string=f"tags.`align.run_key` = '{run_key}'",
-            )
-            assert len(matching) == 1
-            assert matching[0].info.trace_metadata["mlflow.sourceRun"] == (
-                source_runs[run_key].info.run_id
-            )
-        assert {
-            trace.info.trace_id
-            for trace in client.search_traces(locations=[experiment.experiment_id])
-        } == before_traces
-        # A renamed preset belongs to the user and cannot be silently overwritten.
-        key, custom = next(iter(run_presets.items()))
-        custom["name"] = "Team decisions"
-        client.set_experiment_tag(experiment.experiment_id, key, json.dumps(custom))
-        first_key = "mlflow.tracesV4ViewState.open-world-actions"
-        first_view = json.loads(saved[first_key])
-        first_view["state"] = "{}"
-        client.set_experiment_tag(
-            experiment.experiment_id, first_key, json.dumps(first_view)
-        )
-        before = client.get_experiment(experiment.experiment_id).tags
-        collision = subprocess.run(
-            [str(SCRIPTS / "views.sh"), url, "--by-adm", "--by-run"],
-            cwd=tmp_path,
-            env={**env, "MLFLOW_TRACKING_URI": url},
-            capture_output=True,
-            text=True,
-        )
-        assert collision.returncode != 0
-        assert "Team decisions" in collision.stderr
-        assert "No views changed" in collision.stderr
-        assert client.get_experiment(experiment.experiment_id).tags == before
         assert not (tmp_path / "mlflow.db").exists()
         assert not (tmp_path / "server.log").exists()
         assert not (tmp_path / "server.pid").exists()
@@ -392,44 +215,3 @@ def test_local_scripts_reject_ambiguous_storage(tmp_path, script):
     assert result.returncode != 0
     assert "absolute SQLite file URI" in result.stderr
     assert list(tmp_path.iterdir()) == []
-
-
-def test_view_setup_uses_standard_tracking_credentials(tmp_path):
-    class VersionEndpoint(BaseHTTPRequestHandler):
-        def do_GET(self):
-            if self.headers.get("Authorization") != "Bearer test-credential":
-                self.send_error(401)
-                return
-            self.send_response(200)
-            self.end_headers()
-            self.wfile.write(b"3.17.2")
-
-        def log_message(self, *_args):
-            pass
-
-    uri = f"sqlite:///{tmp_path}/tracking.db"
-    client = MlflowClient(tracking_uri=uri)
-    eid = client.create_experiment(
-        "align-system open world", artifact_location=str(tmp_path / "artifacts")
-    )
-    with ThreadingHTTPServer(("127.0.0.1", 0), VersionEndpoint) as server:
-        thread = threading.Thread(target=server.serve_forever)
-        thread.start()
-        try:
-            result = subprocess.run(
-                [str(SCRIPTS / "views.sh"), f"http://127.0.0.1:{server.server_port}"],
-                cwd=tmp_path,
-                env={
-                    **environment(),
-                    "MLFLOW_TRACKING_URI": uri,
-                    "MLFLOW_TRACKING_TOKEN": "test-credential",
-                },
-                capture_output=True,
-                text=True,
-            )
-            assert result.returncode == 0, result.stderr
-            assert "Session comparison:" in result.stdout
-            assert len(client.get_experiment(eid).tags) == 4
-        finally:
-            server.shutdown()
-            thread.join()
