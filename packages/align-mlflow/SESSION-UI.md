@@ -22,7 +22,7 @@ Session titles use recorded run, model, scenario, alignment target, and episode 
 
 ## Scenario navigation and evaluation comparisons
 
-The **Traces** and **Evaluation runs** tables have searchable **Scenario** and **Alignment target** selectors. Options come from all recorded first-action traces in the experiment or selected runs, including later result pages. Selecting a scenario in **Traces** keeps the current view's other filters, such as its invocation. Clear the selectors to return to the full view.
+The **Traces** and **Evaluation runs** tables have searchable **Scenario** and **Alignment target** selectors. The **Traces** table also has **ADM**, **LLM**, **Invocation**, and **Source version** selectors. Each selector applies an exact recorded value and keeps other filters. Invocation choices show the run label and identity key. **Reset episode filters** clears these metadata filters while preserving unrelated filters and session selections. Options come from all recorded first-action traces in the experiment or selected runs, including later result pages. Selecting a scenario in **Traces** keeps the current view's other filters, such as its invocation. Clear the selectors to return to the full view.
 
 In **Evaluation runs**, select two runs and group by session. Open World comparisons show scenario, alignment target, ADM, model, run, session, and recorded score columns by default. **Episode details** restores these columns when a personal layout hides them. Request and response columns remain available in the column selector.
 
@@ -39,6 +39,79 @@ Compare two or more sessions without requiring matching scenarios, targets, ADMs
 Choose decisions from two or three sessions and click **Compare selected decisions** to open MLflow's native trace comparison. **Clear selected decision** removes a pane from that trace comparison without closing its session. Session and decision links retain their original identifiers, and the comparison URL can be reopened or shared with someone who has access to the same server. No corresponding step numbers are required.
 
 For individual traces already visible in the ungrouped **Traces** table, select two or three rows and use MLflow's existing **Actions > Compare**. Session selection and the comparison layout are part of this frontend patch; the decision sidebar, conversation rendering, and trace comparison reuse MLflow's native components.
+
+## Open World results
+
+Open **Open World results** in the experiment's Evaluation navigation. The
+dashboard starts with a **Results overview** panel containing run, scenario/target
+pair, and episode counts. **Runs** opens
+the experiment's native **Model training** runs table. Pair and episode counts
+are contextual totals.
+Nonzero missing scores, target mismatches, and metadata conflicts link to the
+affected sessions. Requested and evaluated targets should agree; a mismatch
+indicates a run, scoring, or import problem. **Filter dashboard** uses MLflow's existing
+filter controls for search and invocation. Removable chips for applied values
+wrap below the totals, with full values available on hover or keyboard focus.
+Source revisions remain in run details. The scope panel states that these filters apply to the
+run summaries, plot, and matrix. Help icons beside
+the counts and section headings explain score averaging, coverage, provenance,
+and drill-down behavior.
+
+**Performance by run** summarizes each recorded configuration separately. Its
+ADM, model, and run fields use the same labels as the chart and matrix. The
+run label omits a repeated leading ADM name. Source revision appears in the
+summary; **Open run** links to MLflow's full run details.
+The borderless **Mean** action opens the contributing episodes. Its
+average gives each scored scenario/target case equal weight after averaging
+repeated scored episodes within that case. Missing scores are excluded, never
+zero. This differs from the importer's episode-weighted invocation mean when
+case coverage or repetition counts differ. Inspect coverage and source revisions
+before interpreting differences between runs.
+
+**Episode scores** shows one clickable dot per scored episode and a
+diamond for the equal-case mean. The score axis stays fixed from 0 to 1 across
+filters. Out-of-range recorded values are marked at the nearest boundary and
+retain their raw values in tooltips and summaries. The chart follows the same
+dashboard filters as the summaries and matrix. Hover or focus a dot for its score,
+scenario, target, ADM, and model; mean tooltips show case and episode coverage.
+Nearby dots keep separate positions and larger hit areas; hovering or focusing
+a dot highlights it. Tooltips leave neighboring dots reachable and update
+immediately when moving between points.
+Missing outcomes remain accessible without fabricated chart values. Run, ADM,
+LLM, driver, and recorded provenance keep configurations separate. Optional
+source-family and scoring-version rows in run summaries are shown only when recorded; the ADM
+source revision is not a scorer version.
+
+**Scenario/target matrix** appears below the score distributions with no summary footer.
+Labels align left. A single configuration uses a compact table; multiple
+configurations use the available width and scroll horizontally when needed.
+Select a row heading to show its sessions across runs, or a column heading to
+show that configuration's sessions across scenarios. Both selections respect the
+dashboard filters and are preserved in the URL. Column headings omit repeated
+provenance details.
+Ordinary single-episode cells display only the score. Repeated cases show their episode
+count; incomplete cases show scored/total counts. Missing scores and absent
+episodes remain distinct. Target and metadata conflicts stay visible only when present.
+
+Selecting a review signal, run mean, chart point, or matrix cell scrolls
+to its exact contributing sessions in the same grouped session table used by
+MLflow's performance view. Session rows retain native names, links, selection,
+expandable first-action rows, and resizable columns. The column menu controls
+visibility; column choices, widths, and sorting remain when dashboard filters
+change. Drilldowns and **Back to results** move keyboard focus to their
+destination. Opening a session shows its complete decision sequence. Select
+sessions across cells and filters for the existing comparison. This table shows
+only the requested target; target mismatches remain visible as warnings.
+Normal rows have no metadata-conflict status column. Filters and selected
+contributors are preserved in the URL; checkbox selections remain while using
+the dashboard.
+
+All data comes from the selected experiment's completed first-action traces and
+persisted session assessments. Revisiting or returning focus reloads all result
+pages and replaces the complete snapshot atomically. Background loading or errors
+retain the last complete results; errors remain visible. The continuously focused
+page does not poll. There is no additional database or refresh control. This page
+is part of the pinned frontend patch; native charts and trace views remain available.
 
 ## Saved views
 
@@ -65,6 +138,6 @@ Rerun after importing new ADMs or invocations. Existing named presets are restor
 
 Definitions live in [views.json](examples/views.json); [configure_views.py](examples/configure_views.py) generates the ADM and invocation variants. The recipe uses MLflow's internal saved-view format and checks for **3.17.2** before writing. Use the destination's UI URL as the first argument if it differs from `MLFLOW_TRACKING_URI`; standard MLflow credentials apply.
 
-The performance columns require this package's session UI patch. Episode scores are session feedback, not scores for the individual action that stores them. Missing feedback is unavailable, not zero. The evaluated target comes from that feedback and can differ from the action target. When comparing ADMs, use the same scenario/target cases and account for repeated episodes and missing results.
+The performance columns require this package's session UI patch. Episode scores are session feedback, not scores for the individual action that stores them. Missing feedback is unavailable, not zero. The evaluated target comes from that feedback and should match the action target; a mismatch indicates a run, scoring, or import problem. When comparing ADMs, use the same scenario/target cases and account for repeated episodes and missing results.
 
 Saved views provide filter shortcuts. MLflow still groups the current page of traces into sessions, so a session can span pages and the footer counts traces.
