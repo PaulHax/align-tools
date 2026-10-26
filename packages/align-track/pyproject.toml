@@ -44,6 +44,7 @@ fallback-version = "0.0.0"
 
 [project.scripts]
 list-runs = "align_track.list_runs:main"
+experiments = "align_track.sqlite_cli:main"
 
 [tool.uv.sources]
 align-utils = { workspace = true }
