@@ -8,10 +8,12 @@ import subprocess
 import sys
 from pathlib import Path
 
+import mlflow
 import pytest
 import yaml
 from click.testing import CliRunner
 from mlflow import MlflowClient
+from mlflow.entities import AssessmentSource, Expectation, Feedback
 from mlflow.exceptions import MlflowException
 from mlflow.tracing.client import TracingClient
 from open_world_fixtures import SCENARIO, completion_line, episode_records, write_run
@@ -777,3 +779,81 @@ def test_older_trace_format_is_reimported_with_source_records(tmp_path, local_st
         "input": root_span(traces[0]).inputs["source"],
         **root_span(traces[0]).outputs["source"],
     } == records[0]
+
+
+@pytest.mark.parametrize(
+    "kind", ["wrong-source", "wrong-session", "nonnumeric", "boolean", "expectation"]
+)
+def test_late_score_import_ignores_unrelated_assessments(tmp_path, local_store, kind):
+    source = write_run(tmp_path / "source", episode_records(MERIT_LOW)[:1])
+    tracking_uri, experiment_id = local_store
+    assert sync_run(experiment_id, source).error is None
+    trace = logged_traces(tracking_uri)[0]
+    metadata = {"mlflow.trace.session": session(trace)}
+    if kind == "wrong-session":
+        metadata["mlflow.trace.session"] = "other-session"
+    assessment_type = Expectation if kind == "expectation" else Feedback
+    unrelated = mlflow.log_assessment(
+        trace_id=trace.info.trace_id,
+        assessment=assessment_type(
+            name="ta3_session_alignment_score",
+            value="unavailable"
+            if kind == "nonnumeric"
+            else True
+            if kind == "boolean"
+            else 0.1,
+            source=AssessmentSource(
+                source_type="HUMAN" if kind == "wrong-source" else "CODE",
+                source_id="reviewer"
+                if kind == "wrong-source"
+                else "raw_align_system.log",
+            ),
+            metadata=metadata,
+        ),
+    )
+    (source / "raw_align_system.log").write_text(completion_line(MERIT_LOW, 0.83))
+    imported = sync_run(experiment_id, source)
+    assert imported.error is None
+    assert (imported.new_steps, imported.new_scores) == (0, 1)
+    after = logged_traces(tracking_uri)[0]
+    assert after.info.trace_id == trace.info.trace_id
+    assert len(after.info.assessments) == 2
+    assert any(
+        a.assessment_id == unrelated.assessment_id for a in after.info.assessments
+    )
+    assert any(a.value == 0.83 for a in after.info.assessments)
+    repeated = sync_run(experiment_id, source)
+    assert repeated.error is None
+    assert (repeated.new_steps, repeated.new_scores) == (0, 0)
+    assert len(logged_traces(tracking_uri)[0].info.assessments) == 2
+
+
+def test_sync_preserves_invalidated_recorded_score(tmp_path, local_store):
+    source = write_run(
+        tmp_path / "source",
+        episode_records(MERIT_LOW)[:1],
+        [completion_line(MERIT_LOW, 0.83)],
+    )
+    tracking_uri, experiment_id = local_store
+    assert sync_run(experiment_id, source).error is None
+    trace = logged_traces(tracking_uri)[0]
+    assessment = trace.info.assessments[0]
+    mlflow.override_feedback(
+        trace_id=trace.info.trace_id,
+        assessment_id=assessment.assessment_id,
+        value=0.2,
+        source=AssessmentSource(source_type="HUMAN", source_id="reviewer"),
+    )
+
+    repeated = sync_run(experiment_id, source)
+    assert repeated.error is None
+    assert (repeated.new_steps, repeated.new_scores) == (0, 0)
+    after = logged_traces(tracking_uri)[0]
+    assert len(after.info.assessments) == 2
+    original = next(
+        a for a in after.info.assessments if a.assessment_id == assessment.assessment_id
+    )
+    assert original.valid is False
+    run = MlflowClient(tracking_uri=tracking_uri).search_runs([experiment_id])[0]
+    assert run.data.metrics["scored_episode_count"] == 0
+    assert run.data.metrics["missing_score_count"] == 1

@@ -65,6 +65,8 @@ def build(directory: Path) -> Path:
     frontend = source / "mlflow/server/js"
     ready = work / "ready"
     if not ready.exists():
+        if work.exists():
+            shutil.rmtree(work)
         with tarfile.open(archive) as bundle:
             prefix = f"mlflow-{VERSION}/mlflow/server/js/"
             members = [

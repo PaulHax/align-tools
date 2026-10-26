@@ -9,6 +9,7 @@ from mlflow import MlflowClient
 from mlflow.entities import AssessmentSource, Trace
 from mlflow.exceptions import MlflowException
 
+from .assessments import is_recorded_session_score
 from .traces import (
     RECORD_INDEX_TAG,
     RUN_KEY_TAG,
@@ -80,7 +81,13 @@ def _delete_incomplete(experiment_id: str, trace_ids: List[str]) -> None:
 
 
 def has_session_score(trace: Trace) -> bool:
-    return any(a.name == SCORE_ASSESSMENT for a in trace.info.assessments or [])
+    session = trace.info.trace_metadata.get(SESSION_METADATA_KEY)
+    if not session:
+        return False
+    return any(
+        is_recorded_session_score(assessment, session)
+        for assessment in trace.info.assessments or []
+    )
 
 
 def sync_source_version(traces: Iterable[Trace], version: Optional[str]) -> None:

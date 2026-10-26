@@ -4,11 +4,11 @@ import math
 import time
 from typing import Dict, Iterable, cast
 
-from align_utils.open_world import RAW_LOG_FILE
 from mlflow import MlflowClient
-from mlflow.entities import Feedback, Metric, Trace
+from mlflow.entities import Metric, Trace
 
-from .traces import SCORE_ASSESSMENT, SESSION_METADATA_KEY
+from .assessments import is_recorded_session_score
+from .traces import SESSION_METADATA_KEY
 
 
 def episode_metrics(traces: Iterable[Trace]) -> Dict[str, float]:
@@ -28,15 +28,8 @@ def episode_metrics(traces: Iterable[Trace]) -> Dict[str, float]:
         scores = [
             assessment
             for assessment in trace.info.assessments or []
-            if isinstance(assessment, Feedback)
-            and assessment.name == SCORE_ASSESSMENT
+            if is_recorded_session_score(assessment, session)
             and assessment.valid is not False
-            and assessment.source.source_type == "CODE"
-            and assessment.source.source_id == RAW_LOG_FILE
-            and (assessment.metadata or {}).get(SESSION_METADATA_KEY) == session
-            and not isinstance(assessment.value, bool)
-            and isinstance(assessment.value, (int, float))
-            and math.isfinite(assessment.value)
         ]
         if not scores:
             continue
