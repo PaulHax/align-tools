@@ -59,6 +59,61 @@ If a saved timing snapshot cannot be recovered, imports warn and new actions res
 - **`MLFLOW_EXPERIMENT_NAME`:** experiment to receive the runs; defaults to `align-system open world`. Keep `Open World Phase 2` to compare with existing results; another name creates a separate collection.
 - **Local storage:** an absolute `sqlite:////path/to/mlflow.db` URI prepares adjacent artifacts, enables WAL, and refreshes query statistics after ingestion. **HTTP imports skip statistics refresh**; see the [server command](SERVER.md#slow-sqlite-trace-search).
 
+## Comparing ADMs
+
+Keep invocations that answer the same evaluation question in one experiment. For example:
+
+```text
+Experiment: Open World Phase 2
+  Run: ADM A, Qwen, invocation 3813
+    Session: desert, merit 0.0, episode 1
+    Session: desert, merit 0.2, episode 2
+  Run: ADM B, Qwen, invocation 3817
+    Session: desert, merit 0.0, episode 1
+    Session: desert, merit 0.2, episode 2
+```
+
+A run is one align-system invocation, usually one Hydra call with one ADM and model. Its sessions contain the scenario and alignment-target variations. Each action is a trace within its session. A Hydra multirun that produces separate invocation folders produces separate MLflow runs.
+
+This follows [MLflow's tracking concepts](https://mlflow.org/docs/latest/ml/tracking/): a run records an execution, and an experiment groups comparable runs. A new benchmark, evaluation protocol, or study can justify a separate experiment. Creating an experiment for every invocation makes routine comparisons harder to browse.
+
+Use **ADM performance** in the [saved views](SESSION-UI.md#saved-views) for one row per episode, including the recorded TA3 score and its evaluated target. Match scenario and target across invocations before comparing ADMs. The target recorded on an action and the target reported by TA3 are separate evidence; a mismatch needs investigation before treating results as a comparison of the requested targets.
+
+Use **Run:** views to focus on one invocation and **Session comparison** to return to the experiment-wide view. These are filters within the same experiment. They do not copy results or create another experiment.
+
+### Run summary scores
+
+In MLflow, switch to **Model training**, open **Runs**, select the invocations,
+and choose **Compare**. The Metrics section shows their means and coverage side
+by side. In the comparison chart, choose `ta3_alignment_mean` as the metric.
+
+Successful imports refresh these metrics on the invocation's MLflow run. Select
+runs in MLflow's run table to compare their metrics:
+
+| Metric | Meaning |
+| --- | --- |
+| `ta3_alignment_mean` | Arithmetic mean of the recorded TA3 scores, with equal weight per scored episode |
+| `episode_count` | Number of imported episodes |
+| `scored_episode_count` | Episodes with a valid recorded TA3 score |
+| `missing_score_count` | Imported episodes without a valid recorded TA3 score |
+| `target_mismatch_count` | Scored episodes whose nonempty requested and evaluated targets differ |
+
+An episode with no score is excluded from the mean, not treated as zero. A new
+run without scores has no mean metric. If every score is later removed or
+invalidated, refreshing sets the current mean to `NaN` (unavailable), preserving
+the historical metrics. Unaligned episodes without a requested target are not
+counted as mismatches. Mismatched outcomes remain in the recorded-score mean;
+inspect the mismatch count before interpreting a run as evaluating its requested
+targets.
+The mismatch count compares recorded action and assessment metadata only; zero
+does not establish which target the ADM actually used internally.
+
+The summary reads persisted episode assessments, so a temporarily missing source
+log does not erase recorded scores. Repeated imports leave unchanged metric
+history untouched. Run means are comparable only for the same scenario/target
+mix and comparable score coverage; the importer does not adjust for different
+case mixes or infer missing outcomes.
+
 ## Results and reruns
 
 - **`Import successful`:** counts new traces and scores; zero means nothing new was added.

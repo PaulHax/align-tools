@@ -26,6 +26,7 @@ from .store import (
     logged_steps,
     sync_source_version,
 )
+from .summaries import refresh_run_summary
 from .timing import UNKNOWN_TIMING_SOURCE
 from .traces import run_key, run_label, session_scores, step_traces
 
@@ -147,6 +148,7 @@ def sync_run(
         ]
         for score in new_scores:
             log_session_score(trace_ids[score.first_record_index], score)
+        refresh_run_summary(client, source_run_id)
         MlflowClient().set_terminated(source_run_id)
     except (MlflowException, OSError, ValueError) as error:
         return SyncResult(

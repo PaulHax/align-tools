@@ -1,8 +1,8 @@
 """Install the example views using MLflow 3.17.2's internal saved-view format.
 
 This is an optional UI recipe, independent of ingestion. It updates only the
-named presets and, with --by-adm, comparison views for recorded ADM labels.
-The server version must match the verified format.
+named presets and optional comparison views for recorded ADM labels and source
+runs. The server version must match the verified format.
 """
 
 import argparse
@@ -44,6 +44,38 @@ def adm_views(client: MlflowClient, experiment_id: str, comparison: dict) -> lis
     ]
 
 
+def run_views(client: MlflowClient, experiment_id: str, comparison: dict) -> list[dict]:
+    labels: dict[str, str] = {}
+    token = None
+    while True:
+        page = client.search_runs([experiment_id], max_results=1000, page_token=token)
+        for run in page:
+            if key := run.data.tags.get("align.run_key"):
+                labels.setdefault(key, run.data.tags.get("mlflow.runName") or key)
+        token = page.token
+        if not token:
+            break
+    return [
+        {
+            "id": "open-world-run-" + hashlib.sha256(key.encode()).hexdigest()[:16],
+            "name": f"Run: {label} [{key}]",
+            "state": {
+                **comparison,
+                "single": {**comparison["single"], "startTimeLabel": "ALL"},
+                "filters": [
+                    {
+                        "field": "tag",
+                        "key": "align.run_key",
+                        "operator": "=",
+                        "value": key,
+                    }
+                ],
+            },
+        }
+        for key, label in sorted(labels.items(), key=lambda item: (item[1], item[0]))
+    ]
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--tracking-uri", required=True)
@@ -53,6 +85,11 @@ def main() -> None:
         "--by-adm",
         action="store_true",
         help="Also create a Session comparison view for each recorded run tag 'adm'",
+    )
+    parser.add_argument(
+        "--by-run",
+        action="store_true",
+        help="Also create a Session comparison view for each source run identity",
     )
     args = parser.parse_args()
     ui_url = args.ui_url.rstrip("/")
@@ -75,13 +112,16 @@ def main() -> None:
             saved[key] = json.loads(value)
 
     views = json.loads(Path(__file__).with_name("views.json").read_text())
-    if args.by_adm:
+    if args.by_adm or args.by_run:
         comparison = next(
             view["state"]
             for view in views
             if view["id"] == "open-world-session-comparison"
         )
-        views.extend(adm_views(client, experiment.experiment_id, comparison))
+        if args.by_adm:
+            views.extend(adm_views(client, experiment.experiment_id, comparison))
+        if args.by_run:
+            views.extend(run_views(client, experiment.experiment_id, comparison))
     destinations = []
     for view in views:
         matches = [key for key, value in saved.items() if value["name"] == view["name"]]
