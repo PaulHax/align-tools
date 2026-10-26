@@ -60,5 +60,35 @@
         "tag:run": true
       }
     }
+  },
+  {
+    "id": "open-world-adm-performance",
+    "name": "ADM performance",
+    "state": {
+      "single": {
+        "startTimeLabel": "ALL",
+        "groupBy": "session",
+        "cols": "session,tag:adm,tag:llm,tag:run,tag:scenario_id,tag:alignment_target_id,session:ta3_alignment_score,session:ta3_evaluated_target,tag:episode"
+      },
+      "multi": {},
+      "filters": [
+        {
+          "field": "tag",
+          "operator": "=",
+          "value": "1",
+          "key": "step"
+        }
+      ],
+      "customColumns": {
+        "tag:adm": true,
+        "tag:llm": true,
+        "tag:run": true,
+        "tag:scenario_id": true,
+        "tag:alignment_target_id": true,
+        "session:ta3_alignment_score": true,
+        "session:ta3_evaluated_target": true,
+        "tag:episode": true
+      }
+    }
   }
 ]

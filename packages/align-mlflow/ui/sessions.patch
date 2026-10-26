@@ -1,3 +1,299 @@
+--- a/mlflow/server/js/src/experiment-tracking/components/evaluations/RunViewEvaluationsTab.tsx
++++ b/mlflow/server/js/src/experiment-tracking/components/evaluations/RunViewEvaluationsTab.tsx
+@@ -1,6 +1,6 @@
+ import type { RowSelectionState } from '@tanstack/react-table';
+ import { isNil } from 'lodash';
+-import { ParagraphSkeleton, Typography, Empty, Drawer, useDesignSystemTheme } from '@databricks/design-system';
++import { Button, ParagraphSkeleton, Typography, Empty, Drawer, useDesignSystemTheme } from '@databricks/design-system';
+ import { type KeyValueEntity } from '../../../common/types';
+ import { useCompareToRunUuid } from './hooks/useCompareToRunUuid';
+ import Utils from '@mlflow/mlflow/src/common/utils/Utils';
+@@ -74,6 +74,19 @@
+ import { MLFLOW_RUN_TYPE_TAG, MLFLOW_RUN_TYPE_VALUE_TEST } from '../../constants';
+ import { useScorerDescriptions } from '../../pages/experiment-scorers/hooks/useScorerDescriptions';
+ import { RunViewEvaluationAnalyzeButton } from './RunViewEvaluationAnalyzeButton';
++import { CompareSessionsButton } from '../../pages/experiment-chat-sessions/CompareSessionsButton';
++import {
++  OpenWorldTraceFilters,
++  OPEN_WORLD_TAG_COLUMNS,
++  getOpenWorldFilterValue,
++  setOpenWorldFilterValue,
++} from '@databricks/web-shared/genai-traces-table/components/OpenWorldTraceFilters';
++import { createTagColumnId } from '@databricks/web-shared/genai-traces-table/utils/TraceUtils';
++import {
++  type TableFilter,
++  FilterOperator,
++  TracesTableColumnGroup,
++} from '@databricks/web-shared/genai-traces-table/types';
+ 
+ const ContextProviders = ({
+   children,
+@@ -149,10 +162,23 @@
+     scorerDescriptionsByName,
+   });
+ 
++  const isOpenWorld = evaluatedTraces
++    .concat(otherEvaluatedTraces)
++    .some((trace) => Boolean(trace.traceInfo?.tags?.['scenario_id']));
++
+   // Regression-test view: drop the State column and relabel trace-id to "Test".
+   // Column order is applied by the table body's regression-test mode.
+   const displayColumns = useMemo(() => {
+     if (!isRegressionTest) {
++      if (isOpenWorld) {
++        const details = OPEN_WORLD_TAG_COLUMNS.map(({ key, label }) => ({
++          id: createTagColumnId(key),
++          label,
++          type: TracesTableColumnType.TRACE_INFO,
++          group: TracesTableColumnGroup.TAG,
++        }));
++        return [...details, ...allColumns.filter((column) => !details.some((detail) => detail.id === column.id))];
++      }
+       return allColumns;
+     }
+     return allColumns
+@@ -168,7 +194,7 @@
+             }
+           : column,
+       );
+-  }, [allColumns, intl, isRegressionTest]);
++  }, [allColumns, intl, isRegressionTest, isOpenWorld]);
+ 
+   // Setup table states
+   // Row selection state - lifted to provide shared state via context
+@@ -177,6 +203,16 @@
+ 
+   const [searchQuery, setSearchQuery] = useState<string>('');
+   const [filters, setFilters] = useFilters();
++  const allowOpenWorldCaseMatching =
++    !searchQuery &&
++    filters.every(
++      (filter) =>
++        filter.column === TracesTableColumnGroup.TAG &&
++        ['scenario_id', 'alignment_target_id'].includes(filter.key ?? '') &&
++        filter.operator === FilterOperator.EQUALS,
++    );
++  const preserveCompleteComparison = Boolean(compareToRunUuid && allowOpenWorldCaseMatching);
++  const queryFilters = preserveCompleteComparison ? undefined : filters;
+   const getRunColor = useGetExperimentRunColor();
+   const queryClient = useQueryClient();
+ 
+@@ -200,6 +236,16 @@
+         );
+       }
+ 
++      if (isOpenWorld) {
++        const detailIds = OPEN_WORLD_TAG_COLUMNS.map(({ key }) => createTagColumnId(key));
++        return columns.filter(
++          (column) =>
++            detailIds.includes(column.id) ||
++            column.id === SESSION_COLUMN_ID ||
++            column.type === TracesTableColumnType.ASSESSMENT,
++        );
++      }
++
+       return columns.filter(
+         (col) =>
+           col.type === TracesTableColumnType.ASSESSMENT ||
+@@ -213,7 +259,7 @@
+             [SESSION_COLUMN_ID, SIMULATION_GOAL_COLUMN_ID, SIMULATION_PERSONA_COLUMN_ID].includes(col.id)),
+       );
+     },
+-    [evaluatedTraces, otherEvaluatedTraces, isRegressionTest],
++    [evaluatedTraces, otherEvaluatedTraces, isRegressionTest, isOpenWorld],
+   );
+ 
+   const { selectedColumns, toggleColumns, setSelectedColumns } = useSelectedColumns(
+@@ -227,7 +273,7 @@
+ 
+   // Get traces data
+   const {
+-    data: traceInfos,
++    data: unfilteredTraceInfos,
+     isLoading: traceInfosLoading,
+     isFetching: traceInfosFetching,
+     error: traceInfosError,
+@@ -239,25 +285,46 @@
+     locations: traceLocations,
+     currentRunDisplayName: runDisplayName,
+     searchQuery,
+-    filters,
++    filters: queryFilters,
+     runUuid,
+     tableSort,
+     disabled: isQueryDisabled,
+     filterByAssessmentSourceRun: true,
+     // Disable pagination in comparison mode — both runs need complete data to join on inputs
+     enablePagination: isNil(compareToRunUuid),
++    limit: compareToRunUuid ? Infinity : undefined,
+   });
+ 
+   const {
+-    data: compareToRunData,
++    data: unfilteredCompareToRunData,
+     displayName: compareToRunDisplayName,
+     loading: compareToRunLoading,
++    fetching: compareToRunFetching,
++    refetch: refetchCompareToRun,
++    error: compareToRunError,
+   } = useGetCompareToData({
+     experimentId,
+     traceLocations,
+     compareToRunUuid,
+     isQueryDisabled,
+-  });
++    filters: queryFilters,
++    searchQuery,
++  });
++
++  const [traceInfos, compareToRunData] = useMemo(() => {
++    const filterTraces = (traces: ModelTraceInfoV3[] | undefined) =>
++      preserveCompleteComparison
++        ? traces?.filter((trace) => filters.every((filter) => trace.tags?.[filter.key ?? ''] === filter.value))
++        : traces;
++    return [filterTraces(unfilteredTraceInfos), filterTraces(unfilteredCompareToRunData)];
++  }, [preserveCompleteComparison, filters, unfilteredTraceInfos, unfilteredCompareToRunData]);
++  const openWorldComparisonContext = useMemo(
++    () =>
++      preserveCompleteComparison
++        ? { current: unfilteredTraceInfos ?? [], other: unfilteredCompareToRunData ?? [] }
++        : undefined,
++    [preserveCompleteComparison, unfilteredTraceInfos, unfilteredCompareToRunData],
++  );
+ 
+   // Handler for toggling session grouping
+   const onToggleSessionGrouping = useCallback(() => {
+@@ -321,7 +388,15 @@
+     };
+   }, [deleteTracesAction, showEditTagsModalForTrace, EditTagsModal]);
+ 
+-  const isTableLoading = traceInfosLoading || compareToRunLoading;
++  const isTableLoading =
++    traceInfosLoading ||
++    compareToRunLoading ||
++    Boolean(compareToRunUuid && (traceInfosFetching || compareToRunFetching));
++  const refreshTraces = () => {
++    refetchMlflowTraces?.();
++    if (compareToRunUuid) refetchCompareToRun?.();
++    queryClient.invalidateQueries(['open-world-trace-filter-options']);
++  };
+ 
+   const selectedRunColor = getRunColor(runUuid);
+   const compareToRunColor = compareToRunUuid ? getRunColor(compareToRunUuid) : undefined;
+@@ -411,6 +486,33 @@
+                 flexDirection: 'column',
+               }}
+             >
++              <OpenWorldTraceFilters
++                locations={traceLocations}
++                runUuids={[runUuid, ...(compareToRunUuid ? [compareToRunUuid] : [])]}
++                scenario={getOpenWorldFilterValue(filters, 'scenario_id')}
++                alignmentTarget={getOpenWorldFilterValue(filters, 'alignment_target_id')}
++                onScenarioChange={(value) => setFilters(setOpenWorldFilterValue(filters, 'scenario_id', value))}
++                onAlignmentTargetChange={(value) =>
++                  setFilters(setOpenWorldFilterValue(filters, 'alignment_target_id', value))
++                }
++              >
++                <CompareSessionsButton experimentId={experimentId} />
++                {isOpenWorld && (
++                  <Button
++                    componentId="mlflow.open-world.episode-details-columns"
++                    onClick={() => setSelectedColumns(defaultSelectedColumns(displayColumns))}
++                  >
++                    Episode details
++                  </Button>
++                )}
++              </OpenWorldTraceFilters>
++              {isOpenWorld && compareToRunUuid && (
++                <Typography.Text css={{ marginBottom: theme.spacing.sm }}>
++                  {allowOpenWorldCaseMatching
++                    ? 'Episodes are matched by scenario and alignment target. Action traces can differ between ADMs.'
++                    : 'Clear text search and filters other than Scenario and Alignment target to match complete episodes.'}
++                </Typography.Text>
++              )}
+               <GenAITracesTableToolbar
+                 experimentId={experimentId}
+                 searchQuery={searchQuery}
+@@ -429,8 +531,8 @@
+                 toggleColumns={toggleColumns}
+                 traceInfos={traceInfos}
+                 tableFilterOptions={tableFilterOptions}
+-                onRefresh={showRefreshButton ? refetchMlflowTraces : undefined}
+-                isRefreshing={showRefreshButton ? traceInfosFetching : undefined}
++                onRefresh={showRefreshButton ? refreshTraces : undefined}
++                isRefreshing={showRefreshButton ? traceInfosFetching || compareToRunFetching : undefined}
+                 isGroupedBySession={isGroupedBySession}
+                 onToggleSessionGrouping={onToggleSessionGrouping}
+                 addons={canUseAssistant ? <RunViewEvaluationAnalyzeButton runUuid={runUuid} /> : undefined}
+@@ -439,9 +541,9 @@
+                 // prettier-ignore
+                 isTableLoading ? (
+                 <LoadingSkeleton />
+-              ) : traceInfosError ? (
++              ) : traceInfosError || compareToRunError ? (
+                 <div>
+-                  <pre>{String(traceInfosError)}</pre>
++                  <pre>{String(traceInfosError || compareToRunError)}</pre>
+                 </div>
+               ) : (
+                 <ContextProviders makeHtmlFromMarkdown={makeHtmlFromMarkdown} experimentId={experimentId}>
+@@ -461,9 +563,11 @@
+                     tableSort={tableSort}
+                     currentTraceInfoV3={traceInfos || []}
+                     compareToTraceInfoV3={compareToRunData}
++                    openWorldComparisonContext={openWorldComparisonContext}
+                     onTraceTagsEdit={showEditTagsModalForTrace}
+                     isTableLoading={isTableLoading}
+                     isGroupedBySession={isGroupedBySession}
++                    allowOpenWorldCaseMatching={allowOpenWorldCaseMatching && !isTableLoading && !traceInfosError && !compareToRunError}
+                     fetchNextPage={fetchNextPage}
+                     hasNextPage={hasNextPage}
+                     isFetchingNextPage={isFetchingNextPage}
+@@ -570,19 +674,33 @@
+   traceLocations: ModelTraceSearchLocation[];
+   compareToRunUuid: string | undefined;
+   isQueryDisabled?: boolean;
++  filters?: TableFilter[];
++  searchQuery?: string;
+ }): {
+   data: ModelTraceInfoV3[] | undefined;
+   displayName: string;
+   loading: boolean;
++  fetching: boolean;
++  refetch?: () => void;
++  error?: Error;
+ } => {
+-  const { compareToRunUuid, experimentId, traceLocations, isQueryDisabled } = params;
+-  const { data: traceInfos, isLoading: traceInfosLoading } = useSearchMlflowTraces({
++  const { compareToRunUuid, experimentId, traceLocations, isQueryDisabled, filters, searchQuery } = params;
++  const {
++    data: traceInfos,
++    isLoading: traceInfosLoading,
++    isFetching,
++    refetchMlflowTraces,
++    error,
++  } = useSearchMlflowTraces({
+     locations: traceLocations,
+     currentRunDisplayName: undefined,
+     runUuid: compareToRunUuid,
+     disabled: isNil(compareToRunUuid) || isQueryDisabled,
+     filterByAssessmentSourceRun: true,
+     enablePagination: false,
++    limit: Infinity,
++    filters,
++    searchQuery,
+   });
+ 
+   const { data: runData, loading: runDetailsLoading } = useSearchRunsQuery({
+@@ -595,5 +713,8 @@
+     data: traceInfos,
+     displayName: Utils.getRunDisplayName(runData?.info, compareToRunUuid),
+     loading: traceInfosLoading || runDetailsLoading,
++    fetching: isFetching,
++    refetch: refetchMlflowTraces,
++    error,
+   };
+ };
 --- /dev/null
 +++ b/mlflow/server/js/src/experiment-tracking/components/experiment-page/components/traces-v3/TracesV3Toolbar.test.tsx
 @@ -0,0 +1,28 @@
@@ -111,7 +407,94 @@
        // Seed the per-experiment order store (version 1) with Output moved before Input, then assert
 --- a/mlflow/server/js/src/experiment-tracking/components/experiment-page/components/traces-v4/components/TracesV4PageContent.tsx
 +++ b/mlflow/server/js/src/experiment-tracking/components/experiment-page/components/traces-v4/components/TracesV4PageContent.tsx
-@@ -101,12 +101,23 @@
+@@ -1,9 +1,10 @@
+ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+-import { type InputRef, ColumnSplitIcon, useDesignSystemTheme } from '@databricks/design-system';
++import { type InputRef, Button, ColumnSplitIcon, useDesignSystemTheme } from '@databricks/design-system';
+ import { useIntl, FormattedMessage } from 'react-intl';
+ import {
+   createTraceV4LongIdentifier,
+   ModelTraceExplorerContextProvider,
++  SESSION_ID_METADATA_KEY,
+   type ModelTraceInfoV3,
+ } from '@databricks/web-shared/model-trace-explorer';
+ import {
+@@ -11,9 +12,12 @@
+   GenAITracesTableProvider,
+   MLFLOW_SOURCE_RUN_KEY,
+   RunName,
++  createTraceLocationForExperiment,
+ } from '@databricks/web-shared/genai-traces-table';
++import { OpenWorldTraceFilters } from '@databricks/web-shared/genai-traces-table/components/OpenWorldTraceFilters';
+ import {
+   EMPTY_FILTER_MODEL,
++  FilterOp,
+   TRACE_COLUMN_IDS,
+   TracesErrorAlert,
+   TracesTableView,
+@@ -46,6 +50,7 @@
+ import { IssueDetectionModal } from '../../traces-v3/IssueDetectionModal';
+ import { TracesV4SavedViewsButton, useTracesV4SavedViews } from './TracesV4SavedViews';
+ import { type TraceColumnHeaderAction } from '@databricks/web-shared/traces-table';
++import { getSessionComparisonRoute } from '../../../../../pages/experiment-chat-sessions/CompareSessionsButton';
+ 
+ interface TracesV4PageContentProps {
+   experimentId: string;
+@@ -91,6 +96,53 @@
+     flags,
+   } = controller;
+   const { density, setDensity } = useTracesV4Density(experimentId);
++  const [sessionSelection, setSessionSelection] = useState({ experimentId, ids: new Set<string>() });
++  const selectedSessionIds = useMemo(
++    () => (sessionSelection.experimentId === experimentId ? sessionSelection.ids : new Set<string>()),
++    [experimentId, sessionSelection],
++  );
++  const sessionPageReady = !page.isLoading && !page.isFetching && !page.isPreviousData;
++  const visibleSessionIds = useMemo(
++    () =>
++      new Set(
++        sessionPageReady ? page.traces.flatMap((trace) => trace.trace_metadata?.[SESSION_ID_METADATA_KEY] || []) : [],
++      ),
++    [sessionPageReady, page.traces],
++  );
++  const visibleSelectedSessionCount = [...visibleSessionIds].filter((id) => selectedSessionIds.has(id)).length;
++  const toggleSessionSelection = useCallback(
++    (sessionId: string) => {
++      if (!sessionPageReady) return;
++      setSessionSelection((current) => {
++        const ids = new Set(current.experimentId === experimentId ? current.ids : []);
++        if (ids.has(sessionId)) ids.delete(sessionId);
++        else ids.add(sessionId);
++        return { experimentId, ids };
++      });
++    },
++    [experimentId, sessionPageReady],
++  );
++  const toggleVisibleSessions = () => {
++    if (!sessionPageReady) return;
++    const remove = visibleSelectedSessionCount === visibleSessionIds.size;
++    setSessionSelection((current) => {
++      const ids = new Set(current.experimentId === experimentId ? current.ids : []);
++      for (const id of visibleSessionIds) {
++        if (remove) ids.delete(id);
++        else ids.add(id);
++      }
++      return { experimentId, ids };
++    });
++  };
++  const traceLocations = useMemo(() => [createTraceLocationForExperiment(experimentId)], [experimentId]);
++  const getEpisodeFilter = (key: string) =>
++    url.tagFilters.find((filter) => filter.key === key)?.value ??
++    filterModel.find((filter) => filter.field === 'tag' && filter.key === key && filter.operator === FilterOp.EQUALS)
++      ?.value;
++  const setEpisodeFilter = (key: string, value: string | undefined) => {
++    controller.setFilterModel(filterModel.filter((filter) => filter.field !== 'tag' || filter.key !== key));
++    url.setTagFilters([...url.tagFilters.filter((filter) => filter.key !== key), ...(value ? [{ key, value }] : [])]);
++  };
+ 
+   // One "Reset to defaults" in the column selector clears standard, assessment, and custom overrides
+   // plus the reordered column order.
+@@ -101,12 +153,25 @@
      columnOrder.reset();
    }, [columns, assessments, customColumns, columnOrder]);
  
@@ -125,6 +508,7 @@
 +      ...assessments.visibleIds,
 +      ...customColumns.tags.visibleIds,
 +      ...customColumns.metadata.visibleIds,
++      ...customColumns.sessions.visibleIds,
 +    ]);
      return columnOrder.columnOrder.filter((id) => visible.has(id));
 -  }, [columnOrder.columnOrder, columns.visibleColumns, assessments.visibleIds]);
@@ -134,10 +518,271 @@
 +    assessments.visibleIds,
 +    customColumns.tags.visibleIds,
 +    customColumns.metadata.visibleIds,
++    customColumns.sessions.visibleIds,
 +  ]);
  
    // Saved views (dirty model): the hook reads/writes view tags, restores a view's columns + order into
    // the user's own store on open, and reports whether the live table has diverged (dirty) so the Views
+@@ -344,7 +409,7 @@
+     onSort: url.setSort,
+     density,
+     onDensityChange: setDensity,
+-    selectionCount: bulk.selected.size,
++    selectionCount: controller.isGroupedBySession ? 0 : bulk.selected.size,
+     onBulkDelete: openDelete,
+     isRefreshing: page.isFetching && !page.isLoading,
+     experimentId,
+@@ -400,6 +465,40 @@
+             marginBottom: -theme.spacing.sm,
+           }}
+         >
++          <OpenWorldTraceFilters
++            locations={traceLocations}
++            scenario={getEpisodeFilter('scenario_id')}
++            alignmentTarget={getEpisodeFilter('alignment_target_id')}
++            onScenarioChange={(value) => setEpisodeFilter('scenario_id', value)}
++            onAlignmentTargetChange={(value) => setEpisodeFilter('alignment_target_id', value)}
++          />
++          {controller.isGroupedBySession && (
++            <div css={{ display: 'flex', alignItems: 'center', gap: theme.spacing.sm }}>
++              <Button
++                componentId="mlflow.traces-v4.compare-selected-sessions"
++                type="primary"
++                disabled={selectedSessionIds.size < 2}
++                onClick={() => navigate(getSessionComparisonRoute(experimentId, [...selectedSessionIds]))}
++              >
++                Compare selected sessions ({selectedSessionIds.size})
++              </Button>
++              {selectedSessionIds.size > 0 ? (
++                <>
++                  <Button
++                    componentId="mlflow.traces-v4.clear-selected-sessions"
++                    onClick={() => setSessionSelection({ experimentId, ids: new Set() })}
++                  >
++                    Clear session selection
++                  </Button>
++                  {selectedSessionIds.size > visibleSelectedSessionCount && (
++                    <span>{selectedSessionIds.size - visibleSelectedSessionCount} selected outside this page</span>
++                  )}
++                </>
++              ) : (
++                <span>Check session rows to compare. Selections stay checked across filters and pages.</span>
++              )}
++            </div>
++          )}
+           <TracesTableView
+             viewState={viewState}
+             // Table
+@@ -416,15 +515,25 @@
+             onTraceSelected={handleTraceSelected}
+             selectedTraceId={url.traceId}
+             selectedForBulk={bulk.selected}
+-            isAllOnPageSelected={bulk.isAllVisibleChecked}
+-            isSomeOnPageSelected={bulk.isSomeVisibleChecked}
++            isAllOnPageSelected={
++              controller.isGroupedBySession
++                ? visibleSessionIds.size > 0 && visibleSelectedSessionCount === visibleSessionIds.size
++                : bulk.isAllVisibleChecked
++            }
++            isSomeOnPageSelected={
++              controller.isGroupedBySession
++                ? visibleSelectedSessionCount > 0 && visibleSelectedSessionCount < visibleSessionIds.size
++                : bulk.isSomeVisibleChecked
++            }
++            selectedSessionIds={controller.isGroupedBySession ? selectedSessionIds : undefined}
++            onToggleSessionSelection={controller.isGroupedBySession ? toggleSessionSelection : undefined}
+             onToggleBulkRow={bulk.toggle}
+             // Session-level select needs the whole session's traces; when a grouped page spans
+             // multiple pages the off-page traces aren't loaded, so disable it (mirrors universe).
+             onToggleBulkRows={
+               controller.isGroupedBySession && (page.hasNext || page.hasPrev) ? undefined : bulk.toggleMany
+             }
+-            onToggleBulkAll={bulk.toggleAll}
++            onToggleBulkAll={controller.isGroupedBySession ? toggleVisibleSessions : bulk.toggleAll}
+             sort={url.sort}
+             dir={url.dir}
+             onSort={url.setSort}
+--- /dev/null
++++ b/mlflow/server/js/src/experiment-tracking/components/experiment-page/components/traces-v4/components/TracesV4SessionResults.test.tsx
+@@ -0,0 +1,178 @@
++import { describe, expect, jest, test } from '@jest/globals';
++import { fireEvent, screen, within } from '@testing-library/react';
++import { useState } from 'react';
++import { TracesTable, type TracesTableProps } from '@databricks/web-shared/traces-table/TracesTable';
++import { renderWithProviders } from '@databricks/web-shared/traces-table/test-utils/renderWithProviders';
++import { SESSION_ID_METADATA_KEY, type ModelTraceInfoV3 } from '@databricks/web-shared/model-trace-explorer';
++import { useTracesV4CustomColumns } from '../hooks/useTracesV4CustomColumns';
++import { SESSION_SCORE_COLUMN_ID, SESSION_TARGET_COLUMN_ID } from '../utils/customColumns';
++import { makeFeedbackAssessment, makeSessionTrace } from '../test-utils/mockTraces';
++
++const resultTrace = (session: string, value?: number, evaluatedTarget = 'evaluated-target'): ModelTraceInfoV3 => ({
++  ...makeSessionTrace(`trace-${session}`, session),
++  tags: { alignment_target_id: 'requested-target', adm: 'regression', step: '1' },
++  assessments:
++    value === undefined
++      ? []
++      : [
++          makeFeedbackAssessment('ta3_session_alignment_score', value, {
++            source: { source_type: 'CODE', source_id: 'raw_align_system.log' },
++            metadata: { [SESSION_ID_METADATA_KEY]: session, alignment_target_id: evaluatedTarget },
++          }),
++        ],
++});
++
++const ResultTable = ({
++  traces,
++  partial = false,
++  grouped = true,
++}: {
++  traces: ModelTraceInfoV3[];
++  partial?: boolean;
++  grouped?: boolean;
++}) => {
++  const [visibility, setVisibility] = useState<Record<string, boolean>>({
++    [SESSION_SCORE_COLUMN_ID]: true,
++    [SESSION_TARGET_COLUMN_ID]: true,
++    'tag:alignment_target_id': true,
++  });
++  const customColumns = useTracesV4CustomColumns(traces, visibility, setVisibility, grouped);
++  const props: TracesTableProps = {
++    traces,
++    visibleColumns: ['session', 'input'],
++    initialColumnSizing: {},
++    onColumnSizingSettled: jest.fn(),
++    isLoading: false,
++    isFetching: false,
++    skeletonRowCount: 1,
++    onTraceSelected: jest.fn(),
++    selectedForBulk: new Map(),
++    isAllOnPageSelected: false,
++    isSomeOnPageSelected: false,
++    onToggleBulkRow: jest.fn(),
++    onToggleBulkAll: jest.fn(),
++    sort: 'start_time',
++    dir: 'desc',
++    onSort: jest.fn(),
++    onHideColumn: jest.fn(),
++    isGroupedBySession: grouped,
++    sessionsMayBeIncomplete: partial,
++    extraColumns: customColumns.columnDefs,
++  };
++  return <TracesTable {...props} />;
++};
++
++describe('recorded session result columns', () => {
++  test.each([false, true])(
++    'renders zero, missing scores and evaluated targets in session headers (partial: %s)',
++    async (partial) => {
++      await renderWithProviders(
++        <ResultTable
++          traces={[resultTrace('zero', 0), resultTrace('scored', 0.625), resultTrace('missing')]}
++          partial={partial}
++        />,
++      );
++      expect(screen.getByRole('columnheader', { name: 'TA3 alignment score' })).toBeInTheDocument();
++      expect(screen.getByRole('columnheader', { name: 'TA3 evaluated target' })).toBeInTheDocument();
++      const zeroRow = screen
++        .getByRole('button', { name: 'Expand session zero' })
++        .closest('[role="row"]') as HTMLElement;
++      expect(within(zeroRow).getByText('0')).toBeInTheDocument();
++      expect(within(zeroRow).getByText('evaluated-target')).toBeInTheDocument();
++      expect(within(zeroRow).getByText('requested-target')).toBeInTheDocument();
++      expect(screen.getByText('0.625')).toBeInTheDocument();
++      const missingRow = screen
++        .getByRole('button', { name: 'Expand session missing' })
++        .closest('[role="row"]') as HTMLElement;
++      expect(within(missingRow).getAllByText('Unavailable')).toHaveLength(2);
++      fireEvent.click(screen.getByRole('button', { name: 'Expand session zero' }));
++      expect(screen.getAllByText('0')).toHaveLength(1);
++      expect(screen.getAllByText('evaluated-target')).toHaveLength(2);
++    },
++  );
++
++  test('shows unavailable when the current page lacks the scored first trace', async () => {
++    const laterTrace = { ...resultTrace('partial'), tags: { step: '2' } };
++    await renderWithProviders(<ResultTable traces={[laterTrace]} partial />);
++    expect(screen.getAllByText('Unavailable')).toHaveLength(2);
++  });
++
++  test('does not expose session result columns on individual actions', async () => {
++    await renderWithProviders(<ResultTable traces={[resultTrace('zero', 0)]} grouped={false} />);
++    expect(screen.queryByRole('columnheader', { name: 'TA3 alignment score' })).not.toBeInTheDocument();
++    expect(screen.queryByText('evaluated-target')).not.toBeInTheDocument();
++  });
++
++  test('does not use invalid, trace-level or another session feedback', async () => {
++    const trace = resultTrace('unscored');
++    trace.assessments = [
++      makeFeedbackAssessment('ta3_session_alignment_score', 0.8, {
++        source: { source_type: 'CODE', source_id: 'raw_align_system.log' },
++        valid: false,
++        metadata: { [SESSION_ID_METADATA_KEY]: 'unscored' },
++      }),
++      makeFeedbackAssessment('ta3_session_alignment_score', 0.9, {
++        source: { source_type: 'CODE', source_id: 'raw_align_system.log' },
++      }),
++      makeFeedbackAssessment('ta3_session_alignment_score', 1, {
++        source: { source_type: 'CODE', source_id: 'raw_align_system.log' },
++        metadata: { [SESSION_ID_METADATA_KEY]: 'another' },
++      }),
++    ];
++    await renderWithProviders(<ResultTable traces={[trace]} />);
++    expect(screen.getAllByText('Unavailable')).toHaveLength(2);
++  });
++  test('keeps recorded zero when later feedback comes from a person or has no numeric TA3 score', async () => {
++    const trace = resultTrace('zero', 0);
++    const metadata = { [SESSION_ID_METADATA_KEY]: 'zero', alignment_target_id: 'other-target' };
++    const last_update_time = '2025-01-02T00:00:00.000Z';
++    trace.assessments = [
++      ...(trace.assessments ?? []),
++      makeFeedbackAssessment('ta3_session_alignment_score', 0.9, {
++        source: { source_type: 'HUMAN', source_id: 'reviewer' },
++        metadata,
++        last_update_time,
++      }),
++      makeFeedbackAssessment('ta3_session_alignment_score', 0.8, {
++        source: { source_type: 'CODE', source_id: 'different.log' },
++        metadata,
++        last_update_time,
++      }),
++      ...['unavailable', true, Number.POSITIVE_INFINITY].map((value) =>
++        makeFeedbackAssessment('ta3_session_alignment_score', value, {
++          source: { source_type: 'CODE', source_id: 'raw_align_system.log' },
++          metadata,
++          last_update_time,
++        }),
++      ),
++    ];
++    await renderWithProviders(<ResultTable traces={[trace]} />);
++    expect(screen.getByText('0')).toBeInTheDocument();
++    expect(screen.getByText('evaluated-target')).toBeInTheDocument();
++    expect(screen.queryByText('other-target')).not.toBeInTheDocument();
++  });
++
++  test.each([false, true])(
++    'breaks equal update times by assessment ID regardless of input order (%s)',
++    async (reverse) => {
++      const trace = resultTrace('tie');
++      const scores = [
++        makeFeedbackAssessment('ta3_session_alignment_score', 0.25, {
++          assessment_id: 'a-1',
++          source: { source_type: 'CODE', source_id: 'raw_align_system.log' },
++          metadata: { [SESSION_ID_METADATA_KEY]: 'tie', alignment_target_id: 'older-target' },
++        }),
++        makeFeedbackAssessment('ta3_session_alignment_score', 0.75, {
++          assessment_id: 'a-2',
++          source: { source_type: 'CODE', source_id: 'raw_align_system.log' },
++          metadata: { [SESSION_ID_METADATA_KEY]: 'tie', alignment_target_id: 'latest-target' },
++        }),
++      ];
++      trace.assessments = reverse ? scores.reverse() : scores;
++      await renderWithProviders(<ResultTable traces={[trace]} />);
++      expect(screen.getByText('0.75')).toBeInTheDocument();
++      expect(screen.getByText('latest-target')).toBeInTheDocument();
++      expect(screen.queryByText('0.25')).not.toBeInTheDocument();
++    },
++  );
++});
 --- a/mlflow/server/js/src/experiment-tracking/components/experiment-page/components/traces-v4/components/TracesV4Toolbar.tsx
 +++ b/mlflow/server/js/src/experiment-tracking/components/experiment-page/components/traces-v4/components/TracesV4Toolbar.tsx
 @@ -15,6 +15,7 @@
@@ -148,7 +793,7 @@
  import { isAssessmentColumnId } from '../utils/assessmentColumns';
  import { TracesV4DateSelector, TracesV4RefreshButton } from './TracesV4DateSelector';
  import { TracesV4DisplayButton, type TracesV4ColumnGroup } from './TracesV4DisplayButton';
-@@ -198,13 +199,15 @@
+@@ -198,13 +199,16 @@
      [intl],
    );
  
@@ -160,15 +805,16 @@
      const standardById = new Map(COLUMN_OPTIONS.map((option) => [option.id, option]));
      const assessmentById = new Map(assessmentColumns.selectorOptions.map((option) => [option.id, option]));
 +    const customById = new Map(
-+      [...customColumns.tags.selectorOptions, ...customColumns.metadata.selectorOptions].map((option) => [
-+        option.id,
-+        option,
-+      ]),
++      [
++        ...customColumns.tags.selectorOptions,
++        ...customColumns.metadata.selectorOptions,
++        ...customColumns.sessions.selectorOptions,
++      ].map((option) => [option.id, option]),
 +    );
      const reorderLabelFor = (name: string) =>
        intl.formatMessage(
          {
-@@ -222,15 +225,33 @@
+@@ -222,15 +226,35 @@
        if (assessment) {
          return [{ ...assessment, reorderLabel: reorderLabelFor(String(assessment.label)) }];
        }
@@ -187,6 +833,7 @@
 +    assessmentColumns.selectorOptions,
 +    customColumns.tags.selectorOptions,
 +    customColumns.metadata.selectorOptions,
++    customColumns.sessions.selectorOptions,
 +    columnDisplayText,
 +    intl,
 +  ]);
@@ -204,11 +851,12 @@
 +    ...assessmentColumns.visibleIds,
 +    ...customColumns.tags.visibleIds,
 +    ...customColumns.metadata.visibleIds,
++    ...customColumns.sessions.visibleIds,
 +  ];
  
    // Siloed copy of v3's UC-delete disabled reason.
    const deleteDisabledReason = intl.formatMessage({
-@@ -240,11 +261,6 @@
+@@ -240,11 +264,6 @@
        'Trace deletion disabled reason. Displayed in a tooltip when a user attempts to delete a trace housed in the UC delta table.',
    });
  
@@ -220,7 +868,7 @@
    const columnGroups: TracesV4ColumnGroup[] = [];
    if (customColumns.tags.selectorOptions.length > 0) {
      columnGroups.push({
-@@ -258,6 +274,7 @@
+@@ -258,6 +277,7 @@
        visibleIds: customColumns.tags.visibleIds,
        onToggle: customColumns.tags.toggle,
        onToggleAll: customColumns.tags.setAllVisible,
@@ -228,10 +876,25 @@
      });
    }
    if (customColumns.metadata.selectorOptions.length > 0) {
-@@ -272,6 +289,7 @@
+@@ -272,6 +292,22 @@
        visibleIds: customColumns.metadata.visibleIds,
        onToggle: customColumns.metadata.toggle,
        onToggleAll: customColumns.metadata.setAllVisible,
++      headerOnly: true,
++    });
++  }
++  if (customColumns.sessions.selectorOptions.length > 0) {
++    columnGroups.push({
++      label: (
++        <FormattedMessage
++          defaultMessage="Session results"
++          description="Section label for recorded episode result columns in the traces table column selector"
++        />
++      ),
++      options: customColumns.sessions.selectorOptions,
++      visibleIds: customColumns.sessions.visibleIds,
++      onToggle: customColumns.sessions.toggle,
++      onToggleAll: customColumns.sessions.setAllVisible,
 +      headerOnly: true,
      });
    }
@@ -339,14 +1002,31 @@
    return {
 --- a/mlflow/server/js/src/experiment-tracking/components/experiment-page/components/traces-v4/hooks/useTracesV4Controller.ts
 +++ b/mlflow/server/js/src/experiment-tracking/components/experiment-page/components/traces-v4/hooks/useTracesV4Controller.ts
-@@ -203,7 +203,11 @@
+@@ -195,6 +195,7 @@
+     page.traces,
+     columns.dynamicVisibilityById,
+     columns.setDynamicVisibility,
++    isGroupedBySession,
+   );
+ 
+   // The reorderable order spans the standard columns (their persisted order) and the page's known
+@@ -203,7 +204,20 @@
      () => assessments.candidateNames.map(assessmentColumnId),
      [assessments.candidateNames],
    );
 -  const columnOrder = useTracesV4ColumnOrder(experimentId, columns.columnOrder, assessmentColumnIds);
 +  const customColumnIds = useMemo(
-+    () => [...customColumns.tags.selectorOptions, ...customColumns.metadata.selectorOptions].map(({ id }) => id),
-+    [customColumns.tags.selectorOptions, customColumns.metadata.selectorOptions],
++    () =>
++      [
++        ...customColumns.tags.selectorOptions,
++        ...customColumns.metadata.selectorOptions,
++        ...customColumns.sessions.selectorOptions,
++      ].map(({ id }) => id),
++    [
++      customColumns.tags.selectorOptions,
++      customColumns.metadata.selectorOptions,
++      customColumns.sessions.selectorOptions,
++    ],
 +  );
 +  const columnOrder = useTracesV4ColumnOrder(experimentId, columns.columnOrder, assessmentColumnIds, customColumnIds);
  
@@ -354,16 +1034,126 @@
  
 --- a/mlflow/server/js/src/experiment-tracking/components/experiment-page/components/traces-v4/hooks/useTracesV4CustomColumns.tsx
 +++ b/mlflow/server/js/src/experiment-tracking/components/experiment-page/components/traces-v4/hooks/useTracesV4CustomColumns.tsx
-@@ -117,6 +117,8 @@
+@@ -7,7 +7,14 @@
+   type GenericColumnOption,
+   type TraceTableColumn,
+ } from '@databricks/web-shared/traces-table';
+-import { isCustomTraceColumnId, METADATA_COLUMN_PREFIX, TAG_COLUMN_PREFIX } from '../utils/customColumns';
++import {
++  isCustomTraceColumnId,
++  METADATA_COLUMN_PREFIX,
++  TAG_COLUMN_PREFIX,
++  SESSION_SCORE_COLUMN_ID,
++  SESSION_TARGET_COLUMN_ID,
++} from '../utils/customColumns';
++import { renderSessionResult } from '../utils/sessionResults';
+ 
+ export { isCustomTraceColumnId } from '../utils/customColumns';
+ 
+@@ -26,13 +33,13 @@
+   </span>
+ );
+ 
+-type CustomColumnKind = 'tag' | 'metadata';
+-
+-interface CustomColumnCandidate {
++type CustomColumnKind = 'tag' | 'metadata' | 'session';
++
++type CustomColumnCandidate = {
+   id: string;
+   key: string;
+   kind: CustomColumnKind;
+-}
++};
+ 
+ const columnId = (kind: CustomColumnKind, key: string) =>
+   `${kind === 'tag' ? TAG_COLUMN_PREFIX : METADATA_COLUMN_PREFIX}${key}`;
+@@ -40,7 +47,16 @@
+ const valueFor = (trace: ModelTraceInfoV3, candidate: CustomColumnCandidate) =>
+   candidate.kind === 'tag' ? trace.tags?.[candidate.key] : trace.trace_metadata?.[candidate.key];
+ 
++const SESSION_COLUMNS: CustomColumnCandidate[] = [
++  { id: SESSION_SCORE_COLUMN_ID, key: 'TA3 alignment score', kind: 'session' },
++  { id: SESSION_TARGET_COLUMN_ID, key: 'TA3 evaluated target', kind: 'session' },
++];
++
+ const candidateFromId = (id: string): CustomColumnCandidate | undefined => {
++  const sessionColumn = SESSION_COLUMNS.find((candidate) => candidate.id === id);
++  if (sessionColumn) {
++    return sessionColumn;
++  }
+   if (id.startsWith(TAG_COLUMN_PREFIX)) {
+     return { id, key: id.slice(TAG_COLUMN_PREFIX.length), kind: 'tag' };
+   }
+@@ -80,34 +96,41 @@
+   setAllVisible: (visible: boolean) => void;
+ }
+ 
+-export interface TracesV4CustomColumns {
++export type TracesV4CustomColumns = {
+   columnDefs: TraceTableColumn[];
+   tags: TracesV4CustomColumnGroup;
+   metadata: TracesV4CustomColumnGroup;
++  sessions: TracesV4CustomColumnGroup;
+   visibilityById: Record<string, boolean>;
+   setVisibility: (visibility: Record<string, boolean> | undefined) => void;
+   toggle: (id: string) => void;
+   reset: () => void;
+-}
++};
+ 
+ /** Discovers user-authored tags and metadata on the current page and exposes them as opt-in columns. */
+ export const useTracesV4CustomColumns = (
+   traces: ModelTraceInfoV3[],
+   visibility: Record<string, boolean>,
+   setVisibility: Dispatch<SetStateAction<Record<string, boolean>>>,
++  groupedBySession = false,
+ ): TracesV4CustomColumns => {
+   const intl = useIntl();
+   const discovered = useMemo(() => discoverCandidates(traces), [traces]);
+   const candidates = useMemo(() => {
+     const byId = new Map(discovered.map((candidate) => [candidate.id, candidate]));
++    if (groupedBySession) {
++      SESSION_COLUMNS.forEach((candidate) => byId.set(candidate.id, candidate));
++    }
+     for (const id of Object.keys(visibility)) {
+       const candidate = candidateFromId(id);
+       if (visibility[id] === true && candidate && !candidate.key.startsWith(INTERNAL_KEY_PREFIX) && !byId.has(id)) {
+         byId.set(id, candidate);
+       }
+     }
+-    return [...byId.values()].sort((left, right) => left.key.localeCompare(right.key));
+-  }, [discovered, visibility]);
++    return [...byId.values()]
++      .filter((candidate) => candidate.kind !== 'session' || groupedBySession)
++      .sort((left, right) => left.key.localeCompare(right.key));
++  }, [discovered, visibility, groupedBySession]);
+ 
+   const visibleCandidates = useMemo(
+     () => candidates.filter(({ id }) => visibility[id] === true),
+@@ -116,7 +139,21 @@
+   const columnDefs = useMemo<TraceTableColumn[]>(
      () =>
        visibleCandidates.map((candidate) => {
++        if (candidate.kind === 'session') {
++          const render = (sessionTraces: ModelTraceInfoV3[]) => renderSessionResult(sessionTraces, candidate.id);
++          return {
++            id: candidate.id,
++            ...COLUMN_SIZE,
++            labelText: candidate.key,
++            header: () => candidate.key,
++            cell: () => null,
++            renderSessionCell: render,
++            renderPartialSessionCell: render,
++          };
++        }
          const values = traces.map((trace) => valueFor(trace, candidate)?.toString() ?? '');
 +        const renderSessionCell = (sessionTraces: ModelTraceInfoV3[]) =>
 +          [...new Set(sessionTraces.map((trace) => valueFor(trace, candidate)?.toString()).filter(Boolean))].join(', ');
          return {
            id: candidate.id,
            ...COLUMN_SIZE,
-@@ -142,10 +144,8 @@
+@@ -142,10 +179,8 @@
            header: () => <CustomColumnHeader kind={candidate.kind} name={candidate.key} />,
            cell: ({ row }: { row: { original: ModelTraceInfoV3 } }) =>
              valueFor(row.original, candidate)?.toString() ?? '',
@@ -376,12 +1166,13 @@
          };
        }),
      [visibleCandidates, traces, intl],
-@@ -184,10 +184,13 @@
+@@ -184,10 +219,15 @@
      [setVisibility],
    );
  
 +  const tags = useMemo(() => makeGroup('tag'), [makeGroup]);
 +  const metadata = useMemo(() => makeGroup('metadata'), [makeGroup]);
++  const sessions = useMemo(() => makeGroup('session'), [makeGroup]);
 +
    return {
      columnDefs,
@@ -389,6 +1180,7 @@
 -    metadata: makeGroup('metadata'),
 +    tags,
 +    metadata,
++    sessions,
      visibilityById: visibility,
      setVisibility: restoreVisibility,
      toggle,
@@ -418,6 +1210,856 @@
      case 'duration':
        return [`execution_time ${direction}`];
      default:
+--- a/mlflow/server/js/src/experiment-tracking/components/experiment-page/components/traces-v4/utils/customColumns.ts
++++ b/mlflow/server/js/src/experiment-tracking/components/experiment-page/components/traces-v4/utils/customColumns.ts
+@@ -1,5 +1,10 @@
+ export const TAG_COLUMN_PREFIX = 'tag:';
+ export const METADATA_COLUMN_PREFIX = 'custom_metadata:';
++export const SESSION_SCORE_COLUMN_ID = 'session:ta3_alignment_score';
++export const SESSION_TARGET_COLUMN_ID = 'session:ta3_evaluated_target';
++
++export const isSessionResultColumnId = (id: string) =>
++  id === SESSION_SCORE_COLUMN_ID || id === SESSION_TARGET_COLUMN_ID;
+ 
+ export const isCustomTraceColumnId = (id: string) =>
+-  id.startsWith(TAG_COLUMN_PREFIX) || id.startsWith(METADATA_COLUMN_PREFIX);
++  id.startsWith(TAG_COLUMN_PREFIX) || id.startsWith(METADATA_COLUMN_PREFIX) || isSessionResultColumnId(id);
+--- /dev/null
++++ b/mlflow/server/js/src/experiment-tracking/components/experiment-page/components/traces-v4/utils/sessionResults.tsx
+@@ -0,0 +1,53 @@
++import {
++  SESSION_ID_METADATA_KEY,
++  getAssessmentValue,
++  type Assessment,
++  type ModelTraceInfoV3,
++} from '@databricks/web-shared/model-trace-explorer';
++import { SESSION_SCORE_COLUMN_ID } from './customColumns';
++
++const SCORE_NAME = 'ta3_session_alignment_score';
++
++const recordedSessionScore = (traces: ModelTraceInfoV3[]): Assessment | undefined => {
++  const sessionId = traces[0]?.trace_metadata?.[SESSION_ID_METADATA_KEY];
++  if (!sessionId) {
++    return undefined;
++  }
++  return traces
++    .flatMap((trace) => trace.assessments ?? [])
++    .reduce<Assessment | undefined>((latest, assessment) => {
++      const value = getAssessmentValue(assessment);
++      if (
++        assessment.assessment_name !== SCORE_NAME ||
++        assessment.valid === false ||
++        !('feedback' in assessment) ||
++        assessment.source?.source_type !== 'CODE' ||
++        assessment.source?.source_id !== 'raw_align_system.log' ||
++        typeof value !== 'number' ||
++        !Number.isFinite(value) ||
++        assessment.metadata?.[SESSION_ID_METADATA_KEY] !== sessionId
++      ) {
++        return latest;
++      }
++      const updated = Date.parse(assessment.last_update_time ?? assessment.create_time ?? '') || 0;
++      const previousUpdated = Date.parse(latest?.last_update_time ?? latest?.create_time ?? '') || 0;
++      return latest &&
++        (previousUpdated > updated ||
++          (previousUpdated === updated && (latest.assessment_id ?? '') >= (assessment.assessment_id ?? '')))
++        ? latest
++        : assessment;
++    }, undefined);
++};
++
++/** Recorded episode feedback remains valid even when only part of its session is on the page. */
++export const renderSessionResult = (traces: ModelTraceInfoV3[], columnId: string) => {
++  const assessment = recordedSessionScore(traces);
++  const value = assessment && getAssessmentValue(assessment);
++  const text =
++    columnId === SESSION_SCORE_COLUMN_ID
++      ? typeof value === 'number' && Number.isFinite(value)
++        ? String(value)
++        : 'Unavailable'
++      : assessment?.metadata?.['alignment_target_id'] || 'Unavailable';
++  return <span title={assessment?.rationale || undefined}>{text}</span>;
++};
+--- /dev/null
++++ b/mlflow/server/js/src/experiment-tracking/pages/experiment-chat-sessions/CompareSessionsButton.test.tsx
+@@ -0,0 +1,46 @@
++import { describe, expect, test } from '@jest/globals';
++import { render, screen } from '@testing-library/react';
++import userEvent from '@testing-library/user-event';
++import { DesignSystemProvider } from '@databricks/design-system';
++import { IntlProvider } from '@databricks/i18n';
++import { TestRouter, testRoute } from '../../../common/utils/RoutingTestUtils';
++import { useLocation } from '../../../common/utils/RoutingUtils';
++import { CompareSessionsButton } from './CompareSessionsButton';
++
++const TableLocation = () => {
++  const { search } = useLocation();
++  const params = new URLSearchParams(search);
++  return (
++    <div>
++      <h2>Traces table</h2>
++      <p>{params.get('traceViewShareKey')}</p>
++      <p>{params.get('startTimeLabel')}</p>
++      <p>{params.get('groupBy')}</p>
++    </div>
++  );
++};
++
++describe('Select sessions in table', () => {
++  test('opens the original grouped ADM performance view for the whole experiment', async () => {
++    const user = userEvent.setup();
++    render(
++      <DesignSystemProvider>
++        <IntlProvider locale="en">
++          <TestRouter
++            initialEntries={['/experiments/1/evaluation-runs?selectedRunUuid=run-one&filter=old-filter']}
++            routes={[
++              testRoute(<CompareSessionsButton experimentId="1" />, '/experiments/1/evaluation-runs'),
++              testRoute(<TableLocation />, '/experiments/1/traces'),
++            ]}
++          />
++        </IntlProvider>
++      </DesignSystemProvider>,
++    );
++    await user.click(screen.getByRole('button', { name: 'Select sessions in table' }));
++    expect(await screen.findByRole('heading', { name: 'Traces table' })).toBeInTheDocument();
++    expect(screen.getByText('open-world-adm-performance')).toBeInTheDocument();
++    expect(screen.getByText('ALL')).toBeInTheDocument();
++    expect(screen.getByText('session')).toBeInTheDocument();
++    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
++  });
++});
+--- /dev/null
++++ b/mlflow/server/js/src/experiment-tracking/pages/experiment-chat-sessions/CompareSessionsButton.tsx
+@@ -0,0 +1,35 @@
++import { Button } from '@databricks/design-system';
++import { useNavigate } from '../../../common/utils/RoutingUtils';
++import Routes from '../../routes';
++import { TRACE_V4_SHARE_URL_PARAM_KEY } from '../../components/experiment-page/components/traces-v4/utils/tracesV4SavedViewState';
++
++export const SESSION_COMPARISON_QUERY_PARAM = 'compareSessionId';
++
++export const getSessionSelectionRoute = (experimentId: string) => {
++  const params = new URLSearchParams({
++    startTimeLabel: 'ALL',
++    groupBy: 'session',
++    [TRACE_V4_SHARE_URL_PARAM_KEY]: 'open-world-adm-performance',
++  });
++  return `${Routes.getExperimentPageTracesTabRoute(experimentId)}?${params.toString()}`;
++};
++
++export const getSessionComparisonRoute = (experimentId: string, sessionIds: string[]) => {
++  const uniqueIds = [...new Set(sessionIds.filter(Boolean))];
++  if (uniqueIds.length < 2) return getSessionSelectionRoute(experimentId);
++  const params = new URLSearchParams();
++  uniqueIds.slice(1).forEach((sessionId) => params.append(SESSION_COMPARISON_QUERY_PARAM, sessionId));
++  return `${Routes.getExperimentPageTabSingleChatSessionRoute(experimentId, uniqueIds[0])}?${params.toString()}`;
++};
++
++export const CompareSessionsButton = ({ experimentId }: { experimentId: string }) => {
++  const navigate = useNavigate();
++  return (
++    <Button
++      componentId="mlflow.open-world.select-sessions-in-table"
++      onClick={() => navigate(getSessionSelectionRoute(experimentId))}
++    >
++      Select sessions in table
++    </Button>
++  );
++};
+--- /dev/null
++++ b/mlflow/server/js/src/experiment-tracking/pages/experiment-chat-sessions/single-chat-view/ExperimentChatSessionComparison.test.tsx
+@@ -0,0 +1,305 @@
++import { beforeEach, describe, expect, jest, test } from '@jest/globals';
++import { render, screen, within } from '@testing-library/react';
++import userEvent from '@testing-library/user-event';
++import { DesignSystemProvider } from '@databricks/design-system';
++import { IntlProvider } from '@databricks/i18n';
++import { QueryClient, QueryClientProvider } from '@databricks/web-shared/query-client/queryClient';
++import type { ModelTrace, ModelTraceInfoV3 } from '@databricks/web-shared/model-trace-explorer';
++import { fetchAPI } from '@databricks/web-shared/genai-traces-table/utils/FetchUtils';
++import { TestRouter, testRoute } from '@databricks/web-shared/genai-traces-table/utils/RoutingTestUtils';
++import { getTrace } from '../../../utils/TraceUtils';
++import { ExperimentChatSessionComparison } from './ExperimentChatSessionComparison';
++
++jest.mock('@databricks/web-shared/genai-traces-table/utils/FetchUtils', () => ({
++  ...jest.requireActual<typeof import('@databricks/web-shared/genai-traces-table/utils/FetchUtils')>(
++    '@databricks/web-shared/genai-traces-table/utils/FetchUtils',
++  ),
++  fetchAPI: jest.fn(),
++}));
++jest.mock('../../../utils/TraceUtils', () => ({ getTrace: jest.fn() }));
++
++const info = (session: string, step: number): ModelTraceInfoV3 => ({
++  trace_id: `tr-${session}-${step}`,
++  trace_location: { type: 'MLFLOW_EXPERIMENT', mlflow_experiment: { experiment_id: '1' } },
++  request_time: `2026-10-24T12:00:0${step}.000Z`,
++  state: 'OK',
++  trace_metadata: { 'mlflow.trace.session': session, 'mlflow.sourceRun': 'same-run' },
++  tags: {
++    'align.run_key': 'same-run-key',
++    run: 'Same Hydra run',
++    adm: 'ADM One',
++    llm: 'LLM One',
++    scenario_id: `scenario-${session}`,
++    alignment_target_id: `target-${session}`,
++    episode: session === 'left' ? '1' : '2',
++    step: String(step),
++    'mlflow.traceName': `${session} trace ${step}`,
++  },
++  assessments:
++    step === 1
++      ? [
++          {
++            assessment_id: `score-${session}`,
++            assessment_name: 'ta3_session_alignment_score',
++            trace_id: `tr-${session}-1`,
++            source: { source_type: 'CODE', source_id: 'source.log' },
++            create_time: '2026-10-24T13:00:00.000Z',
++            last_update_time: '2026-10-24T13:00:00.000Z',
++            feedback: { value: session === 'left' ? 0.3 : 0.7 },
++            metadata: { 'mlflow.trace.session': session, alignment_target_id: `target-${session}` },
++          },
++        ]
++      : [],
++});
++
++const trace = (traceInfo: ModelTraceInfoV3): ModelTrace => ({
++  info: traceInfo,
++  data: {
++    spans: [
++      {
++        trace_id: traceInfo.trace_id,
++        span_id: `span-${traceInfo.trace_id}`,
++        trace_state: '',
++        parent_span_id: null,
++        name: 'root',
++        start_time_unix_nano: '1000000000',
++        end_time_unix_nano: '2000000000',
++        status: { code: 'STATUS_CODE_OK' },
++        attributes: {
++          'mlflow.spanType': JSON.stringify('UNKNOWN'),
++          'mlflow.spanInputs': JSON.stringify(`${traceInfo.trace_id} input`),
++          'mlflow.spanOutputs': JSON.stringify(`${traceInfo.trace_id} output`),
++        },
++      },
++    ],
++  },
++});
++
++const renderComparison = (initialSessionIds = ['left', 'right']) => {
++  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
++  const page = (sessionIds = initialSessionIds) => (
++    <IntlProvider locale="en">
++      <QueryClientProvider client={client}>
++        <DesignSystemProvider>
++          <TestRouter
++            routes={[testRoute(<ExperimentChatSessionComparison experimentId="1" sessionIds={sessionIds} />)]}
++          />
++        </DesignSystemProvider>
++      </QueryClientProvider>
++    </IntlProvider>
++  );
++  const result = render(page());
++  return {
++    ...result,
++    rerenderPair: (sessionId: string, compareToSessionId: string) =>
++      result.rerender(page([sessionId, compareToSessionId])),
++  };
++};
++
++describe('Explicit session comparison', () => {
++  beforeEach(() => {
++    jest.mocked(fetchAPI).mockReset();
++    jest.mocked(getTrace).mockReset();
++    jest.mocked(fetchAPI).mockImplementation(async (_url, options) => {
++      const body = options?.body as { filter: string; page_token?: string };
++      if (body.filter.includes("'left'")) {
++        return body.page_token
++          ? { traces: [info('left', 1)] }
++          : { traces: [info('left', 2)], next_page_token: 'left-next' };
++      }
++      if (body.filter.includes("'third'")) return { traces: [info('third', 1)] };
++      if (body.filter.includes("'fourth'")) return { traces: [info('fourth', 1)] };
++      return { traces: [info('right', 3), info('right', 1), info('right', 2)] };
++    });
++    jest.mocked(getTrace).mockImplementation(async (_id, traceInfo) => trace(traceInfo as ModelTraceInfoV3));
++  });
++
++  test('shows full independent sequences with different scenarios and targets in the same run and keeps exact links', async () => {
++    const user = userEvent.setup();
++    const { rerenderPair } = renderComparison();
++    const left = within(screen.getByRole('region', { name: 'Left session' }));
++    const right = within(screen.getByRole('region', { name: 'Right session' }));
++    await left.findByText('tr-left-1 output');
++    await right.findByText('tr-right-3 output');
++    expect(
++      left.getByText('tr-left-1 output').compareDocumentPosition(left.getByText('tr-left-2 output')) &
++        Node.DOCUMENT_POSITION_FOLLOWING,
++    ).toBeTruthy();
++    expect(
++      right.getByText('tr-right-1 output').compareDocumentPosition(right.getByText('tr-right-3 output')) &
++        Node.DOCUMENT_POSITION_FOLLOWING,
++    ).toBeTruthy();
++    for (const side of [left, right]) {
++      expect(side.getByText('Same Hydra run')).toBeInTheDocument();
++      expect(side.getByText('ADM One')).toBeInTheDocument();
++      expect(side.getByText('LLM One')).toBeInTheDocument();
++      expect(side.getByRole('link', { name: 'Open run same-run' })).toHaveAttribute(
++        'href',
++        '/experiments/1/runs/same-run',
++      );
++    }
++    expect(left.getByText('scenario-left')).toBeInTheDocument();
++    expect(right.getByText('scenario-right')).toBeInTheDocument();
++    expect(left.getByText('target-left')).toBeInTheDocument();
++    expect(right.getByText('target-right')).toBeInTheDocument();
++    expect(left.getByLabelText('Left recorded scores')).toHaveTextContent('TA3 alignment score: 0.3');
++    expect(right.getByLabelText('Right recorded scores')).toHaveTextContent('TA3 alignment score: 0.7');
++    expect(left.getByRole('link', { name: 'left' })).toHaveAttribute('href', '/experiments/1/chat-sessions/left');
++    expect(right.getByRole('link', { name: 'right' })).toHaveAttribute('href', '/experiments/1/chat-sessions/right');
++    const compare = screen.getByRole('button', { name: 'Compare selected decisions' });
++    expect(compare).toBeDisabled();
++    await user.hover(left.getByText('tr-left-1 output'));
++    await user.hover(right.getByText('tr-right-1 output'));
++    expect(compare).toBeDisabled();
++    await user.click(
++      within(left.getByRole('navigation', { name: 'Left decisions' })).getByRole('button', { name: 'left trace 2' }),
++    );
++    await user.click(
++      within(right.getByRole('navigation', { name: 'Right decisions' })).getByRole('button', { name: 'right trace 3' }),
++    );
++    expect(compare).toBeEnabled();
++    expect(left.getByRole('link', { name: 'Open selected trace tr-left-2' })).toHaveAttribute(
++      'href',
++      '/experiments/1/traces?selectedTraceId=tr-left-2',
++    );
++    expect(right.getByRole('link', { name: 'Open selected trace tr-right-3' })).toHaveAttribute(
++      'href',
++      '/experiments/1/traces?selectedTraceId=tr-right-3',
++    );
++    await user.click(compare);
++    expect(await screen.findByText('Comparing selected decisions')).toBeInTheDocument();
++    expect(screen.getByText('Compared IDs:')).toBeInTheDocument();
++    expect(screen.getByText('tr-left-2')).toBeInTheDocument();
++    expect(screen.getByText('tr-right-3')).toBeInTheDocument();
++    rerenderPair('right', 'left');
++    expect(screen.queryByText('Comparing selected decisions')).not.toBeInTheDocument();
++    expect(screen.getByRole('button', { name: 'Compare selected decisions' })).toBeDisabled();
++    await within(screen.getByRole('region', { name: 'Left session' })).findByText('tr-right-3 output');
++    expect(
++      within(screen.getByRole('navigation', { name: 'Left decisions' })).getByRole('button', { name: 'right trace 3' }),
++    ).toHaveAttribute('aria-pressed', 'false');
++  });
++
++  test('compares exactly the three decisions chosen from three independent session sidebars', async () => {
++    const user = userEvent.setup();
++    renderComparison(['left', 'right', 'third']);
++    const third = within(screen.getByRole('region', { name: 'Session 3' }));
++    await third.findByText('tr-third-1 output');
++    expect(third.getByText('LLM One')).toBeInTheDocument();
++    expect(third.getByRole('link', { name: 'third' })).toHaveAttribute('href', '/experiments/1/chat-sessions/third');
++    await user.click(
++      await within(screen.getByRole('navigation', { name: 'Left decisions' })).findByRole('button', {
++        name: 'left trace 2',
++      }),
++    );
++    await user.click(
++      within(screen.getByRole('navigation', { name: 'Right decisions' })).getByRole('button', {
++        name: 'right trace 3',
++      }),
++    );
++    await user.click(
++      within(third.getByRole('navigation', { name: 'Session 3 decisions' })).getByRole('button', {
++        name: 'third trace 1',
++      }),
++    );
++    expect(screen.getByText('3 decisions selected')).toBeInTheDocument();
++    await user.click(screen.getByRole('button', { name: 'Compare selected decisions' }));
++    const drawer = within(await screen.findByRole('dialog'));
++    expect(drawer.getByText('Compared IDs:')).toBeInTheDocument();
++    expect(drawer.getByText('tr-left-2')).toBeInTheDocument();
++    expect(drawer.getByText('tr-right-3')).toBeInTheDocument();
++    expect(drawer.getByText('tr-third-1')).toBeInTheDocument();
++    expect(drawer.queryByText('tr-left-1')).not.toBeInTheDocument();
++  });
++
++  test('keeps four sessions available and allows clearing a decision to meet the native three-trace limit', async () => {
++    const user = userEvent.setup();
++    renderComparison(['left', 'right', 'third', 'fourth']);
++    for (const [label, traceName] of [
++      ['Left decisions', 'left trace 1'],
++      ['Right decisions', 'right trace 1'],
++      ['Session 3 decisions', 'third trace 1'],
++      ['Session 4 decisions', 'fourth trace 1'],
++    ]) {
++      await user.click(
++        await within(await screen.findByRole('navigation', { name: label })).findByRole('button', { name: traceName }),
++      );
++    }
++    expect(screen.getByRole('region', { name: 'Session 4' })).toBeInTheDocument();
++    expect(
++      screen.getByText('4 decisions selected. Clear a selection to compare at most three decisions.'),
++    ).toBeInTheDocument();
++    expect(screen.getByRole('button', { name: 'Compare selected decisions' })).toBeDisabled();
++    await user.click(
++      within(screen.getByRole('region', { name: 'Session 4' })).getByRole('button', {
++        name: 'Clear selected decision',
++      }),
++    );
++    expect(screen.getByText('3 decisions selected')).toBeInTheDocument();
++    expect(screen.getByRole('button', { name: 'Compare selected decisions' })).toBeEnabled();
++  });
++
++  test('reports a failed full-trace fetch instead of displaying a shortened sequence', async () => {
++    jest.mocked(getTrace).mockImplementation(async (id, traceInfo) => {
++      if (id === 'tr-left-2') throw new Error('Decision trace unavailable');
++      return trace(traceInfo as ModelTraceInfoV3);
++    });
++    renderComparison();
++    const left = within(screen.getByRole('region', { name: 'Left session' }));
++    expect(await left.findByRole('alert')).toHaveTextContent(
++      'Could not load the complete session. Decision trace unavailable',
++    );
++    expect(left.queryByText('tr-left-1 output')).not.toBeInTheDocument();
++    expect(left.queryByRole('combobox')).not.toBeInTheDocument();
++    expect(screen.getByRole('button', { name: 'Compare selected decisions' })).toBeDisabled();
++  });
++
++  test('shows the latest valid recorded score by timestamp with a stable tie break', async () => {
++    const scored = info('left', 1);
++    const assessment = scored.assessments![0];
++    scored.assessments = [
++      assessment,
++      {
++        ...assessment,
++        assessment_id: 'earlier',
++        last_update_time: '2026-10-24T14:00:00+02:00',
++        feedback: { value: 0.9 },
++      },
++      {
++        ...assessment,
++        assessment_id: 'z-same-instant',
++        last_update_time: '2026-10-24T09:00:00-04:00',
++        feedback: { value: 0.4 },
++      },
++      {
++        ...assessment,
++        assessment_id: 'invalid',
++        last_update_time: '2026-10-24T16:00:00Z',
++        valid: false,
++        feedback: { value: 1 },
++      },
++    ];
++    jest.mocked(fetchAPI).mockImplementation(async (_url, options) => ({
++      traces: [(options?.body as { filter: string }).filter.includes("'left'") ? scored : info('right', 1)],
++    }));
++    renderComparison();
++    expect(await screen.findByLabelText('Left recorded scores')).toHaveTextContent('TA3 alignment score: 0.4');
++  });
++
++  test('reports a later session-page error without displaying the first page as a complete episode', async () => {
++    jest.mocked(fetchAPI).mockImplementation(async (_url, options) => {
++      const body = options?.body as { filter: string; page_token?: string };
++      if (body.filter.includes("'left'")) {
++        if (body.page_token) throw new Error('Later session page unavailable');
++        return { traces: [info('left', 1)], next_page_token: 'next' };
++      }
++      return { traces: [info('right', 1)] };
++    });
++    renderComparison();
++    const left = within(screen.getByRole('region', { name: 'Left session' }));
++    expect(await left.findByRole('alert')).toHaveTextContent(
++      'Could not load the complete session. Later session page unavailable',
++    );
++    expect(left.queryByText('tr-left-1 output')).not.toBeInTheDocument();
++  });
++});
+--- /dev/null
++++ b/mlflow/server/js/src/experiment-tracking/pages/experiment-chat-sessions/single-chat-view/ExperimentChatSessionComparison.tsx
+@@ -0,0 +1,382 @@
++import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
++import { Button, Drawer, Typography, useDesignSystemTheme } from '@databricks/design-system';
++import { createTraceLocationForExperiment, useSearchMlflowTraces } from '@databricks/web-shared/genai-traces-table';
++import type { FeedbackAssessment, ModelTrace, ModelTraceInfoV3 } from '@databricks/web-shared/model-trace-explorer';
++import { ASSESSMENT_SESSION_METADATA_KEY } from '@databricks/web-shared/model-trace-explorer/constants';
++import { CompareModelTraceExplorer } from '@databricks/web-shared/model-trace-explorer/CompareModelTraceExplorer';
++import { ModelTraceExplorerPreferencesProvider } from '@databricks/web-shared/model-trace-explorer/ModelTraceExplorerPreferencesContext';
++import { useQueries } from '@databricks/web-shared/query-client/queryClient';
++import { Link, useNavigate } from '@mlflow/mlflow/src/common/utils/RoutingUtils';
++import { getTrace } from '../../../utils/TraceUtils';
++import Routes from '../../../routes';
++import { SELECTED_TRACE_ID_QUERY_PARAM } from '../../../constants';
++import { getChatSessionsFilter } from '../utils';
++import { ExperimentSingleChatConversation } from './ExperimentSingleChatConversation';
++import { ExperimentSingleChatSessionSidebar } from './ExperimentSingleChatSessionSidebar';
++
++type SessionChoice = { experimentId: string; sessionId: string; trace: ModelTrace };
++
++const traceRoute = (experimentId: string, traceId: string) => ({
++  pathname: Routes.getExperimentPageTracesTabRoute(experimentId),
++  search: `?${new URLSearchParams({ [SELECTED_TRACE_ID_QUERY_PARAM]: traceId })}`,
++});
++
++const orderSessionTraces = (traces: ModelTraceInfoV3[]) => {
++  const hasSteps = traces.every((trace) => /^[1-9]\d*$/.test(trace.tags?.['step'] ?? ''));
++  return [...traces].sort(
++    (left, right) =>
++      (hasSteps ? Number(left.tags['step']) - Number(right.tags['step']) : 0) ||
++      left.request_time.localeCompare(right.request_time) ||
++      left.trace_id.localeCompare(right.trace_id),
++  );
++};
++
++const sessionScores = (traces: ModelTraceInfoV3[], sessionId: string) => {
++  const latest = new Map<string, FeedbackAssessment>();
++  for (const trace of traces) {
++    for (const assessment of trace.assessments ?? []) {
++      if (
++        !('feedback' in assessment) ||
++        assessment.valid === false ||
++        assessment.metadata?.[ASSESSMENT_SESSION_METADATA_KEY] !== sessionId
++      ) {
++        continue;
++      }
++      const key = JSON.stringify([
++        assessment.assessment_name,
++        assessment.source,
++        assessment.metadata?.['alignment_target_id'],
++      ]);
++      const previous = latest.get(key);
++      const recency = previous
++        ? Date.parse(assessment.last_update_time) - Date.parse(previous.last_update_time) ||
++          assessment.assessment_id.localeCompare(previous.assessment_id)
++        : 1;
++      if (recency > 0) latest.set(key, assessment);
++    }
++  }
++  return [...latest.values()];
++};
++
++const SessionComparisonPane = ({
++  experimentId,
++  sessionId,
++  position,
++  selected,
++  onSelect,
++}: {
++  experimentId: string;
++  sessionId: string;
++  position: number;
++  selected?: SessionChoice;
++  onSelect: (position: number, choice: SessionChoice | undefined) => void;
++}) => {
++  const { theme } = useDesignSystemTheme();
++  const side = position === 0 ? 'Left' : position === 1 ? 'Right' : `Session ${position + 1}`;
++  const sessionLabel = position < 2 ? `${side} session` : side;
++  const chatRefs = useRef<{ [traceId: string]: HTMLDivElement }>({});
++  const navigate = useNavigate();
++  const locations = useMemo(() => [createTraceLocationForExperiment(experimentId)], [experimentId]);
++  const filters = useMemo(() => getChatSessionsFilter({ sessionId }), [sessionId]);
++  const search = useSearchMlflowTraces({
++    locations,
++    filters,
++    disabled: false,
++    limit: Infinity,
++    enablePagination: false,
++  });
++  const infos = useMemo(() => orderSessionTraces(search.data ?? []), [search.data]);
++  const loadingInfos = search.isLoading || search.isFetching;
++  const queries = useQueries({
++    queries: infos.map((info) => ({
++      queryKey: ['getTrace', info.trace_id],
++      queryFn: async () => {
++        const trace = await getTrace(info.trace_id, info);
++        if (!trace) throw new Error(`Trace ${info.trace_id} is unavailable`);
++        return trace;
++      },
++      enabled: !loadingInfos && !search.error,
++      refetchOnWindowFocus: false,
++      retry: false,
++    })),
++  });
++  const error = search.error || queries.find((query) => query.error)?.error;
++  const isLoading = loadingInfos || queries.some((query) => query.isLoading || query.isFetching);
++  const traces = queries.flatMap((query) => (query.data ? [query.data] : []));
++  const complete = !isLoading && !error && traces.length === infos.length;
++  const selectedIndex =
++    selected?.sessionId === sessionId && selected.experimentId === experimentId
++      ? infos.findIndex((info) => info.trace_id === (selected.trace.info as ModelTraceInfoV3).trace_id)
++      : -1;
++  useEffect(() => {
++    if (!complete || selectedIndex < 0) onSelect(position, undefined);
++  }, [complete, selectedIndex, position, onSelect]);
++  const scores = sessionScores(infos, sessionId);
++  const metadata = [
++    ['Run', 'run'],
++    ['ADM', 'adm'],
++    ['LLM', 'llm'],
++    ['Scenario', 'scenario_id'],
++    ['Alignment target', 'alignment_target_id'],
++    ['Episode', 'episode'],
++  ];
++  const sourceRunIds = [
++    ...new Set(
++      infos.flatMap((info) =>
++        info.trace_metadata?.['mlflow.sourceRun'] ? [info.trace_metadata['mlflow.sourceRun']] : [],
++      ),
++    ),
++  ];
++  const retry = () => {
++    search.refetchMlflowTraces?.();
++    queries.forEach((query) => query.refetch());
++  };
++  const selectTurn = (index: number) => {
++    onSelect(position, { experimentId, sessionId, trace: traces[index] });
++    const card = chatRefs.current[infos[index].trace_id];
++    const scroller = card?.parentElement;
++    if (scroller) {
++      scroller.scrollTop += card.getBoundingClientRect().top - scroller.getBoundingClientRect().top;
++    }
++  };
++  const openTrace = (trace: ModelTrace) =>
++    navigate(traceRoute(experimentId, (trace.info as ModelTraceInfoV3).trace_id));
++
++  return (
++    <section
++      aria-label={sessionLabel}
++      css={{
++        display: 'flex',
++        flexDirection: 'column',
++        flex: '1 0 720px',
++        minWidth: 720,
++        minHeight: 0,
++        border: `1px solid ${theme.colors.border}`,
++        borderRadius: theme.borders.borderRadiusMd,
++      }}
++    >
++      <div
++        css={{
++          padding: theme.spacing.md,
++          display: 'flex',
++          flexDirection: 'column',
++          gap: theme.spacing.sm,
++          borderBottom: `1px solid ${theme.colors.border}`,
++        }}
++      >
++        <Typography.Title level={3} withoutMargins>
++          {sessionLabel}
++        </Typography.Title>
++        <Link
++          componentId="mlflow.session-comparison.open-session"
++          to={Routes.getExperimentPageTabSingleChatSessionRoute(experimentId, sessionId)}
++        >
++          {sessionId}
++        </Link>
++        {isLoading ? (
++          <div role="status">Loading the complete decision sequence…</div>
++        ) : error || !complete ? (
++          <div role="alert">
++            Could not load the complete session.{' '}
++            {error instanceof Error ? error.message : String(error ?? 'Some traces are unavailable')}
++            <Button componentId="mlflow.session-comparison.retry" onClick={retry}>
++              Retry
++            </Button>
++          </div>
++        ) : infos.length === 0 ? (
++          <div>No traces found for this session.</div>
++        ) : (
++          <>
++            <dl
++              css={{
++                margin: 0,
++                display: 'grid',
++                gridTemplateColumns: 'max-content minmax(0, 1fr)',
++                gap: `${theme.spacing.xs}px ${theme.spacing.sm}px`,
++                '& dt': { fontWeight: 600 },
++                '& dd': { margin: 0, overflowWrap: 'anywhere' },
++              }}
++            >
++              {metadata.map(([label, key]) => (
++                <div key={key} css={{ display: 'contents' }}>
++                  <dt>{label}</dt>
++                  <dd>{[...new Set(infos.map((info) => info.tags?.[key] || 'Not recorded'))].join(', ')}</dd>
++                </div>
++              ))}
++              <dt>Decisions</dt>
++              <dd>{infos.length}</dd>
++            </dl>
++            {sourceRunIds.map((runId) => (
++              <Link
++                key={runId}
++                componentId="mlflow.session-comparison.open-run"
++                to={Routes.getRunPageRoute(experimentId, runId)}
++              >
++                Open run {runId}
++              </Link>
++            ))}
++            <div aria-label={`${side} recorded scores`}>
++              <Typography.Text bold>Recorded session scores</Typography.Text>
++              {scores.length ? (
++                scores.map((score) => (
++                  <div key={score.assessment_id}>
++                    {score.assessment_name === 'ta3_session_alignment_score'
++                      ? 'TA3 alignment score'
++                      : score.assessment_name}
++                    :{' '}
++                    {score.feedback.error
++                      ? `Error: ${score.feedback.error.error_message}`
++                      : String(score.feedback.value ?? 'Not recorded')}
++                    {score.metadata?.['alignment_target_id'] &&
++                      ` (evaluated target: ${score.metadata['alignment_target_id']})`}
++                  </div>
++                ))
++              ) : (
++                <div>No recorded session score.</div>
++              )}
++            </div>
++            {selectedIndex >= 0 && (
++              <div css={{ display: 'flex', alignItems: 'center', gap: theme.spacing.sm }}>
++                <Link
++                  componentId="mlflow.session-comparison.open-trace"
++                  to={traceRoute(experimentId, infos[selectedIndex].trace_id)}
++                >
++                  Open selected trace {infos[selectedIndex].trace_id}
++                </Link>
++                <Button
++                  componentId="mlflow.session-comparison.clear-decision"
++                  onClick={() => onSelect(position, undefined)}
++                >
++                  Clear selected decision
++                </Button>
++              </div>
++            )}
++          </>
++        )}
++      </div>
++      {complete && infos.length > 0 && (
++        <div css={{ display: 'flex', flex: 1, minHeight: 0, minWidth: 0 }}>
++          <nav aria-label={`${side} decisions`} css={{ display: 'flex', minHeight: 0, width: 260, flexShrink: 0 }}>
++            <ExperimentSingleChatSessionSidebar
++              traces={traces}
++              selectedTurnIndex={selectedIndex < 0 ? null : selectedIndex}
++              setSelectedTurnIndex={() => {}}
++              setSelectedTrace={openTrace}
++              chatRefs={chatRefs}
++              onSelectTurn={selectTurn}
++            />
++          </nav>
++          <ExperimentSingleChatConversation
++            traces={traces}
++            chatRefs={chatRefs}
++            selectedTurnIndex={selectedIndex < 0 ? null : selectedIndex}
++            setSelectedTrace={openTrace}
++            getAssessmentTitle={(name) => name}
++          />
++        </div>
++      )}
++    </section>
++  );
++};
++
++export const ExperimentChatSessionComparison = ({
++  experimentId,
++  sessionIds,
++}: {
++  experimentId: string;
++  sessionIds: string[];
++}) => {
++  const { theme } = useDesignSystemTheme();
++  const [choices, setChoices] = useState<(SessionChoice | undefined)[]>([]);
++  const [compared, setCompared] = useState<{ sessionIds: string[]; traces: ModelTrace[] }>();
++  const selectionScope = JSON.stringify([experimentId, ...sessionIds]);
++  useEffect(() => {
++    setChoices([]);
++    setCompared(undefined);
++  }, [selectionScope]);
++  const selectDecision = useCallback((position: number, choice: SessionChoice | undefined) => {
++    setChoices((current) => {
++      if (current[position] === choice) return current;
++      const next = [...current];
++      next[position] = choice;
++      return next;
++    });
++  }, []);
++  const selectedTraces = sessionIds.flatMap((sessionId, index) => {
++    const choice = choices[index];
++    return choice?.sessionId === sessionId && choice.experimentId === experimentId ? [choice.trace] : [];
++  });
++  const canCompareDecisions = selectedTraces.length >= 2 && selectedTraces.length <= 3;
++  const currentComparison =
++    compared &&
++    compared.sessionIds.length === sessionIds.length &&
++    compared.sessionIds.every((id, index) => id === sessionIds[index]) &&
++    compared.traces.length === selectedTraces.length &&
++    compared.traces.every((trace, index) => trace === selectedTraces[index]);
++  if (sessionIds.length < 2 || sessionIds.some((id) => !id) || new Set(sessionIds).size !== sessionIds.length) {
++    return <div role="alert">Select at least two distinct sessions in the table.</div>;
++  }
++  return (
++    <ModelTraceExplorerPreferencesProvider>
++      <div
++        css={{ display: 'flex', flexDirection: 'column', flex: 1, minWidth: 0, minHeight: 0, gap: theme.spacing.sm }}
++      >
++        <div css={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: theme.spacing.sm }}>
++          <Typography.Text>
++            Each session keeps its own decision sequence. Choose decisions from two or three sessions to compare their
++            traces.
++          </Typography.Text>
++          <div role="status">
++            <Typography.Text>
++              {selectedTraces.length} decisions selected
++              {selectedTraces.length > 3 ? '. Clear a selection to compare at most three decisions.' : ''}
++            </Typography.Text>
++          </div>
++          <Button
++            componentId="mlflow.session-comparison.compare-decisions"
++            disabled={!canCompareDecisions}
++            onClick={() => setCompared({ sessionIds: [...sessionIds], traces: selectedTraces })}
++          >
++            Compare selected decisions
++          </Button>
++        </div>
++        <div
++          aria-label="Session comparison panes"
++          css={{
++            display: 'flex',
++            flex: 1,
++            minWidth: 0,
++            minHeight: 0,
++            gap: theme.spacing.md,
++            overflowX: 'auto',
++            overflowY: 'hidden',
++            paddingBottom: theme.spacing.sm,
++          }}
++        >
++          {sessionIds.map((sessionId, position) => (
++            <SessionComparisonPane
++              key={`${position}:${experimentId}:${sessionId}`}
++              experimentId={experimentId}
++              sessionId={sessionId}
++              position={position}
++              selected={choices[position]}
++              onSelect={selectDecision}
++            />
++          ))}
++        </div>
++      </div>
++      {compared && canCompareDecisions && currentComparison && (
++        <Drawer.Root open modal onOpenChange={(open) => !open && setCompared(undefined)}>
++          <Drawer.Content
++            componentId="mlflow.session-comparison.decision-drawer"
++            width="90vw"
++            title="Comparing selected decisions"
++            expandContentToFullHeight
++          >
++            <CompareModelTraceExplorer modelTraces={compared.traces} />
++          </Drawer.Content>
++        </Drawer.Root>
++      )}
++    </ModelTraceExplorerPreferencesProvider>
++  );
++};
 --- a/mlflow/server/js/src/experiment-tracking/pages/experiment-chat-sessions/single-chat-view/ExperimentSingleChatConversation.tsx
 +++ b/mlflow/server/js/src/experiment-tracking/pages/experiment-chat-sessions/single-chat-view/ExperimentSingleChatConversation.tsx
 @@ -80,11 +80,13 @@
@@ -439,17 +2081,121 @@
                </Typography.Text>
                <div css={{ flex: 1 }} />
                <Button
+--- a/mlflow/server/js/src/experiment-tracking/pages/experiment-chat-sessions/single-chat-view/ExperimentSingleChatSessionPage.test.tsx
++++ b/mlflow/server/js/src/experiment-tracking/pages/experiment-chat-sessions/single-chat-view/ExperimentSingleChatSessionPage.test.tsx
+@@ -6,6 +6,13 @@
+ import { CustomViewDefinitionProvider } from '@databricks/web-shared/model-trace-explorer/custom-view/CustomViewDefinitionContext';
+ 
+ import ExperimentSingleChatSessionPage from './ExperimentSingleChatSessionPage';
++
++let mockLocationSearch = '';
++jest.mock('./ExperimentChatSessionComparison', () => ({
++  ExperimentChatSessionComparison: ({ sessionIds }: { sessionIds: string[] }) => (
++    <div data-testid="session-comparison">{sessionIds.join(' with ')}</div>
++  ),
++}));
+ 
+ const mockExperimentCustomViewProvider = jest.fn(
+   ({ children, experimentId }: { children: React.ReactNode; experimentId?: string }) => (
+@@ -57,8 +64,12 @@
+ }));
+ 
+ jest.mock('@mlflow/mlflow/src/common/utils/RoutingUtils', () => ({
+-  useLocation: () => ({ search: '' }),
++  ...jest.requireActual<typeof import('@mlflow/mlflow/src/common/utils/RoutingUtils')>(
++    '@mlflow/mlflow/src/common/utils/RoutingUtils',
++  ),
++  useLocation: () => ({ search: mockLocationSearch }),
+   useParams: () => ({ experimentId: 'experiment-123', sessionId: 'session-456' }),
++  Link: ({ to, children }: { to: string; children: React.ReactNode }) => <a href={to}>{children}</a>,
+ }));
+ 
+ jest.mock('@mlflow/mlflow/src/assistant', () => ({
+@@ -123,7 +134,35 @@
+ 
+ describe('ExperimentSingleChatSessionPage', () => {
+   beforeEach(() => {
++    mockLocationSearch = '';
+     mockExperimentCustomViewProvider.mockClear();
++  });
++
++  test('opens an explicit comparison from a shared session URL', () => {
++    mockLocationSearch = '?compareSessionId=another-session';
++    const { getByTestId, queryByTestId } = renderPage();
++    expect(getByTestId('session-comparison')).toHaveTextContent('session-456 with another-session');
++    expect(queryByTestId('chat-conversation')).not.toBeInTheDocument();
++  });
++
++  test('opens every distinct selected session from repeated comparison parameters', () => {
++    mockLocationSearch =
++      '?compareSessionId=another-session&compareSessionId=third-session&compareSessionId=fourth-session';
++    const { getByTestId, getByRole } = renderPage();
++    expect(getByTestId('session-comparison')).toHaveTextContent(
++      'session-456 with another-session with third-session with fourth-session',
++    );
++    expect(getByRole('link', { name: 'Select sessions in table' })).toHaveAttribute(
++      'href',
++      expect.stringContaining('groupBy=session'),
++    );
++  });
++
++  test('rejects duplicate or empty session identities without silently changing the requested comparison', () => {
++    mockLocationSearch = '?compareSessionId=session-456&compareSessionId=';
++    const { getByRole, queryByTestId } = renderPage();
++    expect(getByRole('alert')).toHaveTextContent('Select at least two distinct sessions in the table.');
++    expect(queryByTestId('session-comparison')).not.toBeInTheDocument();
+   });
+ 
+   test('mounts ExperimentCustomViewProvider with the current experiment ID when custom trace view is enabled', async () => {
 --- a/mlflow/server/js/src/experiment-tracking/pages/experiment-chat-sessions/single-chat-view/ExperimentSingleChatSessionPage.tsx
 +++ b/mlflow/server/js/src/experiment-tracking/pages/experiment-chat-sessions/single-chat-view/ExperimentSingleChatSessionPage.tsx
-@@ -51,6 +51,7 @@
+@@ -10,7 +10,7 @@
+   useSearchMlflowTraces,
+ } from '@databricks/web-shared/genai-traces-table';
+ 
+-import { useParams, useLocation } from '@mlflow/mlflow/src/common/utils/RoutingUtils';
++import { Link, useParams, useLocation } from '@mlflow/mlflow/src/common/utils/RoutingUtils';
+ import invariant from 'invariant';
+ import { useGetExperimentQuery } from '../../../hooks/useExperimentQuery';
+ import React, { useCallback, useMemo, useRef, useState, useEffect } from 'react';
+@@ -41,7 +41,7 @@
+   ExperimentSingleChatConversation,
+   ExperimentSingleChatConversationSkeleton,
+ } from './ExperimentSingleChatConversation';
+-import { GenericSkeleton, useDesignSystemTheme } from '@databricks/design-system';
++import { GenericSkeleton, Typography, useDesignSystemTheme } from '@databricks/design-system';
+ import { SELECTED_TRACE_ID_QUERY_PARAM } from '../../../constants';
+ import { useExperimentSingleChatMetrics } from './useExperimentSingleChatMetrics';
+ import { ExperimentSingleChatSessionMetrics } from './ExperimentSingleChatSessionMetrics';
+@@ -51,6 +51,9 @@
  import { first } from 'lodash';
  import { useRunScorerInTracesViewConfiguration } from '../../experiment-scorers/hooks/useRunScorerInTracesViewConfiguration';
  import { useOptionalCustomViewDefinition } from '@databricks/web-shared/model-trace-explorer/custom-view/CustomViewDefinitionContext';
 +import { getSessionDisplayName } from '@databricks/web-shared/traces-table';
++import { getSessionSelectionRoute, SESSION_COMPARISON_QUERY_PARAM } from '../CompareSessionsButton';
++import { ExperimentChatSessionComparison } from './ExperimentChatSessionComparison';
  
  // Custom View pulls in @a2ui (ESM-only) transitively via ExperimentCustomViewProvider.
  // Lazy-load it so the chat-session route only pulls @a2ui into the graph when enabled.
-@@ -176,6 +177,7 @@
+@@ -97,7 +100,7 @@
+   );
+ };
+ 
+-const ExperimentSingleChatSessionPageImpl = () => {
++const ExperimentSingleChatSessionContent = () => {
+   const { theme } = useDesignSystemTheme();
+   const { experimentId, sessionId } = useParams();
+   const location = useLocation();
+@@ -172,10 +175,16 @@
+       invalidateTraceQuery={invalidateSingleTraceQuery}
+     >
+       <div css={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
++        <div css={{ display: 'flex', justifyContent: 'flex-end', paddingBottom: theme.spacing.sm }}>
++          <Link componentId="mlflow.session.select-in-table" to={getSessionSelectionRoute(experimentId)}>
++            Select sessions in table
++          </Link>
++        </div>
+         <TracesV3Toolbar
            // prettier-ignore
            viewState="single-chat-session"
            sessionId={sessionId}
@@ -457,6 +2203,41 @@
            css={
              shouldEnableAssessmentsInSessions()
                ? {
+@@ -277,6 +286,34 @@
+   );
+ };
+ 
++const ExperimentSingleChatSessionPageImpl = () => {
++  const { experimentId, sessionId } = useParams();
++  const location = useLocation();
++  const comparisonIds = new URLSearchParams(location.search).getAll(SESSION_COMPARISON_QUERY_PARAM);
++  if (experimentId && sessionId && comparisonIds.length) {
++    const sessionIds = [sessionId, ...comparisonIds];
++    const isValid = sessionIds.every(Boolean) && new Set(sessionIds).size === sessionIds.length;
++    return (
++      <div css={{ display: 'flex', flexDirection: 'column', flex: 1, minWidth: 0, minHeight: 0 }}>
++        <div css={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', paddingBottom: 8 }}>
++          <Typography.Title level={3} withoutMargins>
++            Session comparison
++          </Typography.Title>
++          <Link componentId="mlflow.session-comparison.select-in-table" to={getSessionSelectionRoute(experimentId)}>
++            Select sessions in table
++          </Link>
++        </div>
++        {isValid ? (
++          <ExperimentChatSessionComparison experimentId={experimentId} sessionIds={sessionIds} />
++        ) : (
++          <div role="alert">Select at least two distinct sessions in the table.</div>
++        )}
++      </div>
++    );
++  }
++  return <ExperimentSingleChatSessionContent />;
++};
++
+ const ExperimentSingleChatSessionPage = withErrorBoundary(
+   ErrorUtils.mlflowServices.CHAT_SESSIONS,
+   ExperimentSingleChatSessionPageImpl,
 --- a/mlflow/server/js/src/experiment-tracking/pages/experiment-chat-sessions/single-chat-view/ExperimentSingleChatSessionSidebar.tsx
 +++ b/mlflow/server/js/src/experiment-tracking/pages/experiment-chat-sessions/single-chat-view/ExperimentSingleChatSessionSidebar.tsx
 @@ -1,5 +1,5 @@
@@ -467,7 +2248,22 @@
  import type { MutableRefObject } from 'react';
  import { useCallback } from 'react';
  import { ExperimentSingleChatIcon } from './ExperimentSingleChatIcon';
-@@ -38,7 +38,8 @@
+@@ -11,12 +11,14 @@
+   setSelectedTurnIndex,
+   setSelectedTrace,
+   chatRefs,
++  onSelectTurn,
+ }: {
+   traces: ModelTrace[];
+   selectedTurnIndex: number | null;
+   setSelectedTurnIndex: (turnIndex: number | null) => void;
+   setSelectedTrace: (trace: ModelTrace) => void;
+   chatRefs: MutableRefObject<{ [traceId: string]: HTMLDivElement }>;
++  onSelectTurn?: (turnIndex: number) => void;
+ }) => {
+   const { theme } = useDesignSystemTheme();
+ 
+@@ -38,7 +40,8 @@
      <div
        css={{
          minHeight: 0,
@@ -477,7 +2273,31 @@
          borderRight: `1px solid ${theme.colors.border}`,
          overflow: 'auto',
          paddingTop: theme.spacing.sm,
-@@ -62,12 +63,14 @@
+@@ -48,6 +51,9 @@
+       {traces.map((trace, index) => (
+         <div
+           key={getModelTraceId(trace)}
++          role="button"
++          tabIndex={0}
++          aria-pressed={onSelectTurn ? selectedTurnIndex === index : undefined}
+           css={{
+             display: 'flex',
+             alignItems: 'center',
+@@ -57,17 +63,26 @@
+             borderRadius: theme.borders.borderRadiusSm,
+             cursor: 'pointer',
+           }}
+-          onMouseEnter={() => setSelectedTurnIndex(index)}
+-          onClick={() => scrollToTrace(trace)}
++          onMouseEnter={() => !onSelectTurn && setSelectedTurnIndex(index)}
++          onClick={() => (onSelectTurn ? onSelectTurn(index) : scrollToTrace(trace))}
++          onKeyDown={(event) => {
++            if (event.key === 'Enter' || event.key === ' ') {
++              event.preventDefault();
++              if (onSelectTurn) onSelectTurn(index);
++              else scrollToTrace(trace);
++            }
++          }}
          >
            <ExperimentSingleChatIcon displayLink={index !== traces.length - 1} />
  
@@ -498,7 +2318,7 @@
            </Typography.Text>
          </div>
        ))}
-@@ -83,7 +86,8 @@
+@@ -83,7 +98,8 @@
          display: 'flex',
          flexDirection: 'column',
          minHeight: 0,
@@ -508,6 +2328,1093 @@
          borderRight: `1px solid ${theme.colors.border}`,
          gap: theme.spacing.xs,
          paddingTop: theme.spacing.sm,
+--- a/mlflow/server/js/src/shared/web-shared/genai-traces-table/GenAITracesTableBodyContainer.tsx
++++ b/mlflow/server/js/src/shared/web-shared/genai-traces-table/GenAITracesTableBodyContainer.tsx
+@@ -1,6 +1,6 @@
+ import React, { useMemo, useCallback } from 'react';
+ 
+-import { useDesignSystemTheme } from '@databricks/design-system';
++import { Alert, useDesignSystemTheme } from '@databricks/design-system';
+ import { FormattedMessage } from '@databricks/i18n';
+ import type { Assessment, ModelTraceInfoV3 } from '../model-trace-explorer/ModelTrace.types';
+ import { AssessmentSchemaContextProvider } from '../model-trace-explorer/contexts/AssessmentSchemaContext';
+@@ -21,6 +21,7 @@
+ import { FilterOperator, TracesTableColumnGroup, TracesTableColumnType } from './types';
+ import { sortAssessmentInfos } from './utils/AggregationUtils';
+ import { shouldEnableTagGrouping } from './utils/FeatureUtils';
++import { getOpenWorldComparisonWarnings, type OpenWorldComparisonContext } from './utils/SessionGroupingUtils';
+ import {
+   applyTraceInfoV3ToEvalEntry,
+   DEFAULT_RUN_PLACEHOLDER_NAME,
+@@ -66,6 +67,10 @@
+    * Whether to group traces by session
+    */
+   isGroupedBySession: boolean;
++
++  /** Only enable after both runs have loaded complete scenario/target cases. */
++  allowOpenWorldCaseMatching?: boolean;
++  openWorldComparisonContext?: OpenWorldComparisonContext;
+ 
+   /**
+    * Current search query; when set, matching text in the Request column is highlighted.
+@@ -108,6 +113,8 @@
+       enableRowSelection = true,
+       isTableLoading = false,
+       isGroupedBySession,
++      allowOpenWorldCaseMatching = false,
++      openWorldComparisonContext,
+       searchQuery,
+       fetchNextPage,
+       hasNextPage,
+@@ -229,6 +236,11 @@
+       [currentEvaluationResults, compareToEvaluationResults],
+     );
+ 
++    const comparisonWarnings = useMemo(
++      () => getOpenWorldComparisonWarnings(evaluationResults, openWorldComparisonContext),
++      [evaluationResults, openWorldComparisonContext],
++    );
++
+     const assessments = useMemo(() => {
+       return currentEvaluationResults.flatMap((evalResult) => evalResult?.traceInfo?.assessments ?? []) as Assessment[];
+     }, [currentEvaluationResults]);
+@@ -243,6 +255,25 @@
+           flexGrow: 1,
+         }}
+       >
++        {isGroupedBySession &&
++          compareToRunUuid &&
++          allowOpenWorldCaseMatching &&
++          (comparisonWarnings.repeatedCases > 0 || comparisonWarnings.incompleteSessions > 0) && (
++            <Alert
++              componentId="mlflow.genai-traces-table.open-world-comparison-warning"
++              type="warning"
++              message={
++                <FormattedMessage
++                  defaultMessage="Across these runs, {repeatedCases} scenario/target cases have repeated episodes, and {incompleteSessions} episodes have missing or inconsistent case metadata. These episodes remain unmatched. Repetitions need a shared trial identifier before they can be paired."
++                  description="Warning about Open World episodes that cannot be safely compared"
++                  values={{
++                    repeatedCases: comparisonWarnings.repeatedCases,
++                    incompleteSessions: comparisonWarnings.incompleteSessions,
++                  }}
++                />
++              }
++            />
++          )}
+         <div
+           css={{
+             display: 'flex',
+@@ -285,6 +316,8 @@
+                 enableGrouping={shouldEnableTagGrouping()}
+                 isTableLoading={isTableLoading}
+                 isGroupedBySession={isGroupedBySession}
++                allowOpenWorldCaseMatching={allowOpenWorldCaseMatching}
++                openWorldComparisonContext={openWorldComparisonContext}
+                 searchQuery={searchQuery}
+                 fetchNextPage={fetchNextPage}
+                 hasNextPage={hasNextPage}
+--- a/mlflow/server/js/src/shared/web-shared/genai-traces-table/GenAiTracesTable.utils.ts
++++ b/mlflow/server/js/src/shared/web-shared/genai-traces-table/GenAiTracesTable.utils.ts
+@@ -144,6 +144,13 @@
+       return colA.label.localeCompare(colB.label);
+     }
+ 
++    if (isGroupedBySession && groupA === TracesTableColumnGroup.TAG) {
++      const caseColumns = ['tags:scenario_id', 'tags:alignment_target_id'];
++      const rankA = caseColumns.includes(colA.id) ? caseColumns.indexOf(colA.id) : Infinity;
++      const rankB = caseColumns.includes(colB.id) ? caseColumns.indexOf(colB.id) : Infinity;
++      if (rankA !== rankB) return rankA - rankB;
++    }
++
+     // TAG (or any other fallback)
+     return colA.label.localeCompare(colB.label);
+   });
+--- a/mlflow/server/js/src/shared/web-shared/genai-traces-table/GenAiTracesTableBody.tsx
++++ b/mlflow/server/js/src/shared/web-shared/genai-traces-table/GenAiTracesTableBody.tsx
+@@ -18,7 +18,7 @@
+ import { MemoizedGenAiTracesTableBodyRows } from './GenAiTracesTableBodyRows';
+ import { MemoizedGenAiTracesTableSessionGroupedRows } from './GenAiTracesTableSessionGroupedRows';
+ import { GenAiTracesTableHeader } from './GenAiTracesTableHeader';
+-import { groupTracesBySessionForTable } from './utils/SessionGroupingUtils';
++import { groupTracesBySessionForTable, type OpenWorldComparisonContext } from './utils/SessionGroupingUtils';
+ import { HeaderCellRenderer } from './cellRenderers/HeaderCellRenderer';
+ import type { GetTraceFunction } from './hooks/useGetTrace';
+ import {
+@@ -89,6 +89,8 @@
+     allColumns,
+     isTableLoading,
+     isGroupedBySession,
++    allowOpenWorldCaseMatching = false,
++    openWorldComparisonContext,
+     searchQuery,
+     fetchNextPage,
+     hasNextPage,
+@@ -131,6 +133,8 @@
+     allColumns: TracesTableColumn[];
+     isTableLoading?: boolean;
+     isGroupedBySession?: boolean;
++    allowOpenWorldCaseMatching?: boolean;
++    openWorldComparisonContext?: OpenWorldComparisonContext;
+     /** When set, matching text in the Request column is highlighted. */
+     searchQuery?: string;
+     // Infinite scroll props (active when shouldUseInfinitePaginatedTraces is true)
+@@ -280,9 +284,22 @@
+     const { groupedRows, traceIdToTurnMap } = useMemo(
+       () =>
+         isGroupedBySession
+-          ? groupTracesBySessionForTable(evaluations, expandedSessions, isComparing)
++          ? groupTracesBySessionForTable(
++              evaluations,
++              expandedSessions,
++              isComparing,
++              allowOpenWorldCaseMatching,
++              openWorldComparisonContext,
++            )
+           : { groupedRows: [], traceIdToTurnMap: {} },
+-      [isGroupedBySession, evaluations, expandedSessions, isComparing],
++      [
++        isGroupedBySession,
++        evaluations,
++        expandedSessions,
++        isComparing,
++        allowOpenWorldCaseMatching,
++        openWorldComparisonContext,
++      ],
+     );
+ 
+     const table = useReactTable<EvalTraceComparisonEntry & { multiline?: boolean }>(
+--- a/mlflow/server/js/src/shared/web-shared/genai-traces-table/GenAiTracesTableBody.utils.tsx
++++ b/mlflow/server/js/src/shared/web-shared/genai-traces-table/GenAiTracesTableBody.utils.tsx
+@@ -33,6 +33,13 @@
+ const DEFAULT_ASSESSMENTS_CELL_WIDTH_COMPARE_PX = 120;
+ const MAX_ASSESSMENT_COLUMN_SIZE = 200;
+ const DEFAULT_INPUT_COLUMNS_TOTAL_WIDTH_PX = 300;
++const OPEN_WORLD_COLUMN_WIDTHS = new Map([
++  ['tags:scenario_id', 220],
++  ['tags:alignment_target_id', 280],
++  ['tags:adm', 180],
++  ['tags:llm', 220],
++  ['tags:run', 250],
++]);
+ 
+ export function compareAssessmentValues(
+   assessmentInfo: AssessmentInfo,
+@@ -255,7 +262,7 @@
+ 
+           return traceInfoSortingFn(aValue?.currentRunValue?.traceInfo, bValue?.currentRunValue?.traceInfo, col.id);
+         },
+-        size: col.id === RESPONSE_COLUMN_ID ? 300 : 100,
++        size: OPEN_WORLD_COLUMN_WIDTHS.get(col.id) ?? (col.id === RESPONSE_COLUMN_ID ? 300 : 100),
+         minSize: col.id === RESPONSE_COLUMN_ID ? 120 : 100,
+         cell: (cell) => {
+           const { isComparing, comparisonEntry } = cell.getValue() as {
+--- a/mlflow/server/js/src/shared/web-shared/genai-traces-table/cellRenderers/SessionHeaderCellRenderers.tsx
++++ b/mlflow/server/js/src/shared/web-shared/genai-traces-table/cellRenderers/SessionHeaderCellRenderers.tsx
+@@ -41,7 +41,7 @@
+   TOKENS_COLUMN_ID,
+   USER_COLUMN_ID,
+ } from '../hooks/useTableColumns';
+-import { TracesTableColumnType, type TracesTableColumn } from '../types';
++import { TracesTableColumnGroup, TracesTableColumnType, type TracesTableColumn } from '../types';
+ import { COMPARE_TO_RUN_COLOR, CURRENT_RUN_COLOR } from '../utils/Colors';
+ import { escapeCssSpecialCharacters, highlightSearchInText, normalizeDurationString } from '../utils/DisplayUtils';
+ import {
+@@ -49,6 +49,7 @@
+   getExperimentIdFromTraceLocation,
+   getTraceInfoInputs,
+   getTraceInfoOutputs,
++  getTagKeyFromColumnId,
+   MLFLOW_SOURCE_RUN_KEY,
+ } from '../utils/TraceUtils';
+ import { compact } from 'lodash';
+@@ -121,7 +122,26 @@
+   let cellContent: React.ReactNode = null;
+ 
+   // Render specific columns with data from the first trace
+-  if (column.id === SESSION_COLUMN_ID) {
++  if (column.group === TracesTableColumnGroup.TAG) {
++    const key = getTagKeyFromColumnId(column.id);
++    const renderValues = (sessionTraces: ModelTraceInfoV3[]) => {
++      const values = key
++        ? [...new Set(sessionTraces.flatMap((trace) => (trace.tags?.[key] ? [trace.tags[key]] : [])))]
++        : [];
++      return values.length ? (
++        <Typography.Text ellipsis title={values.join(', ')}>
++          {values.join(', ')}
++        </Typography.Text>
++      ) : (
++        <NullCell isComparing={isComparing} />
++      );
++    };
++    cellContent = isComparing ? (
++      <StackedComponents first={renderValues(traces)} second={renderValues(otherTraces ?? [])} />
++    ) : (
++      renderValues(traces)
++    );
++  } else if (column.id === SESSION_COLUMN_ID) {
+     // Session ID column - render as a tag with link to session view
+     // In comparison mode, show both session IDs stacked only if they're different
+     const effectiveOtherSessionId = otherSessionId || (otherTraces?.[0] ? getSessionIdFromTrace(otherTraces[0]) : null);
+--- /dev/null
++++ b/mlflow/server/js/src/shared/web-shared/genai-traces-table/cellRenderers/SessionHeaderOpenWorldColumns.test.tsx
+@@ -0,0 +1,37 @@
++import { describe, expect, test } from '@jest/globals';
++import { render, screen } from '@testing-library/react';
++import { DesignSystemProvider } from '@databricks/design-system';
++import { IntlProvider } from '@databricks/i18n';
++import { SessionHeaderCell } from './SessionHeaderCellRenderers';
++import { createTestTraceInfoV3 } from '../test-fixtures/EvaluatedTraceTestUtils';
++import { OPEN_WORLD_TAG_COLUMNS } from '../components/OpenWorldTraceFilters';
++import { createTagColumnId } from '../utils/TraceUtils';
++import { TracesTableColumnGroup, TracesTableColumnType } from '../types';
++
++describe('Open World episode details', () => {
++  test.each(OPEN_WORLD_TAG_COLUMNS)('shows $label for both runs on the collapsed episode row', ({ key, label }) => {
++    render(
++      <IntlProvider locale="en">
++        <DesignSystemProvider>
++          <SessionHeaderCell
++            column={{
++              id: createTagColumnId(key),
++              label,
++              type: TracesTableColumnType.TRACE_INFO,
++              group: TracesTableColumnGroup.TAG,
++            }}
++            sessionId="first-episode"
++            otherSessionId="second-episode"
++            traces={[{ ...createTestTraceInfoV3('first', 'first', 'first'), tags: { [key]: 'Current run detail' } }]}
++            otherTraces={[
++              { ...createTestTraceInfoV3('second', 'second', 'second'), tags: { [key]: 'Comparison run detail' } },
++            ]}
++            isComparing
++          />
++        </DesignSystemProvider>
++      </IntlProvider>,
++    );
++    expect(screen.getByText('Current run detail')).toBeInTheDocument();
++    expect(screen.getByText('Comparison run detail')).toBeInTheDocument();
++  });
++});
+--- /dev/null
++++ b/mlflow/server/js/src/shared/web-shared/genai-traces-table/components/OpenWorldTraceFilters.test.tsx
+@@ -0,0 +1,110 @@
++import { beforeEach, describe, expect, jest, test } from '@jest/globals';
++import { render, screen, waitFor } from '@testing-library/react';
++import userEvent from '@testing-library/user-event';
++import { useState, type ReactNode } from 'react';
++import { DesignSystemProvider } from '@databricks/design-system';
++import { IntlProvider } from '@databricks/i18n';
++import { QueryClient, QueryClientProvider } from '../../query-client/queryClient';
++import { fetchAPI } from '../utils/FetchUtils';
++import { createMlflowSearchFilter } from '../hooks/useMlflowTraces';
++import { FilterOperator, TracesTableColumnGroup, type TableFilter } from '../types';
++import { OpenWorldTraceFilters, getOpenWorldFilterValue, setOpenWorldFilterValue } from './OpenWorldTraceFilters';
++
++jest.mock('../utils/FetchUtils', () => ({
++  ...jest.requireActual<typeof import('../utils/FetchUtils')>('../utils/FetchUtils'),
++  fetchAPI: jest.fn(),
++}));
++
++const locations = [{ type: 'MLFLOW_EXPERIMENT' as const, mlflow_experiment: { experiment_id: '1' } }];
++const trace = (scenario: string, target = 'target-a') => ({
++  tags: { step: '1', scenario_id: scenario, alignment_target_id: target },
++});
++
++const Harness = () => {
++  const [filters, setFilters] = useState<TableFilter[]>([
++    { column: TracesTableColumnGroup.TAG, key: 'adm', operator: FilterOperator.EQUALS, value: 'reviewer' },
++  ]);
++  return (
++    <>
++      <OpenWorldTraceFilters
++        locations={locations}
++        runUuids={['current', 'comparison']}
++        scenario={getOpenWorldFilterValue(filters, 'scenario_id')}
++        alignmentTarget={getOpenWorldFilterValue(filters, 'alignment_target_id')}
++        onScenarioChange={(value) => setFilters((current) => setOpenWorldFilterValue(current, 'scenario_id', value))}
++        onAlignmentTargetChange={(value) =>
++          setFilters((current) => setOpenWorldFilterValue(current, 'alignment_target_id', value))
++        }
++      />
++      <output aria-label="Trace search filter">{createMlflowSearchFilter(undefined, undefined, filters)}</output>
++    </>
++  );
++};
++
++const renderWithProviders = (children: ReactNode) =>
++  render(
++    <IntlProvider locale="en">
++      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
++        <DesignSystemProvider>{children}</DesignSystemProvider>
++      </QueryClientProvider>
++    </IntlProvider>,
++  );
++
++describe('Open World trace filters', () => {
++  beforeEach(() => jest.mocked(fetchAPI).mockReset());
++
++  test('offers options beyond 1000 traces from both runs, selects exact tags, and clears without removing existing filters', async () => {
++    jest.mocked(fetchAPI).mockImplementation(async (_url, options) => {
++      const body = options?.body as { filter: string; page_token?: string };
++      if (body.filter.includes("'comparison'")) return { traces: [trace('Comparison scenario', 'comparison-target')] };
++      if (!body.page_token)
++        {return { traces: Array.from({ length: 500 }, () => trace('First page')), next_page_token: 'second' };}
++      if (body.page_token === 'second')
++        {return { traces: Array.from({ length: 500 }, () => trace('Second page')), next_page_token: 'third' };}
++      return { traces: [trace("Scenario's final page")] };
++    });
++    const user = userEvent.setup();
++    renderWithProviders(<Harness />);
++    await waitFor(() =>
++      expect(screen.queryByText('Loading all scenario and alignment target options…')).not.toBeInTheDocument(),
++    );
++    await user.click(screen.getByRole('combobox', { name: 'Scenario' }));
++    await user.click(await screen.findByRole('option', { name: "Scenario's final page" }));
++    expect(screen.getByLabelText('Trace search filter')).toHaveTextContent(
++      "tags.scenario_id = 'Scenario''s final page'",
++    );
++    expect(screen.getByLabelText('Trace search filter')).toHaveTextContent("tags.adm = 'reviewer'");
++
++    await user.click(screen.getByRole('combobox', { name: 'Alignment target' }));
++    await user.click(await screen.findByRole('option', { name: 'comparison-target' }));
++    expect(screen.getByLabelText('Trace search filter')).toHaveTextContent(
++      "tags.alignment_target_id = 'comparison-target'",
++    );
++
++    await user.click(screen.getByRole('combobox', { name: 'Scenario' }));
++    await user.click(await screen.findByRole('option', { name: 'All scenarios' }));
++    expect(screen.getByLabelText('Trace search filter')).not.toHaveTextContent('scenario_id');
++    expect(screen.getByLabelText('Trace search filter')).toHaveTextContent(
++      "tags.alignment_target_id = 'comparison-target'",
++    );
++    expect(screen.getByLabelText('Trace search filter')).toHaveTextContent("tags.adm = 'reviewer'");
++    expect(fetchAPI).toHaveBeenCalledTimes(4);
++  });
++
++  test('reports a later-page failure instead of presenting a partial option list', async () => {
++    jest.mocked(fetchAPI).mockImplementation(async (_url, options) => {
++      const body = options?.body as { page_token?: string };
++      if (!body.page_token) return { traces: [trace('Incomplete option')], next_page_token: 'second' };
++      throw new Error('Unable to load next page');
++    });
++    const user = userEvent.setup();
++    renderWithProviders(
++      <OpenWorldTraceFilters locations={locations} onScenarioChange={() => {}} onAlignmentTargetChange={() => {}} />,
++    );
++    expect(await screen.findByRole('alert')).toHaveTextContent(
++      'Could not load all scenario and alignment target options',
++    );
++    await user.click(screen.getByRole('combobox', { name: 'Scenario' }));
++    expect(screen.queryByRole('option', { name: 'Incomplete option' })).not.toBeInTheDocument();
++  });
++});
+--- /dev/null
++++ b/mlflow/server/js/src/shared/web-shared/genai-traces-table/components/OpenWorldTraceFilters.tsx
+@@ -0,0 +1,147 @@
++import { useMemo, type ReactNode } from 'react';
++import { Button, Typography, useDesignSystemTheme } from '@databricks/design-system';
++import type { ModelTraceSearchLocation } from '../../model-trace-explorer/ModelTrace.types';
++import { useQuery } from '../../query-client/queryClient';
++import { createMlflowSearchFilter, searchMlflowTracesQueryFn } from '../hooks/useMlflowTraces';
++import { FilterOperator, TracesTableColumnGroup, type TableFilter } from '../types';
++import { TableFilterItemTypeahead } from './filters/TableFilterItemTypeahead';
++
++export const OPEN_WORLD_TAG_COLUMNS = [
++  { key: 'scenario_id', label: 'Scenario' },
++  { key: 'alignment_target_id', label: 'Alignment target' },
++  { key: 'adm', label: 'ADM' },
++  { key: 'llm', label: 'Model' },
++  { key: 'run', label: 'Run' },
++];
++
++export const getOpenWorldFilterValue = (filters: TableFilter[], key: string) =>
++  filters
++    .find(
++      (filter) =>
++        filter.column === TracesTableColumnGroup.TAG && filter.key === key && filter.operator === FilterOperator.EQUALS,
++    )
++    ?.value?.toString();
++
++export const setOpenWorldFilterValue = (
++  filters: TableFilter[],
++  key: string,
++  value: string | undefined,
++): TableFilter[] => [
++  ...filters.filter((filter) => filter.column !== TracesTableColumnGroup.TAG || filter.key !== key),
++  ...(value ? [{ column: TracesTableColumnGroup.TAG, key, operator: FilterOperator.EQUALS, value }] : []),
++];
++
++export const useOpenWorldEpisodeMetadata = ({
++  locations,
++  runUuids,
++}: {
++  locations: ModelTraceSearchLocation[];
++  runUuids?: string[];
++}) => {
++  const scope = [...new Set(runUuids?.filter(Boolean) ?? [])].sort();
++  return useQuery({
++    queryKey: ['open-world-trace-filter-options', locations, scope],
++    queryFn: async ({ signal }) => {
++      const results = await Promise.all(
++        (scope.length ? scope : [undefined]).map((runUuid) =>
++          searchMlflowTracesQueryFn({
++            signal,
++            locations,
++            filter: createMlflowSearchFilter(runUuid, undefined, [
++              { column: TracesTableColumnGroup.TAG, key: 'step', operator: FilterOperator.EQUALS, value: '1' },
++            ]),
++            limit: Infinity,
++          }),
++        ),
++      );
++      return results.flat();
++    },
++    refetchOnWindowFocus: false,
++  });
++};
++
++/** Episode metadata is constant across its actions, so the first action is sufficient for complete options. */
++export const OpenWorldTraceFilters = ({
++  locations,
++  runUuids,
++  scenario,
++  alignmentTarget,
++  onScenarioChange,
++  onAlignmentTargetChange,
++  children,
++}: {
++  locations: ModelTraceSearchLocation[];
++  runUuids?: string[];
++  scenario?: string;
++  alignmentTarget?: string;
++  onScenarioChange: (value: string | undefined) => void;
++  onAlignmentTargetChange: (value: string | undefined) => void;
++  children?: ReactNode;
++}) => {
++  const { theme } = useDesignSystemTheme();
++  const { data, isLoading, error, refetch } = useOpenWorldEpisodeMetadata({ locations, runUuids });
++  const [scenarios, targets] = useMemo(
++    () =>
++      ['scenario_id', 'alignment_target_id'].map((key) =>
++        [...new Set(data?.flatMap((trace) => (trace.tags?.[key] ? [trace.tags[key]] : [])) ?? [])].sort(),
++      ),
++    [data],
++  );
++
++  if (!isLoading && !error && !scenarios.length && !targets.length && !scenario && !alignmentTarget)
++    {return <>{children}</>;}
++
++  const renderSelector = (
++    label: string,
++    values: string[],
++    value: string | undefined,
++    onChange: (value: string | undefined) => void,
++  ) => {
++    const options = [
++      { value: '', renderValue: () => `All ${label === 'Scenario' ? 'scenarios' : 'alignment targets'}` },
++      ...[...new Set([...values, ...(value ? [value] : [])])]
++        .sort()
++        .map((item) => ({ value: item, renderValue: () => item })),
++    ];
++    return (
++      <div css={{ display: 'flex', alignItems: 'center', gap: theme.spacing.xs }}>
++        <Typography.Text>{label}</Typography.Text>
++        <TableFilterItemTypeahead
++          ariaLabel={label}
++          id={`open-world-${label === 'Scenario' ? 'scenario' : 'alignment-target'}`}
++          item={options.find((option) => option.value === (value ?? ''))}
++          query={{ data: options, isLoading }}
++          onChange={(next) => onChange(next || undefined)}
++          placeholder={`All ${label === 'Scenario' ? 'scenarios' : 'alignment targets'}`}
++          width={280}
++          canSearchCustomValue={false}
++        />
++      </div>
++    );
++  };
++
++  return (
++    <div
++      css={{
++        display: 'flex',
++        alignItems: 'center',
++        flexWrap: 'wrap',
++        gap: theme.spacing.sm,
++        paddingBottom: theme.spacing.sm,
++      }}
++    >
++      {renderSelector('Scenario', scenarios, scenario, onScenarioChange)}
++      {renderSelector('Alignment target', targets, alignmentTarget, onAlignmentTargetChange)}
++      {isLoading && <span role="status">Loading all scenario and alignment target options…</span>}
++      {error ? (
++        <div role="alert">
++          Could not load all scenario and alignment target options.{' '}
++          <Button componentId="mlflow.open-world.retry-episode-filters" onClick={() => refetch()}>
++            Retry
++          </Button>
++        </div>
++      ) : null}
++      {children}
++    </div>
++  );
++};
+--- a/mlflow/server/js/src/shared/web-shared/genai-traces-table/components/filters/TableFilterItemTypeahead.tsx
++++ b/mlflow/server/js/src/shared/web-shared/genai-traces-table/components/filters/TableFilterItemTypeahead.tsx
+@@ -26,6 +26,7 @@
+   placeholder,
+   width,
+   canSearchCustomValue,
++  ariaLabel,
+ }: {
+   id: string;
+   item?: TableFilterOption;
+@@ -35,6 +36,7 @@
+   placeholder: string;
+   width: number;
+   canSearchCustomValue: boolean;
++  ariaLabel?: string;
+ }) => {
+   const { theme } = useDesignSystemTheme();
+ 
+@@ -50,6 +52,7 @@
+       id={id}
+     >
+       <DialogComboboxTrigger
++        aria-label={ariaLabel}
+         withInlineLabel={false}
+         placeholder={placeholder}
+         renderDisplayedValue={() => item?.renderValue() ?? ''}
+--- a/mlflow/server/js/src/shared/web-shared/genai-traces-table/hooks/useMlflowTraces.test.tsx
++++ b/mlflow/server/js/src/shared/web-shared/genai-traces-table/hooks/useMlflowTraces.test.tsx
+@@ -2137,9 +2137,10 @@
+     invalidateMlflowSearchTracesCache({ queryClient });
+ 
+     // Verify that invalidateQueries was called with the correct key
+-    expect(invalidateQueriesSpy).toHaveBeenCalledTimes(1);
++    expect(invalidateQueriesSpy).toHaveBeenCalledTimes(2);
+     // @ts-expect-error 'queryKey' does not exist in type
+     expect(invalidateQueriesSpy).toHaveBeenCalledWith({ queryKey: ['searchMlflowTraces'] });
++    expect(invalidateQueriesSpy).toHaveBeenCalledWith(['open-world-trace-filter-options']);
+   });
+ });
+ 
+--- a/mlflow/server/js/src/shared/web-shared/genai-traces-table/hooks/useMlflowTraces.tsx
++++ b/mlflow/server/js/src/shared/web-shared/genai-traces-table/hooks/useMlflowTraces.tsx
+@@ -84,6 +84,7 @@
+ const TRACE_ID_LOOKUP_QUERY_KEY = 'traceIdLookup';
+ 
+ export const invalidateMlflowSearchTracesCache = ({ queryClient }: { queryClient: QueryClient }) => {
++  queryClient.invalidateQueries(['open-world-trace-filter-options']);
+   queryClient.invalidateQueries({ queryKey: [SEARCH_MLFLOW_TRACES_QUERY_KEY] });
+ };
+ 
+@@ -285,6 +286,8 @@
+     sqlWarehouseId,
+     enabled: !disabled,
+     orderBy,
++    limit: otherRunUuid ? Infinity : undefined,
++    enablePagination: !otherRunUuid,
+   });
+   const filteredTraces = useMemo(
+     () => (filterByAssessmentSourceRun ? filterTracesByAssessmentSourceRunId(traces, runUuid) : traces),
+@@ -303,6 +306,8 @@
+     loggedModelId,
+     sqlWarehouseId,
+     orderBy,
++    limit: Infinity,
++    enablePagination: false,
+   });
+ 
+   const filteredOtherTraces = useMemo(
+@@ -388,8 +393,8 @@
+       totalCount: evaluatedTraces.length,
+       evaluatedTraces,
+       otherEvaluatedTraces,
+-      isLoading: isInnerLoading && !disabled,
+-      error,
++      isLoading: (isInnerLoading || (Boolean(otherRunUuid) && isOtherInnerLoading)) && !disabled,
++      error: error || otherError,
+       isEmpty: evaluatedTraces.length === 0,
+       tableFilterOptions,
+     };
+@@ -397,7 +402,10 @@
+     assessmentInfos,
+     allColumns,
+     isInnerLoading,
++    isOtherInnerLoading,
++    otherRunUuid,
+     error,
++    otherError,
+     evaluatedTraces,
+     tableFilterOptions,
+     disabled,
+@@ -900,6 +908,7 @@
+         loggedModelId,
+         sqlWarehouseQueryKey,
+         pageSize: pageSizeProp,
++        limit: limitProp === Infinity ? 'all' : limitProp,
+       },
+     ],
+     queryFn: ({ signal }) =>
+@@ -996,7 +1005,9 @@
+             ) {
+               filter.push(`${fieldName} ${networkFilter.operator}`);
+             } else {
+-              filter.push(`${fieldName} ${networkFilter.operator} '${networkFilter.value}'`);
++              filter.push(
++                `${fieldName} ${networkFilter.operator} '${String(networkFilter.value).replace(/'/g, "''")}'`,
++              );
+             }
+           }
+           break;
+--- /dev/null
++++ b/mlflow/server/js/src/shared/web-shared/genai-traces-table/utils/SessionGroupingUtils.intg.test.tsx
+@@ -0,0 +1,225 @@
++import { describe, expect, test } from '@jest/globals';
++import { screen, within } from '@testing-library/react';
++
++import { SESSION_ID_METADATA_KEY } from '../../model-trace-explorer/constants';
++import type { ModelTraceInfoV3 } from '../../model-trace-explorer/ModelTrace.types';
++import { renderWithProviders } from '../../traces-table/test-utils/renderWithProviders';
++import { computeEvaluationsComparison } from '../GenAiTracesTable.utils';
++import { GenAiTracesTableSessionGroupedRows } from '../GenAiTracesTableSessionGroupedRows';
++import { INPUTS_COLUMN_ID, SESSION_COLUMN_ID } from '../hooks/useTableColumns';
++import { TracesTableColumnType, type RunEvaluationTracesDataEntry } from '../types';
++import {
++  groupTracesBySessionForTable,
++  SIMULATION_GOAL_KEY,
++  SIMULATION_PERSONA_KEY,
++  type OpenWorldComparisonContext,
++} from './SessionGroupingUtils';
++
++const episode = (sessionId: string, scenario = 'scenario-1', target = 'target-1', steps = 1): ModelTraceInfoV3[] =>
++  Array.from({ length: steps }, (_, index) => ({
++    trace_id: `${sessionId}-step-${index}`,
++    trace_location: { type: 'MLFLOW_EXPERIMENT', mlflow_experiment: { experiment_id: 'exp-1' } },
++    request_time: `2026-10-24T12:00:0${index}.000Z`,
++    request_preview: `${sessionId} action ${index}`,
++    state: 'OK',
++    tags: { 'align.run_key': sessionId, scenario_id: scenario, alignment_target_id: target },
++    trace_metadata: { [SESSION_ID_METADATA_KEY]: sessionId },
++  }));
++
++const evaluation = (traceInfo: ModelTraceInfoV3): RunEvaluationTracesDataEntry => ({
++  evaluationId: traceInfo.trace_id,
++  requestId: traceInfo.trace_id,
++  inputsId: traceInfo.trace_id,
++  inputs: {},
++  outputs: {},
++  targets: {},
++  overallAssessments: [],
++  responseAssessmentsByName: {},
++  metrics: {},
++  traceInfo,
++});
++
++const renderComparison = async (
++  current: ModelTraceInfoV3[],
++  other: ModelTraceInfoV3[],
++  allowOpenWorldCaseMatching = true,
++  openWorldComparisonContext?: OpenWorldComparisonContext,
++) => {
++  const entries = computeEvaluationsComparison(current.map(evaluation), other.map(evaluation));
++  const expandedSessions = new Set(
++    [...current, ...other].map((trace) => trace.trace_metadata?.[SESSION_ID_METADATA_KEY] ?? ''),
++  );
++  const { groupedRows } = groupTracesBySessionForTable(
++    entries,
++    expandedSessions,
++    true,
++    allowOpenWorldCaseMatching,
++    openWorldComparisonContext,
++  );
++  await renderWithProviders(
++    <GenAiTracesTableSessionGroupedRows
++      rows={[]}
++      groupedRows={groupedRows}
++      isComparing
++      rowSelectionState={undefined}
++      virtualItems={groupedRows.map((_, index) => ({
++        key: index,
++        index,
++        start: index * 100,
++        end: (index + 1) * 100,
++        size: 100,
++        lane: 0,
++      }))}
++      virtualizerTotalSize={groupedRows.length * 100}
++      virtualizerMeasureElement={() => {}}
++      selectedColumns={[
++        { id: SESSION_COLUMN_ID, label: 'Session', type: TracesTableColumnType.TRACE_INFO },
++        { id: INPUTS_COLUMN_ID, label: 'Input', type: TracesTableColumnType.TRACE_INFO },
++      ]}
++      expandedSessions={expandedSessions}
++      toggleSessionExpanded={() => {}}
++      experimentId="exp-1"
++    />,
++  );
++};
++
++const expectOriginalSessionLink = (row: HTMLElement, sessionId: string) => {
++  expect(within(row).getByRole('link', { name: sessionId })).toHaveAttribute(
++    'href',
++    expect.stringMatching(new RegExp(`^(\\/ml)?\\/experiments\\/exp-1\\/chat-sessions\\/${sessionId}$`)),
++  );
++};
++
++describe('Open World episode comparison rows', () => {
++  test('pairs different original sessions for the same case without aligning divergent action steps', async () => {
++    await renderComparison(
++      episode('adm-a', 'scenario-1', 'target-1', 2),
++      episode('adm-b', 'scenario-1', 'target-1', 3),
++    );
++
++    const rows = screen.getAllByRole('row');
++    expect(rows).toHaveLength(1);
++    expectOriginalSessionLink(rows[0], 'adm-a');
++    expectOriginalSessionLink(rows[0], 'adm-b');
++    expect(within(rows[0]).getByText('adm-a action 0')).toBeInTheDocument();
++    expect(within(rows[0]).getByText('adm-b action 0')).toBeInTheDocument();
++    expect(screen.queryByText('adm-a action 1')).not.toBeInTheDocument();
++    expect(screen.queryByText('adm-b action 2')).not.toBeInTheDocument();
++    expect(screen.queryByText('null')).not.toBeInTheDocument();
++  });
++
++  test.each([
++    ['different target', 'scenario-1', 'target-2'],
++    ['different scenario', 'scenario-2', 'target-1'],
++  ])('keeps a %s on a separate row', async (_, scenario, target) => {
++    await renderComparison(episode('adm-a'), episode('adm-b', scenario, target));
++    const rows = screen.getAllByRole('row');
++    expect(rows).toHaveLength(2);
++    expectOriginalSessionLink(rows[0], 'adm-a');
++    expectOriginalSessionLink(rows[1], 'adm-b');
++    rows.forEach((row) => expect(within(row).getByText('null')).toBeInTheDocument());
++  });
++
++  test('retains a case that exists only in the comparison run', async () => {
++    await renderComparison(episode('adm-a'), [...episode('adm-b'), ...episode('only-b', 'scenario-2')]);
++    const rows = screen.getAllByRole('row');
++    expect(rows).toHaveLength(2);
++    expectOriginalSessionLink(rows[0], 'adm-a');
++    expectOriginalSessionLink(rows[0], 'adm-b');
++    expectOriginalSessionLink(rows[1], 'only-b');
++    expect(within(rows[1]).getByText('null')).toBeInTheDocument();
++  });
++
++  test.each(['current', 'other'])('does not pair repeated cases on the %s side by ordinal', async (side) => {
++    const repeated = [...episode('repeat-1'), ...episode('repeat-2')];
++    const single = episode('single');
++    await renderComparison(side === 'current' ? repeated : single, side === 'current' ? single : repeated);
++    const rows = screen.getAllByRole('row');
++    expect(rows).toHaveLength(3);
++    rows.forEach((row) => {
++      expect(within(row).getAllByRole('link')).toHaveLength(1);
++      expect(within(row).getByText('null')).toBeInTheDocument();
++    });
++  });
++
++  test.each(['missing target', 'inconsistent target'])(
++    'does not infer a match from %s or simulation metadata',
++    async (condition) => {
++      const current = episode('adm-a', 'scenario-1', 'target-1', 2);
++      current[1].tags = { ...current[1].tags, alignment_target_id: condition === 'missing target' ? '' : 'target-2' };
++      const other = episode('adm-b');
++      [...current, ...other].forEach((trace) => {
++        trace.trace_metadata = {
++          ...trace.trace_metadata,
++          [SIMULATION_GOAL_KEY]: 'same-goal',
++          [SIMULATION_PERSONA_KEY]: 'same-persona',
++        };
++      });
++      await renderComparison(current, other);
++      expect(screen.getAllByRole('row')).toHaveLength(2);
++      expect(screen.getAllByText('null')).toHaveLength(2);
++    },
++  );
++
++  test('matches an explicit unaligned target without treating missing targets as unaligned', async () => {
++    await renderComparison(episode('adm-a', 'scenario-1', 'unaligned'), episode('adm-b', 'scenario-1', 'unaligned'));
++    const rows = screen.getAllByRole('row');
++    expect(rows).toHaveLength(1);
++    expectOriginalSessionLink(rows[0], 'adm-a');
++    expectOriginalSessionLink(rows[0], 'adm-b');
++  });
++
++  test('keeps filtered episodes separate even when their visible case metadata is unique', async () => {
++    await renderComparison(episode('adm-a'), episode('adm-b'), false);
++    expect(screen.getAllByRole('row')).toHaveLength(2);
++    expect(screen.getAllByText('null')).toHaveLength(2);
++  });
++
++  test.each(['missing target', 'inconsistent target'])(
++    'does not pair an episode when a hidden action has %s in the complete run',
++    async (condition) => {
++      const current = episode('adm-a', 'scenario-1', 'target-1', 2);
++      current[1].tags = {
++        ...current[1].tags,
++        alignment_target_id: condition === 'missing target' ? '' : 'target-2',
++      };
++      const other = episode('adm-b');
++      await renderComparison(current.slice(0, 1), other, true, { current, other });
++      const rows = screen.getAllByRole('row');
++      expect(rows).toHaveLength(2);
++      expectOriginalSessionLink(rows[0], 'adm-a');
++      expectOriginalSessionLink(rows[1], 'adm-b');
++      expect(screen.getAllByText('null')).toHaveLength(2);
++    },
++  );
++
++  test('does not pair a case when another episode is hidden from its complete run', async () => {
++    const current = [...episode('adm-a'), ...episode('repeat-a')];
++    const other = episode('adm-b');
++    await renderComparison(current.slice(0, 1), other, true, { current, other });
++    expect(screen.getAllByRole('row')).toHaveLength(2);
++    expect(screen.getAllByText('null')).toHaveLength(2);
++    expect(screen.queryByRole('link', { name: 'repeat-a' })).not.toBeInTheDocument();
++  });
++
++  test.each(['session ID', 'simulation goal and persona'])('preserves generic matching by %s', async (kind) => {
++    const current = episode('generic-a');
++    const other = episode(kind === 'session ID' ? 'generic-a' : 'generic-b');
++    [...current, ...other].forEach((trace) => {
++      trace.tags = {};
++      if (kind === 'simulation goal and persona') {
++        trace.trace_metadata = {
++          ...trace.trace_metadata,
++          [SIMULATION_GOAL_KEY]: 'goal',
++          [SIMULATION_PERSONA_KEY]: 'persona',
++        };
++      }
++    });
++    await renderComparison(current, other, false);
++    const rows = screen.getAllByRole('row');
++    expect(rows).toHaveLength(1);
++    expectOriginalSessionLink(rows[0], 'generic-a');
++    if (kind === 'simulation goal and persona') expectOriginalSessionLink(rows[0], 'generic-b');
++    expect(screen.queryByText('null')).not.toBeInTheDocument();
++  });
++});
+--- a/mlflow/server/js/src/shared/web-shared/genai-traces-table/utils/SessionGroupingUtils.ts
++++ b/mlflow/server/js/src/shared/web-shared/genai-traces-table/utils/SessionGroupingUtils.ts
+@@ -4,7 +4,7 @@
+ import type { EvalTraceComparisonEntry } from '../types';
+ import { shouldEnableSessionGrouping } from './FeatureUtils';
+ 
+-export interface SessionHeaderRowData {
++export type SessionHeaderRowData = {
+   type: 'sessionHeader';
+   sessionId: string;
+   otherSessionId?: string;
+@@ -12,7 +12,18 @@
+   otherTraces?: ModelTraceInfoV3[];
+   goal?: string;
+   persona?: string;
+-}
++  comparisonMatchWarning?: OpenWorldComparisonWarning;
++};
++
++export type OpenWorldComparisonWarning =
++  | 'repeated-scenario-target'
++  | 'missing-or-inconsistent-scenario-target'
++  | 'filtered-comparison';
++
++export type OpenWorldComparisonContext = {
++  current: ModelTraceInfoV3[];
++  other: ModelTraceInfoV3[];
++};
+ 
+ export type GroupedTraceTableRowData =
+   | { type: 'trace'; data: EvalTraceComparisonEntry; sessionId?: string }
+@@ -26,6 +37,68 @@
+  */
+ const getSessionIdFromTrace = (trace: ModelTraceInfoV3): string | null => {
+   return trace.trace_metadata?.[SESSION_ID_METADATA_KEY] ?? null;
++};
++
++type OpenWorldSession = { caseKey: string | null };
++
++const openWorldSessions = (traces: ModelTraceInfoV3[]) => {
++  const tracesBySession = new Map<string, ModelTraceInfoV3[]>();
++  for (const trace of traces) {
++    const sessionId = getSessionIdFromTrace(trace);
++    if (sessionId) {
++      const sessionTraces = tracesBySession.get(sessionId) ?? [];
++      sessionTraces.push(trace);
++      tracesBySession.set(sessionId, sessionTraces);
++    }
++  }
++  const sessions = new Map<string, OpenWorldSession>();
++  for (const [sessionId, sessionTraces] of tracesBySession) {
++    if (!sessionTraces.some((trace) => trace.tags?.['align.run_key'])) continue;
++    const runKeys = new Set(sessionTraces.map((trace) => trace.tags?.['align.run_key']));
++    const caseKeys = new Set(
++      sessionTraces.map((trace) => {
++        const scenario = trace.tags?.['scenario_id'];
++        const target = trace.tags?.['alignment_target_id'];
++        return scenario && target ? JSON.stringify([scenario, target]) : null;
++      }),
++    );
++    sessions.set(sessionId, {
++      caseKey:
++        runKeys.size === 1 && [...runKeys].every(Boolean) && caseKeys.size === 1 ? ([...caseKeys][0] ?? null) : null,
++    });
++  }
++  return sessions;
++};
++
++const repeatedCaseKeys = (sessions: Map<string, OpenWorldSession>) => {
++  const counts = new Map<string, number>();
++  for (const { caseKey } of sessions.values()) {
++    if (caseKey) counts.set(caseKey, (counts.get(caseKey) ?? 0) + 1);
++  }
++  return new Set([...counts].filter(([, count]) => count > 1).map(([key]) => key));
++};
++
++const openWorldComparison = (entries: EvalTraceComparisonEntry[], context?: OpenWorldComparisonContext) => {
++  const current = openWorldSessions(
++    context?.current ??
++      entries.flatMap((entry) => (entry.currentRunValue?.traceInfo ? [entry.currentRunValue.traceInfo] : [])),
++  );
++  const other = openWorldSessions(
++    context?.other ??
++      entries.flatMap((entry) => (entry.otherRunValue?.traceInfo ? [entry.otherRunValue.traceInfo] : [])),
++  );
++  return { current, other, repeated: new Set([...repeatedCaseKeys(current), ...repeatedCaseKeys(other)]) };
++};
++
++export const getOpenWorldComparisonWarnings = (
++  entries: EvalTraceComparisonEntry[],
++  context?: OpenWorldComparisonContext,
++) => {
++  const { current, other, repeated } = openWorldComparison(entries, context);
++  return {
++    repeatedCases: repeated.size,
++    incompleteSessions: [...current.values(), ...other.values()].filter(({ caseKey }) => !caseKey).length,
++  };
+ };
+ 
+ /**
+@@ -58,7 +131,7 @@
+   return `unmatched:${trace.trace_id}`;
+ };
+ 
+-interface SessionData {
++type SessionData = {
+   sessionId: string;
+   otherSessionId?: string;
+   matchKey: string;
+@@ -66,7 +139,8 @@
+   otherTraces: ModelTraceInfoV3[];
+   goal?: string;
+   persona?: string;
+-}
++  comparisonMatchWarning?: OpenWorldComparisonWarning;
++};
+ 
+ /**
+  * Groups traces by session for display in a table.
+@@ -74,21 +148,47 @@
+  * 1. A sessionHeader row containing all traces in that session
+  * 2. Individual trace rows for each trace in the session (only if session is expanded)
+  *
+- * When comparing runs, sessions are matched by session ID or by goal/persona metadata.
++ * Open World episodes match by scenario and target only when the complete case has
++ * one session on each side. Repetitions require an explicit trial identity to pair.
++ * Other sessions match by session ID or goal/persona metadata.
+  * Traces without a session ID are appended at the end as standalone trace rows.
+  *
+  * @param currentEvaluationResults - The evaluation entries to group
+  * @param expandedSessions - Set of session IDs that are expanded (show trace rows)
+  * @param isComparing - Whether we're in comparison mode
++ * @param allowOpenWorldCaseMatching - Whether the caller has loaded complete cases on both sides
++ * @param openWorldComparisonContext - Unfiltered runs used to validate filtered episode rows
+  */
+ export const groupTracesBySessionForTable = (
+   currentEvaluationResults: EvalTraceComparisonEntry[],
+   expandedSessions: Set<string>,
+   isComparing?: boolean,
++  allowOpenWorldCaseMatching = false,
++  openWorldComparisonContext?: OpenWorldComparisonContext,
+ ): { groupedRows: GroupedTraceTableRowData[]; traceIdToTurnMap: Record<string, number> } => {
+   const sessionDataMap: Record<string, SessionData> = {};
+   const standaloneEntries: EvalTraceComparisonEntry[] = [];
+   const processedOtherTraceIds = new Set<string>();
++  const openWorld =
++    isComparing && shouldEnableSessionGrouping()
++      ? openWorldComparison(currentEvaluationResults, openWorldComparisonContext)
++      : undefined;
++  const matchSession = (trace: ModelTraceInfoV3, side: 'current' | 'other') => {
++    const sessionId = getSessionIdFromTrace(trace);
++    const recorded = sessionId ? openWorld?.[side].get(sessionId) : undefined;
++    if (!recorded) return { key: getSessionMatchKey(trace, isComparing), warning: undefined };
++    const warning: OpenWorldComparisonWarning | undefined = !allowOpenWorldCaseMatching
++      ? 'filtered-comparison'
++      : !recorded.caseKey
++        ? 'missing-or-inconsistent-scenario-target'
++        : openWorld?.repeated.has(recorded.caseKey)
++          ? 'repeated-scenario-target'
++          : undefined;
++    return {
++      key: warning ? `open-world-unmatched:${side}:${sessionId}` : `open-world:${recorded.caseKey}`,
++      warning,
++    };
++  };
+ 
+   // First pass: Group all current run traces by their match key
+   currentEvaluationResults.forEach((entry) => {
+@@ -97,7 +197,7 @@
+       return;
+     }
+ 
+-    const matchKey = getSessionMatchKey(traceInfo, isComparing);
++    const { key: matchKey, warning } = matchSession(traceInfo, 'current');
+     const sessionId = getSessionIdFromTrace(traceInfo);
+ 
+     // Handle traces without session ID or goal/persona as standalone
+@@ -116,6 +216,7 @@
+         otherTraces: [],
+         goal,
+         persona,
++        comparisonMatchWarning: warning,
+       };
+     }
+     sessionDataMap[matchKey].currentTraces.push(traceInfo);
+@@ -135,7 +236,7 @@
+       }
+       processedOtherTraceIds.add(traceId);
+ 
+-      const matchKey = getSessionMatchKey(otherTraceInfo, isComparing);
++      const { key: matchKey, warning } = matchSession(otherTraceInfo, 'other');
+       const sessionId = getSessionIdFromTrace(otherTraceInfo);
+ 
+       // Handle traces without session ID or goal/persona as standalone
+@@ -165,6 +266,7 @@
+           otherTraces: [otherTraceInfo],
+           goal,
+           persona,
++          comparisonMatchWarning: warning,
+         };
+       }
+     });
+@@ -175,7 +277,8 @@
+ 
+   // Process each session: add header followed by trace rows (if expanded)
+   Object.values(sessionDataMap).forEach((sessionData) => {
+-    const { sessionId, otherSessionId, currentTraces, otherTraces, goal, persona } = sessionData;
++    const { sessionId, otherSessionId, currentTraces, otherTraces, goal, persona, comparisonMatchWarning } =
++      sessionData;
+ 
+     if (currentTraces.length === 0 && otherTraces.length === 0) {
+       return;
+@@ -203,6 +306,7 @@
+       otherTraces: isComparing ? sortedOtherTraces : undefined,
+       goal,
+       persona,
++      comparisonMatchWarning,
+     });
+ 
+     // Add individual trace rows only if session is expanded and not comparing
 --- a/mlflow/server/js/src/shared/web-shared/traces-table/TraceCell.test.tsx
 +++ b/mlflow/server/js/src/shared/web-shared/traces-table/TraceCell.test.tsx
 @@ -2,8 +2,8 @@
@@ -718,11 +3625,10 @@
    });
  
    test('passes all child traces to an extra column session renderer', async () => {
-@@ -279,6 +364,45 @@
-     expect(screen.getByText('2 assessed traces')).toBeInTheDocument();
+@@ -280,6 +365,45 @@
      expect(renderSessionCell).toHaveBeenCalledWith(traces);
    });
-+
+ 
 +  test.each([false, true])(
 +    'partial sessions show descriptive cells and hide aggregates (reorderable: %s)',
 +    async (reorderable) => {
@@ -761,9 +3667,70 @@
 +      expect(screen.queryByText('incomplete score total')).not.toBeInTheDocument();
 +    },
 +  );
- 
++
    test('selecting a session header selects all traces in that session', async () => {
      const onToggleBulkRows = jest.fn();
+     const onSessionSelected = jest.fn();
+@@ -292,6 +416,59 @@
+     expect(onToggleBulkRows).toHaveBeenCalledWith(traces);
+     expect(onSessionSelected).not.toHaveBeenCalled();
+   });
++
++  test.each([false, true])(
++    'session selection uses original IDs and leaves expanded actions unselectable (reorderable: %s)',
++    async (reorderable) => {
++      const traces = [
++        makeSessionTrace('s1-turn-1', 's1'),
++        makeSessionTrace('s1-turn-2', 's1'),
++        makeSessionTrace('s2-turn-1', 's2'),
++        makeTrace('standalone'),
++      ];
++      const onToggleSessionSelection = jest.fn();
++      const onToggleBulkRows = jest.fn();
++      const onToggleBulkRow = jest.fn();
++      const onToggleBulkAll = jest.fn();
++      const onSessionSelected = jest.fn();
++      await renderWithProviders(
++        <TracesTable
++          {...baseProps({
++            traces,
++            visibleColumns: ['session', 'input'],
++            isGroupedBySession: true,
++            sessionsMayBeIncomplete: true,
++            selectedForBulk: new Map(traces.slice(0, 2).map((trace) => [trace.trace_id, trace])),
++            selectedSessionIds: new Set(['s2']),
++            isSomeOnPageSelected: true,
++            onToggleSessionSelection,
++            onToggleBulkRows,
++            onToggleBulkRow,
++            onToggleBulkAll,
++            onSessionSelected,
++            onReorderColumn: reorderable ? jest.fn() : undefined,
++          })}
++        />,
++      );
++
++      expect(screen.getByRole('checkbox', { name: 'Select session s1' })).not.toBeChecked();
++      expect(screen.getByRole('checkbox', { name: 'Select session s2' })).toBeChecked();
++      const selectAll = screen.getByRole('checkbox', { name: 'Select all sessions on page' });
++      expect(selectAll).toBePartiallyChecked();
++      await userEvent.click(screen.getByRole('checkbox', { name: 'Select session s1' }));
++      expect(onToggleSessionSelection).toHaveBeenCalledWith('s1', traces[0]);
++      expect(onToggleBulkRows).not.toHaveBeenCalled();
++      expect(onSessionSelected).not.toHaveBeenCalled();
++
++      await userEvent.click(screen.getByRole('button', { name: 'Expand session s1' }));
++      expect(screen.getByText('request for s1-turn-2')).toBeInTheDocument();
++      expect(screen.queryByRole('checkbox', { name: /Select trace/ })).not.toBeInTheDocument();
++      expect(screen.getAllByRole('checkbox')).toHaveLength(3);
++      expect(onToggleBulkRow).not.toHaveBeenCalled();
++      await userEvent.click(selectAll);
++      expect(onToggleBulkAll).toHaveBeenCalledTimes(1);
++    },
++  );
+ 
+   test('Shift-clicking a row checkbox requests a range selection in flat mode', async () => {
+     const onToggleBulkRow = jest.fn();
 --- a/mlflow/server/js/src/shared/web-shared/traces-table/TracesTable.tsx
 +++ b/mlflow/server/js/src/shared/web-shared/traces-table/TracesTable.tsx
 @@ -49,6 +49,7 @@
@@ -774,7 +3741,41 @@
  
  // No-op sort handlers for non-sortable columns (their header menu omits the sort items anyway).
  const noop = () => {};
-@@ -370,28 +371,11 @@
+@@ -274,6 +275,9 @@
+   onToggleBulkRow: (trace: ModelTraceInfoV3, selectRange?: boolean) => void;
+   /** Toggle-select every trace in a session header row; omit to disable session-level selection. */
+   onToggleBulkRows?: (traces: ModelTraceInfoV3[]) => void;
++  /** Select grouped sessions by identity, including sessions split across pages. */
++  selectedSessionIds?: ReadonlySet<string>;
++  onToggleSessionSelection?: (sessionId: string, trace: ModelTraceInfoV3) => void;
+   onToggleBulkAll: () => void;
+   sort: TraceColumnId;
+   dir: SortDirection;
+@@ -347,6 +351,8 @@
+     isSomeOnPageSelected,
+     onToggleBulkRow,
+     onToggleBulkRows,
++    selectedSessionIds,
++    onToggleSessionSelection,
+     onToggleBulkAll,
+     sort,
+     dir,
+@@ -365,33 +371,26 @@
+   }: TracesTableProps) {
+     const { theme } = useDesignSystemTheme();
+     const intl = useIntl();
++    const isSessionSelectionMode = isGroupedBySession && onToggleSessionSelection !== undefined;
++    const selectAllLabel = isSessionSelectionMode
++      ? intl.formatMessage({
++          defaultMessage: 'Select all sessions on page',
++          description: 'Aria label for selecting visible grouped session identities',
++        })
++      : intl.formatMessage({
++          defaultMessage: 'Select all traces on this page',
++          description: 'Aria label for the select-all checkbox in the traces table header',
++        });
+     // Keep the checkbox centered and leave a full spacing token before the first data column.
+     const selectCellCss = {
        '.table-row-select-cell': { alignItems: 'center', paddingRight: theme.spacing.sm },
      } as const;
  
@@ -805,7 +3806,7 @@
          if (column.id === undefined) {
            return column;
          }
-@@ -408,18 +392,19 @@
+@@ -408,18 +407,19 @@
          const maxSize = contentMaxSize ?? Math.max(column.maxSize ?? 0, persistedSize ?? 0);
          return { ...column, maxSize };
        });
@@ -830,7 +3831,7 @@
      );
  
      const meta = useMemo<TracesTableMeta>(
-@@ -649,10 +634,12 @@
+@@ -649,10 +649,12 @@
        );
  
      const renderSessionHeaderCell = (sessionId: string, trace: ModelTraceInfoV3) => {
@@ -845,7 +3846,7 @@
          </Tag>
        );
        const sessionHref = getSessionHref?.({ trace, sessionId });
-@@ -660,6 +647,7 @@
+@@ -660,6 +662,7 @@
          <Link
            componentId={`${COMPONENT_ID}.session-link`}
            to={sessionHref}
@@ -853,7 +3854,7 @@
            onClick={(event) => event.stopPropagation()}
          >
            {tag}
-@@ -676,6 +664,15 @@
+@@ -676,6 +679,15 @@
      ) => {
        const isSelected = row.id === selectedTraceId;
        const isBulkChecked = selectedForBulk.has(row.original.trace_id);
@@ -869,7 +3870,22 @@
        return (
          <TableRow
            key={row.id}
-@@ -717,14 +714,8 @@
+@@ -702,8 +714,13 @@
+         >
+           <TableRowSelectCell
+             componentId={`${COMPONENT_ID}.row-select`}
++            noCheckbox={isSessionSelectionMode}
+             checked={isBulkChecked}
+-            onChange={(event) => onToggleBulkRow(row.original, !isGroupedBySession && isShiftModifiedEvent(event))}
++            onChange={
++              isSessionSelectionMode
++                ? undefined
++                : (event) => onToggleBulkRow(row.original, !isGroupedBySession && isShiftModifiedEvent(event))
++            }
+             checkboxLabel={intl.formatMessage(
+               {
+                 defaultMessage: 'Select trace {traceId}',
+@@ -717,14 +734,8 @@
            {row.getVisibleCells().map((cell) => (
              <TableCell key={cell.id} css={{ verticalAlign: 'middle' }} style={columnStyles.get(cell.column.id)}>
                {cell.column.id === 'session' && sessionTurnNumber !== undefined ? (
@@ -886,7 +3902,50 @@
                  </Tag>
                ) : (
                  flexRender(cell.column.columnDef.cell, cell.getContext())
-@@ -943,12 +934,7 @@
+@@ -779,10 +790,7 @@
+                   checked={isAllOnPageSelected}
+                   indeterminate={isSomeOnPageSelected && !isAllOnPageSelected}
+                   onChange={onToggleBulkAll}
+-                  checkboxLabel={intl.formatMessage({
+-                    defaultMessage: 'Select all traces on this page',
+-                    description: 'Aria label for the select-all checkbox in the traces table header',
+-                  })}
++                  checkboxLabel={selectAllLabel}
+                 />
+                 {isGroupedBySession && renderSessionToggleSpacer()}
+                 <SortableContext items={reorderableHeaderIds} strategy={horizontalListSortingStrategy}>
+@@ -876,15 +884,25 @@
+                           >
+                             <TableRowSelectCell
+                               componentId={`${COMPONENT_ID}.session-select`}
+-                              checked={selectedCount === tracesInSession.length}
+-                              indeterminate={selectedCount > 0 && selectedCount < tracesInSession.length}
+-                              isDisabled={!onToggleBulkRows}
+-                              onChange={() => onToggleBulkRows?.(tracesInSession)}
++                              checked={
++                                isSessionSelectionMode
++                                  ? (selectedSessionIds?.has(sessionId) ?? false)
++                                  : selectedCount === tracesInSession.length
++                              }
++                              indeterminate={
++                                !isSessionSelectionMode && selectedCount > 0 && selectedCount < tracesInSession.length
++                              }
++                              isDisabled={!isSessionSelectionMode && !onToggleBulkRows}
++                              onChange={() =>
++                                isSessionSelectionMode
++                                  ? onToggleSessionSelection?.(sessionId, tracesInSession[0])
++                                  : onToggleBulkRows?.(tracesInSession)
++                              }
+                               {...stopPropagationProps}
+                               checkboxLabel={intl.formatMessage(
+                                 {
+                                   defaultMessage: 'Select session {sessionId}',
+-                                  description: 'Aria label for selecting every trace in a grouped session',
++                                  description: 'Aria label for selecting a grouped session',
+                                 },
+                                 { sessionId },
+                               )}
+@@ -943,12 +961,7 @@
                                            ? flexRender(firstCell.column.columnDef.cell, firstCell.getContext())
                                            : header.column.id === 'state' && lastCell
                                              ? flexRender(lastCell.column.columnDef.cell, lastCell.getContext())
@@ -900,7 +3959,50 @@
                                  </TableCell>
                                );
                              })}
-@@ -1142,9 +1128,7 @@
+@@ -983,10 +996,7 @@
+                 checked={isAllOnPageSelected}
+                 indeterminate={isSomeOnPageSelected && !isAllOnPageSelected}
+                 onChange={onToggleBulkAll}
+-                checkboxLabel={intl.formatMessage({
+-                  defaultMessage: 'Select all traces on this page',
+-                  description: 'Aria label for the select-all checkbox in the traces table header',
+-                })}
++                checkboxLabel={selectAllLabel}
+               />
+               {isGroupedBySession && renderSessionToggleSpacer()}
+               {leafHeaders.map((header) => {
+@@ -1075,15 +1085,25 @@
+                         >
+                           <TableRowSelectCell
+                             componentId={`${COMPONENT_ID}.session-select`}
+-                            checked={selectedCount === tracesInSession.length}
+-                            indeterminate={selectedCount > 0 && selectedCount < tracesInSession.length}
+-                            isDisabled={!onToggleBulkRows}
+-                            onChange={() => onToggleBulkRows?.(tracesInSession)}
++                            checked={
++                              isSessionSelectionMode
++                                ? (selectedSessionIds?.has(sessionId) ?? false)
++                                : selectedCount === tracesInSession.length
++                            }
++                            indeterminate={
++                              !isSessionSelectionMode && selectedCount > 0 && selectedCount < tracesInSession.length
++                            }
++                            isDisabled={!isSessionSelectionMode && !onToggleBulkRows}
++                            onChange={() =>
++                              isSessionSelectionMode
++                                ? onToggleSessionSelection?.(sessionId, tracesInSession[0])
++                                : onToggleBulkRows?.(tracesInSession)
++                            }
+                             {...stopPropagationProps}
+                             checkboxLabel={intl.formatMessage(
+                               {
+                                 defaultMessage: 'Select session {sessionId}',
+-                                description: 'Aria label for selecting every trace in a grouped session',
++                                description: 'Aria label for selecting a grouped session',
+                               },
+                               { sessionId },
+                             )}
+@@ -1142,9 +1162,7 @@
                                          ? flexRender(firstCell.column.columnDef.cell, firstCell.getContext())
                                          : header.column.id === 'state' && lastCell
                                            ? flexRender(lastCell.column.columnDef.cell, lastCell.getContext())
@@ -911,6 +4013,84 @@
                                </TableCell>
                              );
                            })}
+--- a/mlflow/server/js/src/shared/web-shared/traces-table/TracesTableView.test.tsx
++++ b/mlflow/server/js/src/shared/web-shared/traces-table/TracesTableView.test.tsx
+@@ -1,6 +1,7 @@
+ import { describe, expect, test, jest } from '@jest/globals';
+ import { screen } from '@testing-library/react';
+ import userEvent from '@testing-library/user-event';
++import { useState } from 'react';
+ import { TracesTableView, type TracesTableViewProps, type TracesTableViewState } from './TracesTableView';
+ import { useBulkTraceSelection } from './hooks/useBulkTraceSelection';
+ import { makeSessionTrace, makeTraces } from './test-utils/mockTraces';
+@@ -123,6 +124,47 @@
+     expect(screen.getByText('30')).toBeInTheDocument();
+   });
+ 
++  test('selects a partial session by identity across pages without selecting its action traces', async () => {
++    const onToggleBulkRow = jest.fn();
++    const pages = [[makeSessionTrace('s1-first-page', 's1')], [makeSessionTrace('s1-next-page', 's1')]];
++    const SessionSelectionPages = () => {
++      const [pageIndex, setPageIndex] = useState(1);
++      const [selectedSessionIds, setSelectedSessionIds] = useState<ReadonlySet<string>>(new Set());
++      return (
++        <TracesTableView
++          {...baseProps({
++            traces: pages[pageIndex - 1],
++            visibleColumns: ['session', 'input'],
++            isGroupedBySession: true,
++            sessionsMayBeIncomplete: true,
++            selectedSessionIds,
++            onToggleSessionSelection: (sessionId) =>
++              setSelectedSessionIds((current) => (current.has(sessionId) ? new Set() : new Set([sessionId]))),
++            onToggleBulkRows: undefined,
++            onToggleBulkRow,
++            isAllOnPageSelected: selectedSessionIds.has('s1'),
++            pageIndex,
++            onPageChange: setPageIndex,
++            hasNext: pageIndex === 1,
++            hasPrev: pageIndex === 2,
++          })}
++        />
++      );
++    };
++    await renderWithProviders(<SessionSelectionPages />);
++    const checkbox = screen.getByRole('checkbox', { name: 'Select session s1' });
++    expect(checkbox).toBeEnabled();
++    await userEvent.click(checkbox);
++    expect(checkbox).toBeChecked();
++    expect(screen.getByRole('checkbox', { name: 'Select all sessions on page' })).toBeChecked();
++    await userEvent.click(screen.getByRole('button', { name: 'Next page' }));
++    expect(screen.getByText('request for s1-next-page')).toBeInTheDocument();
++    expect(screen.getByRole('checkbox', { name: 'Select session s1' })).toBeChecked();
++    await userEvent.click(screen.getByRole('checkbox', { name: 'Select session s1' }));
++    expect(screen.getByRole('checkbox', { name: 'Select session s1' })).not.toBeChecked();
++    expect(onToggleBulkRow).not.toHaveBeenCalled();
++  });
++
+   test('customEmptyState short-circuits the viewState region but keeps the toolbar', async () => {
+     await renderWithProviders(
+       <TracesTableView {...baseProps({ viewState: 'empty', customEmptyState: <div>pick-a-warehouse</div> })} />,
+--- a/mlflow/server/js/src/shared/web-shared/traces-table/TracesTableView.tsx
++++ b/mlflow/server/js/src/shared/web-shared/traces-table/TracesTableView.tsx
+@@ -56,6 +56,8 @@
+   onToggleBulkRow: (trace: ModelTraceInfoV3, selectRange?: boolean) => void;
+   /** Toggle-select every trace in a session header row; omit to disable session-level selection. */
+   onToggleBulkRows?: (traces: ModelTraceInfoV3[]) => void;
++  selectedSessionIds?: ReadonlySet<string>;
++  onToggleSessionSelection?: (sessionId: string, trace: ModelTraceInfoV3) => void;
+   onToggleBulkAll: () => void;
+   sort: TraceColumnId;
+   dir: SortDirection;
+@@ -201,6 +203,8 @@
+       isSomeOnPageSelected={props.isSomeOnPageSelected}
+       onToggleBulkRow={props.onToggleBulkRow}
+       onToggleBulkRows={props.onToggleBulkRows}
++      selectedSessionIds={props.selectedSessionIds}
++      onToggleSessionSelection={props.onToggleSessionSelection}
+       onToggleBulkAll={props.onToggleBulkAll}
+       sort={props.sort}
+       dir={props.dir}
 --- a/mlflow/server/js/src/shared/web-shared/traces-table/index.ts
 +++ b/mlflow/server/js/src/shared/web-shared/traces-table/index.ts
 @@ -102,6 +102,7 @@
