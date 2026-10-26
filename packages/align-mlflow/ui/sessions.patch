@@ -3261,21 +3261,58 @@
 +);
 --- /dev/null
 +++ b/mlflow/server/js/src/experiment-tracking/pages/open-world-results/OpenWorldResultsPage.test.tsx
-@@ -0,0 +1,264 @@
-+import { it, expect, jest, beforeEach } from '@jest/globals';
+@@ -0,0 +1,442 @@
++import { it, expect, jest, beforeEach, afterEach } from '@jest/globals';
 +import userEvent from '@testing-library/user-event';
 +import { DesignSystemProvider } from '@databricks/design-system';
-+import { renderWithIntl, screen, fireEvent, within } from '../../../common/utils/TestUtils.react18';
++import { FilterOp } from '@databricks/web-shared/traces-table';
++import type { ModelTraceInfoV3 } from '@databricks/web-shared/model-trace-explorer';
++import { QueryClient, QueryClientProvider } from '../../../common/utils/reactQueryHooks';
++import { fetchAPI } from '../../../shared/web-shared/model-trace-explorer/ModelTraceExplorer.request.utils';
++import { renderWithIntl, screen, fireEvent, within, waitFor } from '../../../common/utils/TestUtils.react18';
 +import { MemoryRouter } from '../../../common/utils/RoutingUtils';
 +import { OpenWorldResultsDashboard } from './OpenWorldResultsPage';
 +import type { OpenWorldEpisode } from './openWorldResultsData';
 +import { makeTrace } from '../../../shared/web-shared/traces-table/test-utils/mockTraces';
 +
++jest.mock('../../../shared/web-shared/model-trace-explorer/ModelTraceExplorer.request.utils', () => ({
++  fetchAPI: jest.fn(),
++  getAjaxUrl: (url: string) => url,
++}));
++const fetchMock = jest.mocked(fetchAPI);
++let client: QueryClient;
++let serverTraces: ModelTraceInfoV3[];
 +const scrollIntoView = jest.fn();
 +beforeEach(() => {
++  client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
++  serverTraces = [];
++  fetchMock.mockReset();
++  fetchMock.mockImplementation(async (_url, _method, body) => {
++    const filter = (body as { filter: string }).filter;
++    return {
++      traces: serverTraces.filter((trace) =>
++        filter.split(' AND ').every((clause) => {
++          const match = clause.match(
++            /^(tags|request_metadata)\.(?:`([^`]+)`|"([^"]+)"|([\w.]+)) (=|!=|ILIKE) '((?:[^']|'')*)'$/,
++          );
++          if (!match) throw new Error(`Unexpected search predicate: ${clause}`);
++          const [, source, quotedKey, doubleQuotedKey, key, operator, escapedValue] = match;
++          const value = escapedValue.replace(/''/g, "'");
++          const actual = (source === 'tags' ? trace.tags : trace.trace_metadata)?.[quotedKey || doubleQuotedKey || key];
++          return operator === '!='
++            ? actual !== value
++            : operator === 'ILIKE'
++              ? actual?.toLowerCase().includes(value.replace(/^%|%$/g, '').toLowerCase())
++              : actual === value;
++        }),
++      ),
++    };
++  });
 +  scrollIntoView.mockClear();
 +  HTMLElement.prototype.scrollIntoView = scrollIntoView;
 +});
++
++afterEach(() => client.clear());
 +
 +const episode = (id: string, score: number | undefined, extra: Partial<OpenWorldEpisode> = {}): OpenWorldEpisode => {
 +  const result: OpenWorldEpisode = {
@@ -3312,6 +3349,10 @@
 +        run: result.runName,
 +        scenario_id: result.scenario,
 +        alignment_target_id: result.target,
++        'align.driver': result.driver,
++        'align.source_version': result.sourceVersion,
++        'align.source_family': result.sourceFamily,
++        chosen_by: ['a', 'c'].includes(id) ? 'driver' : 'adm',
 +      },
 +      assessments:
 +        result.score === undefined
@@ -3332,14 +3373,24 @@
 +  ];
 +  return result;
 +};
-+const renderMatrix = (episodes: OpenWorldEpisode[], initialEntry = '/') =>
-+  renderWithIntl(
-+    <DesignSystemProvider>
-+      <MemoryRouter initialEntries={[initialEntry]}>
-+        <OpenWorldResultsDashboard experimentId="123" episodes={episodes} />
-+      </MemoryRouter>
-+    </DesignSystemProvider>,
++const renderMatrix = (episodes: OpenWorldEpisode[], initialEntry = '/') => {
++  serverTraces = episodes.flatMap((episode) => episode.traces);
++  return renderWithIntl(
++    <QueryClientProvider client={client}>
++      <DesignSystemProvider>
++        <MemoryRouter initialEntries={[initialEntry]}>
++          <OpenWorldResultsDashboard experimentId="123" episodes={episodes} />
++        </MemoryRouter>
++      </DesignSystemProvider>
++    </QueryClientProvider>,
 +  );
++};
++
++const sessionTable = async () => {
++  const sessions = within(screen.getByRole('region', { name: 'Sessions' }));
++  await waitFor(() => expect(sessions.queryByText('Filtering sessions...')).not.toBeInTheDocument());
++  return sessions.getByRole('table');
++};
 +
 +it('distinguishes zero from missing and enables comparison only with two checked sessions', async () => {
 +  const user = userEvent.setup();
@@ -3354,7 +3405,7 @@
 +  );
 +  fireEvent.click(screen.getByRole('button', { name: 'scenario-a / target-a: 0.500, 2/3 scored' }));
 +  expect(scrollIntoView).toHaveBeenCalledWith({ block: 'start' });
-+  const table = within(screen.getByRole('region', { name: 'Contributing episodes' })).getByRole('table');
++  const table = await sessionTable();
 +  expect(within(table).getByText('0')).toBeInTheDocument();
 +  const missingRow = within(table)
 +    .getByRole('checkbox', { name: 'Select session missing' })
@@ -3379,7 +3430,7 @@
 +  expect(compare).toBeDisabled();
 +  fireEvent.click(within(table).getByRole('checkbox', { name: 'Select session missing' }));
 +  expect(compare).toBeEnabled();
-+  fireEvent.click(screen.getByRole('button', { name: 'Clear selection' }));
++  fireEvent.click(screen.getByRole('button', { name: 'Clear checked sessions' }));
 +  expect(compare).toBeDisabled();
 +});
 +
@@ -3399,7 +3450,7 @@
 +  expect(within(table).getByRole('button', { name: 'scenario-a / target-a: 0.000, 2/2 scored' })).toHaveTextContent(
 +    '2 episodes',
 +  );
-+  await user.click(screen.getByRole('button', { name: 'Filter dashboard' }));
++  fireEvent.click(screen.getByRole('button', { name: 'Filter dashboard' }));
 +  await user.click(screen.getByRole('combobox', { name: 'Invocation' }));
 +  await user.click(await screen.findByRole('option', { name: 'Run A (invocation-b)' }));
 +  expect(screen.getByLabelText('Episodes: 1')).toBeInTheDocument();
@@ -3419,13 +3470,13 @@
 +  expect(screen.getByRole('button', { name: 'scenario-a / target-a: 0.200, 1/1 scored' })).toHaveTextContent(
 +    '1 metadata conflict',
 +  );
-+  await user.click(screen.getByRole('button', { name: 'Filter dashboard' }));
++  fireEvent.click(screen.getByRole('button', { name: 'Filter dashboard' }));
 +  await user.click(screen.getByRole('combobox', { name: 'Invocation' }));
 +  await user.click(await screen.findByRole('option', { name: 'Run A (Unavailable)' }));
 +  expect(screen.getByLabelText('Episodes: 1')).toBeInTheDocument();
 +});
 +
-+it('shows the matrix below score distributions and drills review totals into exactly the affected episodes', () => {
++it('shows the matrix below score distributions and drills review totals into exactly the affected episodes', async () => {
 +  renderMatrix([
 +    episode('zero', 0),
 +    episode('missing', undefined),
@@ -3449,11 +3500,11 @@
 +  expect(scrollIntoView).toHaveBeenCalledTimes(2);
 +  fireEvent.click(screen.getByRole('button', { name: 'Missing scores: 1' }));
 +  expect(scrollIntoView).toHaveBeenCalledTimes(3);
-+  const table = within(screen.getByRole('region', { name: 'Contributing episodes' })).getByRole('table');
++  const table = await sessionTable();
 +  expect(within(table).getByRole('link', { name: 'missing' })).toBeInTheDocument();
 +  expect(within(table).queryByRole('link', { name: 'zero' })).not.toBeInTheDocument();
 +  fireEvent.click(within(table).getByRole('checkbox', { name: 'Select session missing' }));
-+  expect(screen.getByText('1 sessions selected across cells and filters')).toBeInTheDocument();
++  expect(screen.getByText('1 checked sessions')).toBeInTheDocument();
 +});
 +
 +it('keeps counts contextual and run means linked to their exact episodes, with averaging details in help', async () => {
@@ -3476,44 +3527,45 @@
 +  expect(screen.queryByRole('button', { name: /Missing scores:/ })).not.toBeInTheDocument();
 +  expect(screen.queryByRole('button', { name: /Target mismatches:/ })).not.toBeInTheDocument();
 +  expect(screen.queryByText('Episodes needing review')).not.toBeInTheDocument();
-+  await user.click(screen.getByRole('button', { name: 'About Performance by run' }));
++  fireEvent.click(screen.getByRole('button', { name: 'About Performance by run' }));
 +  expect(screen.getByText(/then weights scored cases equally/)).toHaveTextContent(
 +    'Missing scores are excluded, never zero.',
 +  );
 +  await user.keyboard('{Escape}');
-+  await user.click(screen.getByRole('button', { name: 'Inspect run Run A' }));
-+  const table = within(screen.getByRole('region', { name: 'Contributing episodes' })).getByRole('table');
++  fireEvent.click(screen.getByRole('button', { name: 'Inspect run Run A' }));
++  const table = await sessionTable();
 +  expect(within(table).getByRole('link', { name: 'known' })).toBeInTheDocument();
 +  expect(within(table).getByRole('link', { name: 'unknown' })).toBeInTheDocument();
 +  expect(within(table).queryByRole('link', { name: 'other-run' })).not.toBeInTheDocument();
 +});
 +
-+it('preserves session column choices when dashboard filters close and reopen contributors', async () => {
++it('preserves session column choices when dashboard filters change the table scope', async () => {
 +  const user = userEvent.setup();
 +  renderMatrix([episode('a', 0.5), episode('b', 0.8, { runId: 'invocation-b', runName: 'Run B' })]);
-+  await user.click(screen.getByRole('button', { name: 'Inspect run Run A' }));
++  fireEvent.click(screen.getByRole('button', { name: 'Inspect run Run A' }));
++  await sessionTable();
 +  await user.click(screen.getByRole('button', { name: 'Select visible columns' }));
-+  await user.click(screen.getByRole('menuitemcheckbox', { name: 'adm', exact: true }));
-+  await user.click(screen.getByRole('menuitemcheckbox', { name: 'Start time', exact: true }));
++  fireEvent.click(screen.getByRole('menuitemcheckbox', { name: 'adm' }));
++  fireEvent.click(screen.getByRole('menuitemcheckbox', { name: 'Start time' }));
 +  await user.keyboard('{Escape}');
-+  await user.click(screen.getByRole('button', { name: 'Filter dashboard' }));
++  fireEvent.click(screen.getByRole('button', { name: 'Filter dashboard' }));
 +  await user.click(screen.getByRole('combobox', { name: 'Invocation' }));
 +  await user.click(await screen.findByRole('option', { name: 'Run B (invocation-b)' }));
-+  expect(screen.queryByRole('region', { name: 'Contributing episodes' })).not.toBeInTheDocument();
++  expect(within(screen.getByRole('region', { name: 'Sessions' })).getByRole('link', { name: 'b' })).toBeInTheDocument();
 +  await user.keyboard('{Escape}');
-+  await user.click(screen.getByRole('button', { name: 'Inspect run Run B' }));
-+  const region = within(screen.getByRole('region', { name: 'Contributing episodes' }));
-+  expect(region.getByRole('link', { name: 'b' })).toBeInTheDocument();
++  fireEvent.click(screen.getByRole('button', { name: 'Inspect run Run B' }));
++  const region = within(screen.getByRole('region', { name: 'Sessions' }));
++  expect(await region.findByRole('link', { name: 'b' })).toBeInTheDocument();
 +  await user.click(region.getByRole('button', { name: 'Select visible columns' }));
-+  expect(screen.getByRole('menuitemcheckbox', { name: 'adm', exact: true })).not.toBeChecked();
-+  expect(screen.getByRole('menuitemcheckbox', { name: 'Start time', exact: true })).not.toBeChecked();
-+  expect(screen.getByRole('menuitemcheckbox', { name: 'llm', exact: true })).toBeChecked();
++  expect(screen.getByRole('menuitemcheckbox', { name: 'adm' })).not.toBeChecked();
++  expect(screen.getByRole('menuitemcheckbox', { name: 'Start time' })).not.toBeChecked();
++  expect(screen.getByRole('menuitemcheckbox', { name: 'llm' })).toBeChecked();
 +});
 +
 +it('moves keyboard focus for explicit drilldown and return without focusing restored contributors', async () => {
 +  const user = userEvent.setup();
 +  renderMatrix([episode('a', 0.5)], '/?resultsEpisodes=%5B%22a%22%5D');
-+  const contributors = screen.getByRole('region', { name: 'Contributing episodes' });
++  const contributors = screen.getByRole('region', { name: 'Sessions' });
 +  expect(contributors).not.toHaveFocus();
 +  const row = screen.getByRole('button', { name: 'Inspect scenario scenario-a / target target-a' });
 +  row.focus();
@@ -3526,11 +3578,138 @@
 +  await user.keyboard('{Enter}');
 +  expect(contributors).toHaveFocus();
 +});
++
++it('seeds editable matrix conditions and widens individual filters without losing checked sessions', async () => {
++  const user = userEvent.setup();
++  renderMatrix([
++    episode('a', 0.2),
++    episode('b', 0.4, { target: 'target-b' }),
++    episode('c', 0.8, { runId: 'invocation-b', runName: 'Run B' }),
++    episode('d', 0.9, { scenario: 'scenario-b' }),
++  ]);
++  const sessions = within(screen.getByRole('region', { name: 'Sessions' }));
++  fireEvent.click(screen.getByRole('button', { name: 'scenario-a / target-a: 0.200, 1/1 scored' }));
++  await sessionTable();
++  expect(sessions.getByRole('link', { name: 'a' })).toBeInTheDocument();
++  expect(sessions.queryByText('Matrix cell')).not.toBeInTheDocument();
++  fireEvent.click(sessions.getByRole('checkbox', { name: 'Select session a' }));
++  fireEvent.click(sessions.getByRole('button', { name: 'Filters' }));
++  expect(
++    screen.getAllByRole('textbox', { name: 'Filter value' }).map((input) => (input as HTMLInputElement).value),
++  ).toEqual(['invocation-a', 'scenario-a', 'target-a']);
++  await user.keyboard('{Escape}');
++  fireEvent.click(sessions.getByRole('button', { name: 'Remove session target filter' }));
++  await sessionTable();
++  expect(sessions.getByRole('link', { name: 'a' })).toBeInTheDocument();
++  expect(sessions.getByRole('link', { name: 'b' })).toBeInTheDocument();
++  expect(sessions.queryByRole('link', { name: 'c' })).not.toBeInTheDocument();
++  expect(sessions.queryByRole('link', { name: 'd' })).not.toBeInTheDocument();
++  expect(sessions.getByRole('checkbox', { name: 'Select session a' })).toBeChecked();
++  fireEvent.click(sessions.getByRole('button', { name: 'Remove session invocation filter' }));
++  await sessionTable();
++  expect(sessions.getByRole('link', { name: 'c' })).toBeInTheDocument();
++  expect(sessions.queryByRole('link', { name: 'd' })).not.toBeInTheDocument();
++  expect(sessions.getByRole('button', { name: 'Remove session scenario filter' })).toBeInTheDocument();
++  expect(sessions.getByRole('checkbox', { name: 'Select session a' })).toBeChecked();
++  expect(screen.getByLabelText('Episodes: 4')).toBeInTheDocument();
++});
++
++it('edits matrix filter values and adds an arbitrary tag with the normal filter builder', async () => {
++  const user = userEvent.setup();
++  renderMatrix([
++    episode('a', 0.2),
++    episode('b', 0.4, { scenario: 'scenario-b' }),
++    episode('c', 0.8, { scenario: 'scenario-b' }),
++  ]);
++  const sessions = within(screen.getByRole('region', { name: 'Sessions' }));
++  fireEvent.click(screen.getByRole('button', { name: 'scenario-a / target-a: 0.200, 1/1 scored' }));
++  await sessionTable();
++  fireEvent.click(sessions.getByRole('button', { name: 'Filters' }));
++  const scenarioValue = screen.getAllByRole('textbox', { name: 'Filter value' })[1];
++  fireEvent.change(scenarioValue, { target: { value: 'scenario-b' } });
++  fireEvent.click(screen.getByRole('button', { name: 'Apply filters' }));
++  await sessionTable();
++  expect(sessions.getByRole('link', { name: 'b' })).toBeInTheDocument();
++  expect(sessions.queryByRole('link', { name: 'a' })).not.toBeInTheDocument();
++  expect(sessions.getByRole('link', { name: 'c' })).toBeInTheDocument();
++  fireEvent.click(sessions.getByRole('button', { name: 'Filters' }));
++  fireEvent.click(screen.getByRole('button', { name: 'Add filter' }));
++  const fieldInputs = screen.getAllByRole('combobox', { name: 'Filter field' });
++  await user.click(fieldInputs[fieldInputs.length - 1]);
++  expect(screen.getAllByRole('option').map((option) => option.textContent)).toEqual(
++    expect.arrayContaining([
++      'Duration',
++      'Metadata',
++      'Feedback',
++      'Expectation',
++      'Span name',
++      'Span type',
++      'Span status',
++      'Input',
++      'Output',
++    ]),
++  );
++  await user.click(screen.getByRole('option', { name: 'Tag' }));
++  const keyInputs = screen.getAllByRole('combobox', { name: 'Filter key' });
++  await user.click(keyInputs[keyInputs.length - 1]);
++  await user.click(screen.getByRole('option', { name: 'chosen_by' }));
++  const valueInputs = screen.getAllByRole('textbox', { name: 'Filter value' });
++  fireEvent.change(valueInputs[valueInputs.length - 1], { target: { value: 'adm' } });
++  fireEvent.click(screen.getByRole('button', { name: 'Apply filters' }));
++  await sessionTable();
++  expect(sessions.getByRole('link', { name: 'b' })).toBeInTheDocument();
++  expect(sessions.queryByRole('link', { name: 'c' })).not.toBeInTheDocument();
++  expect(sessions.getByRole('button', { name: 'Remove session tag: chosen_by filter' })).toBeInTheDocument();
++  expect(screen.getByLabelText('Episodes: 3')).toBeInTheDocument();
++});
++
++it('restores native session filters from the URL and keeps dashboard restrictions beside the table', async () => {
++  const filters = [{ field: 'tag', key: 'scenario_id', operator: FilterOp.EQUALS, value: 'scenario-b' }];
++  renderMatrix(
++    [
++      episode('a', 0.2),
++      episode('b', 0.4, { scenario: 'scenario-b' }),
++      episode('c', 0.8, { runId: 'invocation-b', runName: 'Run B', scenario: 'scenario-b' }),
++    ],
++    `/?resultsRun=invocation-a&resultsSessionFilters=${encodeURIComponent(JSON.stringify(filters))}`,
++  );
++  const sessions = within(screen.getByRole('region', { name: 'Sessions' }));
++  await sessionTable();
++  expect(sessions.getByRole('link', { name: 'b' })).toBeInTheDocument();
++  expect(sessions.queryByRole('link', { name: 'c' })).not.toBeInTheDocument();
++  expect(sessions.getByRole('button', { name: 'Remove invocation filter' })).toBeInTheDocument();
++  fireEvent.click(sessions.getByRole('button', { name: 'Show all dashboard sessions' }));
++  expect(sessions.getByRole('heading', { name: 'Sessions (2)' })).toBeInTheDocument();
++  expect(screen.getByLabelText('Episodes: 2')).toBeInTheDocument();
++  fireEvent.click(sessions.getByRole('button', { name: 'Remove invocation filter' }));
++  expect(sessions.getByRole('heading', { name: 'Sessions (3)' })).toBeInTheDocument();
++  expect(screen.getByLabelText('Episodes: 3')).toBeInTheDocument();
++  fireEvent.click(screen.getByRole('button', { name: /^Episode score 0.8;/ }));
++  await sessionTable();
++  expect(sessions.getByRole('link', { name: 'c' })).toBeInTheDocument();
++  expect(sessions.getByRole('button', { name: 'Remove session session filter' })).toBeInTheDocument();
++  fireEvent.click(sessions.getByRole('button', { name: 'Show all dashboard sessions' }));
++  expect(sessions.getByRole('heading', { name: 'Sessions (3)' })).toBeInTheDocument();
++});
++
++it.each(['[]', '["gone"]', '{invalid'])(
++  'keeps an empty or stale episode selection empty until cleared: %s',
++  async (selection) => {
++      renderMatrix([episode('a', 0.2)], `/?resultsEpisodes=${encodeURIComponent(selection)}`);
++    const sessions = within(screen.getByRole('region', { name: 'Sessions' }));
++    await sessionTable();
++    expect(sessions.getByRole('heading', { name: 'Sessions (0)' })).toBeInTheDocument();
++    expect(sessions.queryByRole('link', { name: 'a' })).not.toBeInTheDocument();
++    fireEvent.click(sessions.getByRole('button', { name: 'Remove session selection' }));
++    expect(sessions.getByRole('link', { name: 'a' })).toBeInTheDocument();
++  },
++);
 --- /dev/null
 +++ b/mlflow/server/js/src/experiment-tracking/pages/open-world-results/OpenWorldResultsPage.tsx
-@@ -0,0 +1,611 @@
+@@ -0,0 +1,713 @@
 +import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 +import { Alert, Button, Tooltip, Typography, useDesignSystemTheme } from '@databricks/design-system';
++import { type TraceFilterModel } from '@databricks/web-shared/traces-table';
 +import { Link, useNavigate, useParams, useSearchParams } from '../../../common/utils/RoutingUtils';
 +import Routes from '../../routes';
 +import { buildWorkflowTypeQueryString, WorkflowType } from '../../../common/contexts/WorkflowTypeContext';
@@ -3542,6 +3721,10 @@
 +import { OpenWorldResultsActiveFilters, OpenWorldResultsFilters } from './OpenWorldResultsFilters';
 +import { OpenWorldResultsSessions, useOpenWorldResultsTablePreferences } from './OpenWorldResultsSessions';
 +import { OpenWorldRunIdentity } from './OpenWorldRunIdentity';
++import { OpenWorldResultsSessionFilters, useOpenWorldSessionFilterFields } from './OpenWorldResultsSessionFilters';
++import { useOpenWorldSessionFilters } from './useOpenWorldSessionFilters';
++import { SESSION_FILTER_PARAM, filtersForEpisodes, readSessionFilterModel } from './openWorldSessionFilterModel';
++import { isSupportedFilterClause } from '../../components/experiment-page/components/traces-v4/utils/filterModel';
 +
 +const recorded = (value: string) => value || 'Unavailable';
 +const scoreLabel = (value: number | undefined) => (value === undefined ? 'Unavailable' : value.toFixed(3));
@@ -3551,6 +3734,15 @@
 +const unique = (values: string[]) => [...new Set(values)].sort();
 +const configurationLabel = (episode: OpenWorldEpisode) =>
 +  [episode.adm, episode.model, episode.runName].map(recorded).join(' / ');
++
++const selectionScope = (cell?: string) =>
++  cell?.startsWith('row:') ? 'row' : cell?.startsWith('column:') ? 'column' : cell ? 'cell' : 'episodes';
++
++const clearSessionScope = (params: URLSearchParams) => {
++  const next = new URLSearchParams(params);
++  ['resultsCell', 'resultsEpisodes', SESSION_FILTER_PARAM].forEach((key) => next.delete(key));
++  return next;
++};
 +
 +type ResultsProps = { experimentId: string; episodes: OpenWorldEpisode[] };
 +
@@ -3563,23 +3755,15 @@
 +  const contributorsRef = useRef<HTMLElement>(null);
 +  const pendingContributorFocus = useRef(false);
 +  const tablePreferences = useOpenWorldResultsTablePreferences();
-+  const selectionKey = selectedCell || params.get('resultsEpisodes');
++  const selectionKey = params.toString();
 +  const revealContributors = useCallback((moveFocus: boolean) => {
 +    contributorsRef.current?.scrollIntoView({ block: 'start' });
 +    if (moveFocus) contributorsRef.current?.focus({ preventScroll: true });
 +  }, []);
 +  useEffect(() => {
-+    if (selectionKey) revealContributors(pendingContributorFocus.current);
++    if (pendingContributorFocus.current) revealContributors(true);
 +    pendingContributorFocus.current = false;
 +  }, [selectionKey, revealContributors]);
-+  const setSelectedCell = (value: string | undefined) => {
-+    if (value && value === selectionKey) revealContributors(true);
-+    else pendingContributorFocus.current = Boolean(value);
-+    const next = new URLSearchParams(params);
-+    next.delete('resultsEpisodes');
-+    value ? next.set('resultsCell', value) : next.delete('resultsCell');
-+    setParams(next, { replace: true });
-+  };
 +  const selectedEpisodeIds = useMemo(() => {
 +    try {
 +      const ids: unknown = JSON.parse(params.get('resultsEpisodes') || '[]');
@@ -3588,20 +3772,35 @@
 +      return [];
 +    }
 +  }, [params]);
-+  const selectEpisodes = (members: OpenWorldEpisode[]) => {
-+    const next = new URLSearchParams(params);
-+    next.delete('resultsCell');
-+    const ids = JSON.stringify(unique(members.map((episode) => episode.id)));
-+    if (ids === selectionKey) revealContributors(true);
++  const applySelection = (members: OpenWorldEpisode[], cell?: string) => {
++    const next = clearSessionScope(params);
++    const { filters, exactSelection } = filtersForEpisodes(members, filtered, selectionScope(cell));
++    if (filters.length) next.set(SESSION_FILTER_PARAM, JSON.stringify(filters));
++    if (cell) next.set('resultsCell', cell);
++    if (exactSelection) next.set('resultsEpisodes', JSON.stringify(unique(members.map(({ id }) => id))));
++    if (next.toString() === selectionKey) revealContributors(true);
 +    else pendingContributorFocus.current = true;
-+    next.set('resultsEpisodes', ids);
 +    setParams(next, { replace: true });
 +  };
++  const setSelectedCell = (value: string) => applySelection(cells.get(value) || [], value);
++  const selectEpisodes = (members: OpenWorldEpisode[]) => applySelection(members);
 +  const [selectedSessions, setSelectedSessions] = useState<string[]>([]);
 +  const query = params.get('resultsSearch') || '';
 +  const run = params.get('resultsRun') || '';
++  const updateSessionFilters = (filters: TraceFilterModel) => {
++    const next = clearSessionScope(params);
++    if (filters.length) next.set(SESSION_FILTER_PARAM, JSON.stringify(filters));
++    setParams(next, { replace: true });
++  };
++  const clearDashboardFilters = () => {
++    const next = clearSessionScope(params);
++    ['resultsSearch', 'resultsSource', 'resultsRun', 'resultsCell', 'resultsEpisodes'].forEach((key) =>
++      next.delete(key),
++    );
++    setParams(next, { replace: true });
++  };
 +  const updateFilter = (key: string, value: string) => {
-+    const next = new URLSearchParams(params);
++    const next = clearSessionScope(params);
 +    value ? next.set(key, value) : next.delete(key);
 +    next.delete('resultsCell');
 +    next.delete('resultsEpisodes');
@@ -3645,13 +3844,47 @@
 +      filtered.filter((episode) => caseKey(episode) === row),
 +    ),
 +  );
-+  const contributors = [
-+    ...(selectedEpisodeIds.length
-+      ? episodes.filter((episode) => selectedEpisodeIds.includes(episode.id))
-+      : selectedCell
-+        ? cells.get(selectedCell) || []
-+        : []),
-+  ];
++  const filterFields = useOpenWorldSessionFilterFields(filtered);
++  const hasEpisodeSelection = params.has('resultsEpisodes');
++  const selectedMembers = hasEpisodeSelection
++    ? filtered.filter((episode) => selectedEpisodeIds.includes(episode.id))
++    : selectedCell
++      ? cells.get(selectedCell) || []
++      : undefined;
++  const serializedSessionFilters =
++    params.get(SESSION_FILTER_PARAM) ??
++    JSON.stringify(
++      selectedMembers ? filtersForEpisodes(selectedMembers, filtered, selectionScope(selectedCell)).filters : [],
++    );
++  const { filters: sessionFilters, error: filterError } = useMemo((): { filters: TraceFilterModel; error?: Error } => {
++    try {
++      const filters = readSessionFilterModel(serializedSessionFilters);
++      if (filters.some((clause) => !isSupportedFilterClause(filterFields, clause))) {
++        return {
++          filters,
++          error: new Error('These session filters include an unsupported field or operator. Edit or clear them.'),
++        };
++      }
++      return { filters };
++    } catch (error) {
++      return { filters: [], error: error as Error };
++    }
++  }, [serializedSessionFilters, filterFields]);
++  const sessionQuery = useOpenWorldSessionFilters({
++    experimentId,
++    episodes: filtered,
++    filters: filterError ? [] : sessionFilters,
++  });
++  const exactSelection =
++    hasEpisodeSelection ||
++    (selectedMembers !== undefined &&
++      !params.has(SESSION_FILTER_PARAM) &&
++      filtersForEpisodes(selectedMembers, filtered, selectionScope(selectedCell)).exactSelection);
++  const contributors = filterError
++    ? []
++    : exactSelection
++      ? sessionQuery.episodes.filter((episode) => selectedMembers?.some(({ id }) => episode.id === id))
++      : sessionQuery.episodes;
 +  const selectedSessionIds = useMemo(() => new Set(selectedSessions), [selectedSessions]);
 +  const toggleSession = (sessionId: string) =>
 +    setSelectedSessions((current) =>
@@ -3767,13 +4000,7 @@
 +          query={query}
 +          run={run}
 +          onChange={updateFilter}
-+          onClear={() => {
-+            const next = new URLSearchParams(params);
-+            ['resultsSearch', 'resultsSource', 'resultsRun', 'resultsCell', 'resultsEpisodes'].forEach((key) =>
-+              next.delete(key),
-+            );
-+            setParams(next, { replace: true });
-+          }}
++          onClear={clearDashboardFilters}
 +        />
 +        <Typography.Text css={{ color: theme.colors.textSecondary, fontSize: 13 }}>
 +          Filters apply to the run summaries, plot, and matrix below.
@@ -4033,76 +4260,129 @@
 +          </div>
 +        </section>
 +      )}
-+      {(selectedCell || params.has('resultsEpisodes')) && (
-+        <section
-+          ref={contributorsRef}
-+          tabIndex={-1}
-+          aria-label="Contributing episodes"
-+          css={{ display: 'flex', flexDirection: 'column', gap: 12, flexShrink: 0 }}
++      <section
++        ref={contributorsRef}
++        tabIndex={-1}
++        aria-label="Sessions"
++        css={{ display: 'flex', flexDirection: 'column', gap: 12, flexShrink: 0 }}
++      >
++        <Button
++          componentId="mlflow.open-world.results.back-to-summary"
++          css={{ alignSelf: 'flex-start' }}
++          onClick={() => {
++            topRef.current?.scrollIntoView({ block: 'start' });
++            topRef.current?.focus({ preventScroll: true });
++          }}
 +        >
-+          <Button
-+            componentId="mlflow.open-world.results.back-to-summary"
-+            css={{ alignSelf: 'flex-start' }}
-+            onClick={() => {
-+              topRef.current?.scrollIntoView({ block: 'start' });
-+              topRef.current?.focus({ preventScroll: true });
-+            }}
++          Back to results
++        </Button>
++        <OpenWorldResultsSectionTitle
++          title={sessionQuery.isLoading ? 'Sessions' : `Sessions (${contributors.length})`}
++          componentId="mlflow.open-world.results.contributors-help"
++          help="Chart and matrix selections populate the table filters. Edit or remove conditions to explore other sessions within the dashboard filters. A session appears when one of its traces matches every condition. Session filters affect only this table. Open a session to inspect every decision. Checked sessions remain selected across filters."
++        />
++        {(query || run) && (
++          <div
++            aria-label="Dashboard filters affecting sessions"
++            css={{ display: 'flex', flexDirection: 'column', gap: 8 }}
 +          >
-+            Back to results
-+          </Button>
-+          <OpenWorldResultsSectionTitle
-+            title={`Contributing episodes (${contributors.length})`}
-+            componentId="mlflow.open-world.results.contributors-help"
-+            help="The session table shows only the episodes behind the selected summary, point, or matrix cell. Open a session to inspect every decision. Session selections stay checked across dashboard selections and filters."
-+          />
-+          <div css={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
-+            <Typography.Text>{selectedSessions.length} sessions selected across cells and filters</Typography.Text>
-+            <Button componentId="mlflow.open-world.results.clear-selection" onClick={() => setSelectedSessions([])}>
-+              Clear selection
-+            </Button>
-+            <Tooltip
-+              componentId="mlflow.open-world.results.compare-sessions-tooltip"
-+              content={selectedSessions.length < 2 ? 'Select at least two sessions to compare.' : undefined}
-+              delayDuration={0}
-+            >
-+              <span tabIndex={selectedSessions.length < 2 ? 0 : undefined} css={{ display: 'inline-flex' }}>
-+                <Button
-+                  componentId="mlflow.open-world.results.compare-sessions"
-+                  type="primary"
-+                  disabled={selectedSessions.length < 2}
-+                  onClick={() => navigate(getSessionComparisonRoute(experimentId, selectedSessions))}
-+                >
-+                  Compare selected sessions
-+                </Button>
-+              </span>
-+            </Tooltip>
++            <Typography.Text>Dashboard filters</Typography.Text>
++            <OpenWorldResultsActiveFilters
++              episodes={episodes}
++              query={query}
++              run={run}
++              onChange={updateFilter}
++              onClear={clearDashboardFilters}
++            />
 +          </div>
-+          {contributors.some((episode) => episode.targetMismatch) && (
-+            <Alert
-+              componentId="mlflow.open-world.results.target-mismatch"
-+              type="warning"
-+              message="Requested and evaluated targets do not match"
-+              description="These targets should agree. Inspect the affected sessions for a run, scoring, or import problem."
-+            />
-+          )}
-+          {contributors.some((episode) => episode.metadataConflicts.length > 0) && (
-+            <Alert
-+              componentId="mlflow.open-world.results.session-metadata-conflict"
-+              type="warning"
-+              message="Some sessions have inconsistent recorded metadata"
-+              description={`Conflicting fields: ${unique(contributors.flatMap((episode) => episode.metadataConflicts)).join(', ')}. Open the affected sessions to inspect their records.`}
-+            />
-+          )}
-+          <OpenWorldResultsSessions
-+            experimentId={experimentId}
-+            preferences={tablePreferences}
-+            episodes={contributors}
-+            selectedSessionIds={selectedSessionIds}
-+            onToggleSession={toggleSession}
-+            onToggleAllSessions={toggleAllSessions}
++        )}
++        <OpenWorldResultsSessionFilters
++          episodes={filtered}
++          filters={sessionFilters}
++          onChange={updateSessionFilters}
++          onClear={() => setParams(clearSessionScope(params), { replace: true })}
++        />
++        {exactSelection && (
++          <div css={{ display: 'flex', gap: 8, alignItems: 'center' }}>
++            <Typography.Text>{selectedMembers?.length || 0} individually selected sessions</Typography.Text>
++            <Button
++              componentId="mlflow.open-world.results.clear-exact-sessions"
++              onClick={() => updateSessionFilters(sessionFilters)}
++            >
++              Remove session selection
++            </Button>
++          </div>
++        )}
++        {(filterError || sessionQuery.error) && (
++          <Alert
++            componentId="mlflow.open-world.results.session-filter-error"
++            type="error"
++            message="Unable to filter sessions"
++            description={
++              <>
++                {String(
++                  (filterError || sessionQuery.error) instanceof Error
++                    ? (filterError || (sessionQuery.error as Error))?.message
++                    : sessionQuery.error,
++                )}
++                <Button
++                  componentId="mlflow.open-world.results.clear-invalid-filters"
++                  onClick={() => updateSessionFilters([])}
++                >
++                  Clear session filters
++                </Button>
++              </>
++            }
 +          />
-+        </section>
-+      )}
++        )}
++        {sessionQuery.isLoading && <div role="status">Filtering sessions...</div>}
++        <div css={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
++          <Typography.Text>{selectedSessions.length} checked sessions</Typography.Text>
++          <Button componentId="mlflow.open-world.results.clear-selection" onClick={() => setSelectedSessions([])}>
++            Clear checked sessions
++          </Button>
++          <Tooltip
++            componentId="mlflow.open-world.results.compare-sessions-tooltip"
++            content={selectedSessions.length < 2 ? 'Select at least two sessions to compare.' : undefined}
++            delayDuration={0}
++          >
++            <span tabIndex={selectedSessions.length < 2 ? 0 : undefined} css={{ display: 'inline-flex' }}>
++              <Button
++                componentId="mlflow.open-world.results.compare-sessions"
++                type="primary"
++                disabled={selectedSessions.length < 2}
++                onClick={() => navigate(getSessionComparisonRoute(experimentId, selectedSessions))}
++              >
++                Compare selected sessions
++              </Button>
++            </span>
++          </Tooltip>
++        </div>
++        {contributors.some((episode) => episode.targetMismatch) && (
++          <Alert
++            componentId="mlflow.open-world.results.target-mismatch"
++            type="warning"
++            message="Requested and evaluated targets do not match"
++            description="These targets should agree. Inspect the affected sessions for a run, scoring, or import problem."
++          />
++        )}
++        {contributors.some((episode) => episode.metadataConflicts.length > 0) && (
++          <Alert
++            componentId="mlflow.open-world.results.session-metadata-conflict"
++            type="warning"
++            message="Some sessions have inconsistent recorded metadata"
++            description={`Conflicting fields: ${unique(contributors.flatMap((episode) => episode.metadataConflicts)).join(', ')}. Open the affected sessions to inspect their records.`}
++          />
++        )}
++        <OpenWorldResultsSessions
++          experimentId={experimentId}
++          preferences={tablePreferences}
++          episodes={contributors}
++          selectedSessionIds={selectedSessionIds}
++          onToggleSession={toggleSession}
++          onToggleAllSessions={toggleAllSessions}
++        />
++      </section>
 +    </div>
 +  );
 +};
@@ -4140,6 +4420,177 @@
 +};
 +
 +export default OpenWorldResultsPage;
+--- /dev/null
++++ b/mlflow/server/js/src/experiment-tracking/pages/open-world-results/OpenWorldResultsSessionFilters.tsx
+@@ -0,0 +1,168 @@
++import { useMemo } from 'react';
++import { Button, Tag, Tooltip, Typography, useDesignSystemTheme } from '@databricks/design-system';
++import {
++  TraceFilterButton,
++  countActiveFilters,
++  getSessionDisplayName,
++  isClauseComplete,
++  type FilterClause,
++  type TraceFilterModel,
++} from '@databricks/web-shared/traces-table';
++import { useMlflowTraceFilterFields } from '../../components/experiment-page/components/traces-v4/utils/filterModel';
++import type { OpenWorldEpisode } from './openWorldResultsData';
++
++type Props = {
++  episodes: OpenWorldEpisode[];
++  filters: TraceFilterModel;
++  onChange: (filters: TraceFilterModel) => void;
++  onClear: () => void;
++};
++
++const TAG_LABELS = {
++  scenario_id: 'Scenario',
++  alignment_target_id: 'Target',
++  adm: 'ADM',
++  llm: 'LLM',
++  run: 'Run',
++};
++
++const METADATA_LABELS = {
++  'mlflow.sourceRun': 'Invocation',
++  'mlflow.trace.session': 'Session',
++  'mlflow.trace.user': 'User',
++};
++
++export const useOpenWorldSessionFilterFields = (episodes: OpenWorldEpisode[]) => {
++  const assessmentNames = useMemo(
++    () =>
++      [
++        ...new Set(
++          episodes.flatMap((episode) =>
++            episode.traces.flatMap((trace) =>
++              (trace.assessments ?? []).map((assessment) => assessment.assessment_name),
++            ),
++          ),
++        ),
++      ].sort(),
++    [episodes],
++  );
++  const fields = useMlflowTraceFilterFields(assessmentNames);
++  return useMemo(() => {
++    const traces = episodes.flatMap((episode) => episode.traces);
++    const keys = {
++      tag: [...new Set(traces.flatMap((trace) => Object.keys(trace.tags ?? {})))].sort(),
++      metadata: [...new Set(traces.flatMap((trace) => Object.keys(trace.trace_metadata ?? {})))].sort(),
++    };
++    return fields.map((field) => {
++      if (field.id !== 'tag' && field.id !== 'metadata') return field;
++      return {
++        ...field,
++        keyInput: 'combobox' as const,
++        keyOptions: keys[field.id].map((key) => ({ value: key, label: key })),
++      };
++    });
++  }, [episodes, fields]);
++};
++
++const clauseLabel = (clause: FilterClause, fieldLabel: string) => {
++  if (clause.field === 'tag')
++    {return TAG_LABELS[clause.key as keyof typeof TAG_LABELS] || `${fieldLabel}: ${clause.key}`;}
++  if (clause.field === 'metadata')
++    {return METADATA_LABELS[clause.key as keyof typeof METADATA_LABELS] || `${fieldLabel}: ${clause.key}`;}
++  return clause.key ? `${fieldLabel}: ${clause.key}` : fieldLabel;
++};
++
++const clauseDisplayValue = (clause: FilterClause, episodes: OpenWorldEpisode[]) => {
++  if (clause.field === 'metadata' && clause.key === 'mlflow.sourceRun') {
++    return episodes.find((episode) => episode.runId === clause.value)?.runName || clause.value;
++  }
++  if (clause.field === 'session' || (clause.field === 'metadata' && clause.key === 'mlflow.trace.session')) {
++    const episode = episodes.find((candidate) => candidate.sessionId === clause.value);
++    return episode ? getSessionDisplayName(episode.sessionId, episode.traces[0]) : clause.value;
++  }
++  const isState = clause.field === 'state';
++  if (isState && clause.value === 'IN_PROGRESS') return 'In progress';
++  if (isState && clause.value === 'ERROR') return 'Error';
++  return clause.value;
++};
++
++export const OpenWorldResultsSessionFilters = ({ episodes, filters, onChange, onClear }: Props) => {
++  const { theme } = useDesignSystemTheme();
++  const fields = useOpenWorldSessionFilterFields(episodes);
++  const active = filters.map((clause, index) => ({ clause, index })).filter(({ clause }) => isClauseComplete(clause));
++
++  return (
++    <div css={{ display: 'flex', flexDirection: 'column', gap: theme.spacing.sm, minWidth: 0 }}>
++      <div
++        aria-label="Session filters"
++        css={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: theme.spacing.sm, minWidth: 0 }}
++      >
++        <TraceFilterButton
++          fields={fields}
++          filterModel={filters}
++          onChange={onChange}
++          onClearAll={onClear}
++          activeCount={countActiveFilters(filters)}
++        />
++        {active.map(({ clause, index }) => {
++          const fieldLabel = fields.find((field) => field.id === clause.field)?.label || clause.field;
++          const label = clauseLabel(clause, fieldLabel);
++          const value = clauseDisplayValue(clause, episodes);
++          const summary = `${label} ${clause.operator} ${value}`;
++          return (
++            <Tooltip
++              key={index}
++              componentId="mlflow.open-world.results.session-filters.applied-tooltip"
++              delayDuration={0}
++              content={
++                <div css={{ maxWidth: 360, overflowWrap: 'anywhere' }}>
++                  <strong>{label}</strong>
++                  <div>
++                    {clause.operator} {value}
++                  </div>
++                  {value !== clause.value && <div>Recorded value: {clause.value}</div>}
++                </div>
++              }
++            >
++              <Tag
++                componentId="mlflow.open-world.results.session-filters.applied"
++                closable
++                tabIndex={0}
++                onClose={() => onChange(filters.filter((_, clauseIndex) => clauseIndex !== index))}
++                closeButtonProps={{ 'aria-label': `Remove session ${label.toLowerCase()} filter` }}
++                css={{
++                  display: 'inline-flex',
++                  minWidth: 0,
++                  maxWidth: 'min(100%, 420px)',
++                  margin: 0,
++                  '& > span': { minWidth: 0, overflow: 'hidden' },
++                  '& button': { flexShrink: 0 },
++                }}
++              >
++                <span
++                  css={{
++                    display: 'block',
++                    overflow: 'hidden',
++                    textOverflow: 'ellipsis',
++                    whiteSpace: 'nowrap',
++                    minWidth: 0,
++                  }}
++                >
++                  {summary}
++                </span>
++              </Tag>
++            </Tooltip>
++          );
++        })}
++        {filters.length > 0 && (
++          <Button componentId="mlflow.open-world.results.session-filters.clear" type="tertiary" onClick={onClear}>
++            Show all dashboard sessions
++          </Button>
++        )}
++      </div>
++      <Typography.Text css={{ color: theme.colors.textSecondary, fontSize: 13 }}>
++        Session filters apply only to this table.
++      </Typography.Text>
++    </div>
++  );
++};
 --- /dev/null
 +++ b/mlflow/server/js/src/experiment-tracking/pages/open-world-results/OpenWorldResultsSessions.tsx
 @@ -0,0 +1,199 @@
@@ -4613,6 +5064,71 @@
 +    ),
 +  );
 --- /dev/null
++++ b/mlflow/server/js/src/experiment-tracking/pages/open-world-results/openWorldSessionFilterModel.ts
+@@ -0,0 +1,62 @@
++import { FilterOp, type FilterClause, type TraceFilterModel } from '@databricks/web-shared/traces-table';
++import type { OpenWorldEpisode } from './openWorldResultsData';
++
++export const SESSION_FILTER_PARAM = 'resultsSessionFilters';
++
++const dimensions = [
++  ['runId', 'metadata', 'mlflow.sourceRun'],
++  ['scenario', 'tag', 'scenario_id'],
++  ['target', 'tag', 'alignment_target_id'],
++  ['adm', 'tag', 'adm'],
++  ['model', 'tag', 'llm'],
++  ['driver', 'tag', 'align.driver'],
++  ['sourceVersion', 'tag', 'align.source_version'],
++  ['sourceFamily', 'tag', 'align.source_family'],
++] as const;
++
++/** Only add extra configuration fields when they distinguish otherwise identical runs. */
++export const filtersForEpisodes = (
++  members: OpenWorldEpisode[],
++  cohort: OpenWorldEpisode[],
++  scope: 'row' | 'column' | 'cell' | 'episodes' = 'episodes',
++): { filters: TraceFilterModel; exactSelection: boolean } => {
++  const filters: TraceFilterModel = [];
++  let candidates = cohort;
++  const ids = new Set(members.map(({ id }) => id));
++  const isExact = () => candidates.length === ids.size && candidates.every(({ id }) => ids.has(id));
++  if (!members.length) return { filters, exactSelection: true };
++  for (const [property, field, key] of dimensions) {
++    if (scope === 'row' && !['scenario', 'target'].includes(property)) continue;
++    if (scope === 'column' && ['scenario', 'target'].includes(property)) continue;
++    const value = members[0][property];
++    if (!value || !members.every((member) => member[property] === value)) continue;
++    if (filters.length >= 1 && isExact() && !['runId', 'scenario', 'target'].includes(property)) break;
++    filters.push({ field, key, operator: FilterOp.EQUALS, value });
++    candidates = candidates.filter((episode) => episode[property] === value);
++  }
++  if (scope === 'episodes' && members.length === 1 && members[0].sessionId) {
++    filters.push({ field: 'session', operator: FilterOp.EQUALS, value: members[0].sessionId });
++    candidates = candidates.filter((episode) => episode.sessionId === members[0].sessionId);
++  }
++  return { filters, exactSelection: !isExact() };
++};
++
++export const readSessionFilterModel = (value: string): TraceFilterModel => {
++  const clauses: unknown = JSON.parse(value);
++  if (
++    !Array.isArray(clauses) ||
++    !clauses.every((clause: unknown): clause is FilterClause => {
++      if (!clause || typeof clause !== 'object') return false;
++      const item = clause as Record<string, unknown>;
++      return (
++        typeof item['field'] === 'string' &&
++        typeof item['value'] === 'string' &&
++        Object.values(FilterOp).includes(item['operator'] as FilterOp) &&
++        (item['key'] === undefined || typeof item['key'] === 'string')
++      );
++    })
++  ) {
++    throw new Error('The session filters in this URL are invalid. Clear them to show all dashboard sessions.');
++  }
++  return clauses;
++};
+--- /dev/null
 +++ b/mlflow/server/js/src/experiment-tracking/pages/open-world-results/useOpenWorldEpisodes.test.ts
 @@ -0,0 +1,118 @@
 +import { afterEach, beforeEach, describe, expect, jest, test } from '@jest/globals';
@@ -4786,6 +5302,257 @@
 +    isLoading: query.isLoading,
 +    isRefreshing: query.isFetching && !query.isLoading,
 +    error: query.error,
++    refetch: query.refetch,
++  };
++};
+--- /dev/null
++++ b/mlflow/server/js/src/experiment-tracking/pages/open-world-results/useOpenWorldSessionFilters.test.tsx
+@@ -0,0 +1,142 @@
++import { afterEach, beforeEach, describe, expect, jest, test } from '@jest/globals';
++import { act, fireEvent, render, screen, waitForElementToBeRemoved } from '@testing-library/react';
++import type { ReactNode } from 'react';
++import type { ModelTraceInfoV3 } from '@databricks/web-shared/model-trace-explorer';
++import { FilterOp, type TraceFilterModel } from '@databricks/web-shared/traces-table';
++import { QueryClient, QueryClientProvider } from '../../../common/utils/reactQueryHooks';
++import { fetchAPI } from '../../../shared/web-shared/model-trace-explorer/ModelTraceExplorer.request.utils';
++import { buildOpenWorldEpisodes, type OpenWorldEpisode } from './openWorldResultsData';
++import { useOpenWorldSessionFilters } from './useOpenWorldSessionFilters';
++
++jest.mock('../../../shared/web-shared/model-trace-explorer/ModelTraceExplorer.request.utils', () => ({
++  fetchAPI: jest.fn(),
++  getAjaxUrl: (url: string) => url,
++}));
++const fetchMock = jest.mocked(fetchAPI);
++const trace = (id: string, sessionId = ''): ModelTraceInfoV3 => ({
++  trace_id: id,
++  trace_location: { type: 'MLFLOW_EXPERIMENT', mlflow_experiment: { experiment_id: '1' } },
++  request_time: '2026-01-01T00:00:00Z',
++  state: 'OK',
++  tags: { step: '1', 'align.import_complete': 'source-record-v1' },
++  trace_metadata: sessionId ? { 'mlflow.trace.session': sessionId } : {},
++});
++const inputFilter: TraceFilterModel = [{ field: 'input', operator: FilterOp.CONTAINS, value: 'rescue' }];
++const deferred = () => {
++  let resolve: (value: unknown) => void = () => {};
++  const promise = new Promise((done) => {
++    resolve = done;
++  });
++  return { promise, resolve };
++};
++
++const SessionList = ({
++  episodes,
++  filters = inputFilter,
++}: {
++  episodes: OpenWorldEpisode[];
++  filters?: TraceFilterModel;
++}) => {
++  const result = useOpenWorldSessionFilters({ experimentId: '1', episodes, filters });
++  return (
++    <section>
++      {result.isLoading && <p role="status">Loading sessions</p>}
++      {result.isRefreshing && <p role="status">Refreshing sessions</p>}
++      {result.error && <p role="alert">Unable to filter sessions</p>}
++      <ul aria-label="Sessions">
++        {result.episodes.map((episode) => (
++          <li key={episode.id}>
++            {episode.id}: {episode.traces.map((member) => member.trace_id).join(', ')}
++          </li>
++        ))}
++      </ul>
++    </section>
++  );
++};
++
++describe('native session filtering', () => {
++  let client: QueryClient;
++  beforeEach(() => {
++    fetchMock.mockReset();
++    client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
++  });
++  afterEach(() => client.clear());
++  const wrapper = ({ children }: { children: ReactNode }) => (
++    <QueryClientProvider client={client}>{children}</QueryClientProvider>
++  );
++
++  test('a matching later action retains the complete episode across every search page', async () => {
++    const page = deferred();
++    const episodes = buildOpenWorldEpisodes([
++      trace('first', 'episode'),
++      trace('later', 'episode'),
++      trace('other', 'other'),
++    ]);
++    fetchMock.mockResolvedValueOnce({ traces: [trace('foreign', 'outside')], next_page_token: 'page-2' });
++    fetchMock.mockImplementationOnce(() => page.promise);
++    render(<SessionList episodes={episodes} />, { wrapper });
++    expect(screen.getByRole('status')).toHaveTextContent('Loading sessions');
++    expect(screen.queryAllByRole('listitem')).toHaveLength(0);
++    await act(async () => page.resolve({ traces: [trace('later', 'episode'), trace('missing')] }));
++    expect(await screen.findByText('episode: first, later')).toBeVisible();
++    expect(screen.getAllByRole('listitem')).toHaveLength(1);
++    expect(fetchMock.mock.calls[1][2]).toMatchObject({
++      page_token: 'page-2',
++      locations: [{ type: 'MLFLOW_EXPERIMENT', mlflow_experiment: { experiment_id: '1' } }],
++    });
++  });
++
++  test('native fields compile to the backend query and orphan actions match only their original trace', async () => {
++    fetchMock.mockResolvedValueOnce({ traces: [trace('orphan')] });
++    const filters: TraceFilterModel = [
++      { field: 'session', operator: FilterOp.EQUALS, value: 'exact-session' },
++      { field: 'tag', key: 'scenario_id', operator: FilterOp.EQUALS, value: 'scenario' },
++      { field: 'metadata', key: 'model', operator: FilterOp.EQUALS, value: 'model-a' },
++      { field: 'span_name', operator: FilterOp.CONTAINS, value: 'action' },
++    ];
++    render(<SessionList episodes={buildOpenWorldEpisodes([trace('orphan'), trace('different')])} filters={filters} />, {
++      wrapper,
++    });
++    expect(await screen.findByText('trace:orphan: orphan')).toBeVisible();
++    expect(screen.getAllByRole('listitem')).toHaveLength(1);
++    expect(fetchMock.mock.calls[0][2]).toMatchObject({
++      filter:
++        "request_metadata.mlflow.trace.session = 'exact-session' AND tags.scenario_id = 'scenario' AND request_metadata.model = 'model-a' AND span.name ILIKE '%action%'",
++    });
++  });
++
++  test('changing filters cancels the pending request and an error cannot restore stale results', async () => {
++    const stale = deferred();
++    fetchMock.mockImplementationOnce(() => stale.promise);
++    const episodes = buildOpenWorldEpisodes([trace('first', 'episode')]);
++    const view = render(<SessionList episodes={episodes} />, { wrapper });
++    const signal = fetchMock.mock.calls[0][3] as AbortSignal;
++    fetchMock.mockResolvedValueOnce({ error_code: 'INTERNAL_ERROR', message: 'failed search' });
++    view.rerender(
++      <SessionList episodes={episodes} filters={[{ field: 'state', operator: FilterOp.EQUALS, value: 'ERROR' }]} />,
++    );
++    expect(await screen.findByRole('alert')).toHaveTextContent('Unable to filter sessions');
++    expect(signal.aborted).toBe(true);
++    await act(async () => stale.resolve({ traces: [trace('first', 'episode')] }));
++    expect(screen.queryAllByRole('listitem')).toHaveLength(0);
++  });
++
++  test('a changed population reruns the filter and focus refresh includes newly imported matches', async () => {
++    const old = trace('old', 'old-session');
++    const imported = trace('new', 'new-session');
++    fetchMock.mockResolvedValueOnce({ traces: [old] });
++    const view = render(<SessionList episodes={buildOpenWorldEpisodes([old])} />, { wrapper });
++    expect(await screen.findByText('old-session: old')).toBeVisible();
++    fetchMock.mockResolvedValueOnce({ traces: [old, imported] });
++    view.rerender(<SessionList episodes={buildOpenWorldEpisodes([old, imported])} />);
++    expect(await screen.findByText('new-session: new')).toBeVisible();
++    const refresh = deferred();
++    fetchMock.mockImplementationOnce(() => refresh.promise);
++    fireEvent.focus(window);
++    expect(await screen.findByRole('status')).toHaveTextContent('Refreshing sessions');
++    const previousMatchRemoved = waitForElementToBeRemoved(screen.getByText('old-session: old'));
++    await act(async () => refresh.resolve({ traces: [imported] }));
++    await previousMatchRemoved;
++    expect(screen.getAllByRole('listitem').map((item) => item.textContent)).toEqual(['new-session: new']);
++  });
++});
+--- /dev/null
++++ b/mlflow/server/js/src/experiment-tracking/pages/open-world-results/useOpenWorldSessionFilters.ts
+@@ -0,0 +1,103 @@
++import { useMemo } from 'react';
++import { createTraceLocationForExperiment } from '@databricks/web-shared/genai-traces-table';
++import { SESSION_ID_METADATA_KEY, type ModelTraceInfoV3 } from '@databricks/web-shared/model-trace-explorer';
++import type { TraceFilterModel } from '@databricks/web-shared/traces-table';
++import { useQuery } from '../../../common/utils/reactQueryHooks';
++import { fetchAPI, getAjaxUrl } from '../../../shared/web-shared/model-trace-explorer/ModelTraceExplorer.request.utils';
++import { compileFilterModel } from '../../components/experiment-page/components/traces-v4/utils/filterModel';
++import type { OpenWorldEpisode } from './openWorldResultsData';
++
++type SessionFilterMatches = { sessionIds: string[]; traceIds: string[] };
++
++type Props = {
++  experimentId: string;
++  episodes: OpenWorldEpisode[];
++  filters: TraceFilterModel;
++};
++
++export const fetchOpenWorldSessionFilterMatches = async (
++  experimentId: string,
++  filter: string,
++  signal?: AbortSignal,
++): Promise<SessionFilterMatches> => {
++  const sessionIds = new Set<string>();
++  const traceIds = new Set<string>();
++  const tokens = new Set<string>();
++  let token: string | undefined;
++  do {
++    if (signal?.aborted) throw new DOMException('Session filtering was cancelled', 'AbortError');
++    const response = (await fetchAPI(
++      getAjaxUrl('ajax-api/3.0/mlflow/traces/search'),
++      'POST',
++      {
++        locations: [createTraceLocationForExperiment(experimentId)],
++        filter,
++        max_results: 500,
++        order_by: ['timestamp ASC'],
++        ...(token ? { page_token: token } : {}),
++      },
++      signal,
++    )) as { traces?: ModelTraceInfoV3[]; next_page_token?: string; error_code?: string; message?: string };
++    if (signal?.aborted) throw new DOMException('Session filtering was cancelled', 'AbortError');
++    if (response.error_code) throw new Error(response.message || response.error_code);
++    if (
++      (response.traces !== undefined &&
++        (!Array.isArray(response.traces) ||
++          response.traces.some((trace) => !trace || typeof trace.trace_id !== 'string'))) ||
++      (response.next_page_token !== undefined && typeof response.next_page_token !== 'string')
++    ) {
++      throw new Error('Session filter search returned an invalid response');
++    }
++    for (const trace of response.traces ?? []) {
++      const sessionId = trace.trace_metadata?.[SESSION_ID_METADATA_KEY];
++      if (sessionId) sessionIds.add(sessionId);
++      else traceIds.add(trace.trace_id);
++    }
++    token = response.next_page_token || undefined;
++    if (token && tokens.has(token)) throw new Error('Session filter search repeated a page token');
++    if (token) tokens.add(token);
++  } while (token);
++  return { sessionIds: [...sessionIds], traceIds: [...traceIds] };
++};
++
++export const useOpenWorldSessionFilters = ({ experimentId, episodes, filters }: Props) => {
++  const filter = compileFilterModel(filters).join(' AND ');
++  const cohortFingerprint = useMemo(
++    () =>
++      JSON.stringify(
++        episodes
++          .map((episode) => ({ id: episode.id, sessionId: episode.sessionId, traces: episode.traces }))
++          .sort((left, right) => left.id.localeCompare(right.id)),
++      ),
++    [episodes],
++  );
++  const enabled = Boolean(experimentId && filter && episodes.length);
++  const query = useQuery({
++    queryKey: ['open-world-session-filter-matches', experimentId, filter, cohortFingerprint],
++    queryFn: ({ signal }) => fetchOpenWorldSessionFilterMatches(experimentId, filter, signal),
++    enabled,
++    retry: false,
++    keepPreviousData: false,
++    staleTime: 0,
++    refetchOnMount: true,
++    refetchOnWindowFocus: true,
++  });
++  const matchingEpisodes = useMemo(() => {
++    if (!filter) return episodes;
++    if (!enabled || !query.data || query.isError) return [];
++    const sessionIds = new Set(query.data.sessionIds);
++    const traceIds = new Set(query.data.traceIds);
++    return episodes.filter((episode) =>
++      episode.sessionId
++        ? sessionIds.has(episode.sessionId)
++        : traceIds.has(episode.traceId) || episode.traces.some((trace) => traceIds.has(trace.trace_id)),
++    );
++  }, [episodes, filter, enabled, query.data, query.isError]);
++  return {
++    episodes: matchingEpisodes,
++    isLoading: enabled && query.isLoading,
++    isRefreshing: enabled && query.isFetching && !query.isLoading,
++    error: enabled ? query.error : null,
 +    refetch: query.refetch,
 +  };
 +};

@@ -102,9 +102,21 @@ change. Drilldowns and **Back to results** move keyboard focus to their
 destination. Opening a session shows its complete decision sequence. Select
 sessions across cells and filters for the existing comparison. This table shows
 only the requested target; target mismatches remain visible as warnings.
-Normal rows have no metadata-conflict status column. Filters and selected
-contributors are preserved in the URL; checkbox selections remain while using
-the dashboard.
+Normal rows have no metadata-conflict status column.
+
+The **Sessions** table remains visible when filters are cleared. Chart and matrix
+selections populate editable conditions in MLflow's native trace filter builder.
+A matrix cell supplies invocation, scenario, and target conditions; a dot also
+supplies its session. Remove a condition to broaden the results, or use **Show
+all dashboard sessions** to clear the table filters. The builder supports the
+same fields and operators as the native traces table, including arbitrary tags,
+metadata, feedback, and span fields. Matching uses MLflow search across all
+of a session's decisions and retains the complete session result in the table.
+Active dashboard filters also appear beside the table and can be removed there.
+New chart and matrix selections replace the table filters. **Clear checked
+sessions** resets comparison checkboxes separately. Dashboard filters, table
+filters, and drilldowns are preserved in the URL; checked sessions and column
+preferences remain while the dashboard is open.
 
 All data comes from the selected experiment's completed first-action traces and
 persisted session assessments. Revisiting or returning focus reloads all result
