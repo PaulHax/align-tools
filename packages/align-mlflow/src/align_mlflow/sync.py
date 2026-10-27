@@ -76,9 +76,7 @@ def _new_run_start_ns(run_dir: Path, fallback_ns: int) -> int:
     return fallback_ns
 
 
-def sync_run(
-    experiment_id: str, run_dir: Path, *, include_log: bool = False
-) -> SyncResult:
+def sync_run(experiment_id: str, run_dir: Path) -> SyncResult:
     """Log the run's steps and episode scores that MLflow does not have yet.
 
     Runs that cannot be read yet, for example while input_output.json is
@@ -128,8 +126,7 @@ def sync_run(
         timeline, recovery_warning = captured_timing(
             client, source, run, origin_ns, logged, recovery_origin_ns
         )
-        if include_log:
-            preserve_log(client, source, log_content, logs)
+        preserve_log(client, source, log_content, logs)
         sync_source_version(logged.values(), run.version)
         trace_ids = {index: trace.info.trace_id for index, trace in logged.items()}
         new_steps = [
@@ -179,10 +176,7 @@ def sync_run(
     )
 
 
-def sync_tree(
-    experiment_id: str, root: Path, *, include_log: bool = False
-) -> Tuple[SyncResult, ...]:
+def sync_tree(experiment_id: str, root: Path) -> Tuple[SyncResult, ...]:
     return tuple(
-        sync_run(experiment_id, run_dir, include_log=include_log)
-        for run_dir in find_open_world_runs(root)
+        sync_run(experiment_id, run_dir) for run_dir in find_open_world_runs(root)
     )

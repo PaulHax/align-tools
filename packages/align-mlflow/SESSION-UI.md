@@ -119,15 +119,3 @@ can hide repetitions. Ungrouped comparisons use MLflow's input matching.
 Pairing does not align individual actions from diverging episodes. Verify that
 scenario and target IDs identify the same evaluation case when comparing runs
 from different study revisions.
-
-## Interpreting recorded metadata
-
-Views display recorded data without changing traces or scores. Older imports can
-have missing driver or model values. Session titles use recorded run, model,
-scenario, target, and episode tags; sessions missing the required tags show their ID.
-
-Requested and evaluated targets should agree. A mismatch needs investigation
-before treating scores as results for the requested target. Source revision is
-the recorded version string; a dirty version does not identify the exact executed
-code. Source family and scoring version appear only when recorded; an ADM source
-revision is not a scorer version.

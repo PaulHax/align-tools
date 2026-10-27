@@ -31,13 +31,6 @@ _experiment_option = click.option(
     show_envvar=True,
     help="MLflow experiment that receives the traces.",
 )
-_include_log_option = click.option(
-    "--include-log",
-    is_flag=True,
-    envvar="MLFLOW_INCLUDE_LOG",
-    show_envvar=True,
-    help="Retain a captured raw log and its action-association index as artifacts.",
-)
 
 
 def describe(result: SyncResult) -> str:
@@ -61,15 +54,15 @@ def cli() -> None:
 @_path_argument
 @_tracking_uri_option
 @_experiment_option
-@_include_log_option
-def sync(path: Path, tracking_uri: str, experiment: str, include_log: bool) -> None:
+def sync(path: Path, tracking_uri: str, experiment: str) -> None:
     """Import Open World runs at PATH, then exit.
 
     Pass one run directory or a parent; nested runs are scanned recursively.
-    Rerun to resume or add records. Completion scores are optional.
+    Rerun to resume or add records. Available raw logs are retained as artifacts.
+    Completion scores are optional.
     """
     experiment_id = connect(tracking_uri, experiment)
-    results = sync_tree(experiment_id, path, include_log=include_log)
+    results = sync_tree(experiment_id, path)
     if not results:
         click.echo(f"No open-world runs found under {path}; nothing imported.")
         return
@@ -151,24 +144,22 @@ def refresh_components(
 @_path_argument
 @_tracking_uri_option
 @_experiment_option
-@_include_log_option
 @click.option(
     "--interval",
     default=2.0,
     show_default=True,
     help="Seconds between checks for files align-system has written.",
 )
-def watch(
-    path: Path, tracking_uri: str, experiment: str, include_log: bool, interval: float
-) -> None:
+def watch(path: Path, tracking_uri: str, experiment: str, interval: float) -> None:
     """Optionally follow a growing run or sweep at PATH.
 
-    Uses the same importer and store as sync. Stop with Ctrl-C.
+    Uses the same importer and store as sync. Each changed raw log is retained
+    as a full snapshot. Stop with Ctrl-C.
     """
     experiment_id = connect(tracking_uri, experiment)
 
     def sync_one(run_dir: Path) -> SyncResult:
-        return sync_run(experiment_id, run_dir, include_log=include_log)
+        return sync_run(experiment_id, run_dir)
 
     click.echo(f"Watching {path} for open-world runs")
     watch_runs(path, sync_one, lambda result: click.echo(describe(result)), interval)

@@ -1,5 +1,6 @@
 """Detecting runs that align-system has written to, and retrying failed syncs."""
 
+import json
 from pathlib import Path
 
 import pytest
@@ -75,8 +76,17 @@ def test_watch_logs_score_when_only_the_raw_log_changes(
 ):
     run_dir = write_run(tmp_path / "2026-08-31__09-17-11", episode_records(TARGET)[:1])
     input_stat = (run_dir / "input_output.json").stat()
+    original_log = (run_dir / "raw_align_system.log").read_bytes()
     reported = []
+    snapshots = []
     polls = iter(range(2))
+
+    def report(result):
+        reported.append(result)
+        source = MlflowClient().search_runs([experiment_id])[0]
+        snapshots.append(
+            (source.info.run_id, json.loads(source.data.tags["align.log_snapshot"]))
+        )
 
     def next_poll(_seconds):
         if next(polls) == 0:
@@ -91,7 +101,7 @@ def test_watch_logs_score_when_only_the_raw_log_changes(
         watch_module.watch(
             tmp_path,
             lambda path: sync_run(experiment_id, path),
-            reported.append,
+            report,
             interval_s=0,
         )
 
@@ -109,6 +119,13 @@ def test_watch_logs_score_when_only_the_raw_log_changes(
     traces = MlflowClient().search_traces(locations=[experiment_id])
     assert len(traces) == 1
     assert traces[0].info.assessments[0].value == 0.83
+    assert snapshots[0][1]["artifact_path"] != snapshots[1][1]["artifact_path"]
+    for (run_id, reference), content in zip(
+        snapshots,
+        [original_log, original_log + completion_line(TARGET, 0.83).encode()],
+    ):
+        local = MlflowClient().download_artifacts(run_id, reference["artifact_path"])
+        assert Path(local).read_bytes() == content
 
 
 def test_watch_retries_failed_export_without_a_source_change(
