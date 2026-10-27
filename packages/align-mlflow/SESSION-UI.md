@@ -25,8 +25,15 @@ sessions. **Runs** opens the experiment's **Model training** runs table.
 
 **Performance by run** separates recorded configurations by run, ADM, model,
 driver, and provenance. **Open run** shows full run details; the **scored episodes**
-count opens the contributing sessions. The mean gives each scored scenario/target
-pair equal weight, averaging repeated scored episodes within each pair first.
+count opens the contributing sessions. The mean gives each scored scenario and
+evaluated target pair equal weight, averaging repeated scored episodes within
+each pair first.
+The evaluated target comes from the recorded TA3 assessment; requested action
+targets are retained separately. Configurations explicitly recorded as unaligned
+are labelled **Unaligned**. An absent requested target alone does not establish
+the alignment mode. A mean is unavailable when a scored episode lacks a recorded
+scenario or evaluated target; its raw score remains available for inspection.
+
 Missing scores are excluded, never treated as zero. This differs from the
 importer's [episode-weighted run mean](INGESTION.md#run-summary-scores) when
 repetition counts differ. Check coverage and source revisions before comparing runs.
@@ -34,10 +41,15 @@ repetition counts differ. Check coverage and source revisions before comparing r
 **Episode scores** shows a clickable dot for each scored episode and a diamond
 for the mean. Hover or focus a point for its score and metadata. The axis is fixed
 from 0 to 1; out-of-range scores appear at the nearest boundary, with their raw
-values in tooltips and summaries. Missing scores remain accessible through the
-overview and session table.
+values in tooltips and summaries. Tooltips show evaluated and requested targets
+separately. Missing scores remain accessible through the overview and session
+table.
 
-The **Scenario/target matrix** shows scores by configuration and evaluation case.
+The **Scenario/target matrix** shows scores by configuration, scenario, and
+**Evaluated target**. Scored episodes use the target reported by TA3, including
+unaligned configurations that were scored against that target. Unscored episodes
+appear in separate rows labelled **Requested target**; they are not assigned an
+inferred evaluated target.
 Repeated episodes show a count; incomplete results show scored/total counts.
 Missing scores and absent episodes are distinct. Select a row for that case
 across runs, a column for that configuration, or a cell for its contributing

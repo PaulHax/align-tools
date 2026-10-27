@@ -4785,7 +4785,7 @@
      return baseConfig;
 --- /dev/null
 +++ b/mlflow/server/js/src/experiment-tracking/pages/open-world-results/OpenWorldResultsCharts.test.tsx
-@@ -0,0 +1,266 @@
+@@ -0,0 +1,270 @@
 +import { describe, expect, jest, test } from '@jest/globals';
 +import { act, fireEvent, render, screen, within } from '@testing-library/react';
 +import userEvent from '@testing-library/user-event';
@@ -4864,7 +4864,9 @@
 +    point.focus();
 +    await user.keyboard('{Enter}');
 +    expect(onSelectEpisodes).toHaveBeenLastCalledWith([episodes[0]]);
-+    const mean = screen.getByRole('button', { name: /Mean 1 across scenario\/target pairs for.*inspect 4 episodes/ });
++    const mean = screen.getByRole('button', {
++      name: /Mean 1 across scenario\/evaluated target pairs for.*inspect 4 episodes/,
++    });
 +    await user.click(mean);
 +    expect(onSelectEpisodes).toHaveBeenLastCalledWith(episodes.slice(0, 4));
 +    await user.click(screen.getByRole('button', { name: '1 missing score' }));
@@ -4896,12 +4898,12 @@
 +    expect(tooltip).toHaveTextContent('Outside 0 to 1; plotted at 0');
 +    for (const [name, value] of [
 +      ['Scenario', 'case-a'],
-+      ['KDMA target', 'target'],
++      ['Evaluated target', 'target'],
 +      ['ADM', 'ADM A'],
 +      ['Model', 'Model A'],
 +    ]) {
 +      expect(within(tooltip).getByText(name, { exact: true })).toBeInTheDocument();
-+      expect(within(tooltip).getByText(value, { exact: true })).toBeInTheDocument();
++      expect(within(tooltip).getAllByText(value, { exact: true }).length).toBeGreaterThan(0);
 +    }
 +    expect(tooltip).toHaveTextContent('Select to inspect this episode');
 +    expect(tooltip).not.toHaveTextContent(/private-session|trace-|run-a/);
@@ -4918,7 +4920,7 @@
 +    expect(onSelectEpisodes).toHaveBeenLastCalledWith([episodes[1]]);
 +    await user.click(first);
 +    expect(onSelectEpisodes).toHaveBeenLastCalledWith([episodes[0]]);
-+    const mean = screen.getByRole('button', { name: /Mean -2 across scenario\/target pairs for/ });
++    const mean = screen.getByRole('button', { name: /Mean -2 across scenario\/evaluated target pairs for/ });
 +    expect(mean).toHaveAccessibleName(/outside 0 to 1/);
 +    expect(within(mean).getByText('Mean -2 (out of range)')).toBeInTheDocument();
 +    expect(mean.querySelector('path')).toHaveAttribute('d', 'M 24 80 l 7 7 l -7 7 l -7 -7 Z');
@@ -4943,12 +4945,12 @@
 +        <OpenWorldResultsCharts episodes={episodes} onSelectEpisodes={onSelectEpisodes} />
 +      </DesignSystemProvider>,
 +    );
-+    const mean = screen.getByRole('button', { name: /Mean 1 across scenario\/target pairs for/ });
++    const mean = screen.getByRole('button', { name: /Mean 1 across scenario\/evaluated target pairs for/ });
 +    expect(mean.querySelector('title')).toBeNull();
 +    await user.hover(mean);
 +    const tooltip = await screen.findByRole('tooltip');
 +    expect(tooltip).toHaveTextContent('Mean 1');
-+    expect(tooltip).toHaveTextContent('Scored scenario/target pairs2 of 3');
++    expect(tooltip).toHaveTextContent('Scored case rows2 of 3');
 +    expect(tooltip).toHaveTextContent('Scored episodes3 of 4');
 +    expect(tooltip).toHaveTextContent('Select to inspect all 4 episodes, including missing scores');
 +    await user.keyboard('{Escape}');
@@ -5004,7 +5006,9 @@
 +      '300',
 +    );
 +    expect(
-+      screen.getByRole('button', { name: /Mean 0.5 across scenario\/target pairs for/ }).querySelector('path'),
++      screen
++        .getByRole('button', { name: /Mean 0.5 across scenario\/evaluated target pairs for/ })
++        .querySelector('path'),
 +    ).toHaveAttribute('d', 'M 300 80 l 7 7 l -7 7 l -7 -7 Z');
 +  });
 +
@@ -5054,11 +5058,17 @@
 +});
 --- /dev/null
 +++ b/mlflow/server/js/src/experiment-tracking/pages/open-world-results/OpenWorldResultsCharts.tsx
-@@ -0,0 +1,332 @@
+@@ -0,0 +1,340 @@
 +import { useEffect, useState, type KeyboardEvent } from 'react';
 +import { Global } from '@emotion/react';
 +import { Button, Tooltip, Typography, useDesignSystemTheme } from '@databricks/design-system';
-+import { aggregateEpisodes, groupEpisodes, type OpenWorldEpisode } from './openWorldResultsData';
++import {
++  aggregateEpisodes,
++  episodeCaseKey,
++  groupEpisodes,
++  requestedTargetLabel,
++  type OpenWorldEpisode,
++} from './openWorldResultsData';
 +import { OpenWorldResultsSectionTitle } from './OpenWorldResultsHelp';
 +import { OpenWorldRunIdentity } from './OpenWorldRunIdentity';
 +
@@ -5107,7 +5117,7 @@
 +    document.addEventListener('keydown', dismiss);
 +    return () => document.removeEventListener('keydown', dismiss);
 +  }, [openTooltip]);
-+  const caseKey = (episode: OpenWorldEpisode) => JSON.stringify([episode.scenario, episode.target]);
++  const caseKey = episodeCaseKey;
 +  const groups = groupEpisodes(episodes, ['adm', 'model', 'runId', 'driver', 'compatibilityKey'], 'equal-case');
 +  const activate = (event: KeyboardEvent<SVGGElement>, members: OpenWorldEpisode[]) => {
 +    if (event.key === 'Enter' || event.key === ' ') {
@@ -5131,7 +5141,7 @@
 +      <OpenWorldResultsSectionTitle
 +        title="Episode scores"
 +        componentId="mlflow.open-world.results.chart-help"
-+        help="Dots show episode scores. Diamonds show the mean with equal weight for each scenario/target pair, excluding missing scores. Select either to view its sessions."
++        help="Dots show recorded episode scores. Diamonds show the mean with equal weight for each scenario and evaluated target pair, excluding missing scores. Select either to view its sessions."
 +      />
 +      <div css={{ overflowX: 'auto', border: `1px solid ${theme.colors.border}`, borderRadius: 8 }}>
 +        <div css={{ minWidth: 800 }}>
@@ -5194,6 +5204,7 @@
 +                      ? `${group.total} ${group.total === 1 ? 'episode' : 'episodes'}`
 +                      : `${group.scored}/${group.total} episodes scored`}
 +                  </div>
++                  {summary.meanUnavailableReason && <div>{summary.meanUnavailableReason}</div>}
 +                  {outsideRange.length > 0 && (
 +                    <div>
 +                      {outsideRange.length} {outsideRange.length === 1 ? 'score' : 'scores'} outside 0 to 1 (!)
@@ -5240,7 +5251,8 @@
 +                            title={`Score ${score}`}
 +                            rows={[
 +                              ['Scenario', recorded(item.scenario)],
-+                              ['KDMA target', recorded(item.target)],
++                              ['Evaluated target', recorded(item.evaluatedTarget)],
++                              ['Requested target', requestedTargetLabel(item)],
 +                              ['ADM', recorded(item.adm)],
 +                              ['Model', recorded(item.model)],
 +                              ...rangeContext(item.score as number),
@@ -5252,7 +5264,7 @@
 +                        <g
 +                          role="button"
 +                          tabIndex={0}
-+                          aria-label={`Episode score ${score}; scenario ${recorded(item.scenario)}; KDMA target ${recorded(item.target)}; ADM ${recorded(item.adm)}; model ${recorded(item.model)}; ${outOfRange(item.score as number) ? 'outside 0 to 1; ' : ''}inspect episode`}
++                          aria-label={`Episode score ${score}; scenario ${recorded(item.scenario)}; evaluated target ${recorded(item.evaluatedTarget)}; requested target ${requestedTargetLabel(item)}; ADM ${recorded(item.adm)}; model ${recorded(item.model)}; ${outOfRange(item.score as number) ? 'outside 0 to 1; ' : ''}inspect episode`}
 +                          onPointerEnter={() => updateTooltip(tooltipKey, true)}
 +                          onPointerMove={() => updateTooltip(tooltipKey, true)}
 +                          onPointerLeave={() => updateTooltip(tooltipKey, false)}
@@ -5335,7 +5347,7 @@
 +                          rows={[
 +                            ['ADM', recorded(episode.adm)],
 +                            ['Model', recorded(episode.model)],
-+                            ['Scored scenario/target pairs', `${scoredCases} of ${observedCases}`],
++                            ['Scored case rows', `${scoredCases} of ${observedCases}`],
 +                            ['Scored episodes', `${group.scored} of ${group.total}`],
 +                            ...rangeContext(summary.mean),
 +                          ]}
@@ -5346,7 +5358,7 @@
 +                      <g
 +                        role="button"
 +                        tabIndex={0}
-+                        aria-label={`Mean ${formatScore(summary.mean)} across scenario/target pairs for ${recorded(episode.adm)} / ${recorded(episode.model)}; ${scoredCases} of ${observedCases} pairs scored; ${group.scored} of ${group.total} episodes scored; ${outOfRange(summary.mean) ? 'outside 0 to 1; ' : ''}inspect ${group.total} episodes`}
++                        aria-label={`Mean ${formatScore(summary.mean)} across scenario/evaluated target pairs for ${recorded(episode.adm)} / ${recorded(episode.model)}; ${scoredCases} of ${observedCases} case rows scored; ${group.scored} of ${group.total} episodes scored; ${outOfRange(summary.mean) ? 'outside 0 to 1; ' : ''}inspect ${group.total} episodes`}
 +                        onPointerEnter={() => updateTooltip(`mean:${group.key}`, true)}
 +                        onPointerMove={() => updateTooltip(`mean:${group.key}`, true)}
 +                        onPointerLeave={() => updateTooltip(`mean:${group.key}`, false)}
@@ -5442,7 +5454,7 @@
 +);
 --- /dev/null
 +++ b/mlflow/server/js/src/experiment-tracking/pages/open-world-results/OpenWorldResultsPage.test.tsx
-@@ -0,0 +1,609 @@
+@@ -0,0 +1,678 @@
 +import { useState } from 'react';
 +import { it, expect, jest, beforeEach, afterEach } from '@jest/globals';
 +import userEvent, { PointerEventsCheckLevel } from '@testing-library/user-event';
@@ -5522,6 +5534,7 @@
 +    compatibilityKey: 'compatible-a',
 +    ...extra,
 +  };
++  result.evaluatedTarget = extra.evaluatedTarget ?? result.target;
 +  result.traces = [
 +    makeTrace(result.traceId, {
 +      trace_location: { type: 'MLFLOW_EXPERIMENT', mlflow_experiment: { experiment_id: '123' } },
@@ -5623,7 +5636,7 @@
 +  return sessions.getByRole('table');
 +};
 +
-+it('distinguishes zero from missing and enables comparison only with two checked sessions', async () => {
++it('separates scored evaluated targets from missing requested targets and compares across those rows', async () => {
 +  const user = userEvent.setup({ pointerEventsCheck: PointerEventsCheckLevel.Never });
 +  renderMatrix([
 +    episode('zero', 0),
@@ -5631,27 +5644,19 @@
 +    episode('mismatch', 1, { evaluatedTarget: 'other', targetMismatch: true }),
 +    episode('other-cell', 0.7, { scenario: 'scenario-b' }),
 +  ]);
-+  expect(screen.getByRole('button', { name: 'scenario-b / target-a: 0.700, 1/1 scored' })).toHaveTextContent(
-+    /^0\.700$/,
-+  );
-+  fireEvent.click(screen.getByRole('button', { name: 'scenario-a / target-a: 0.500, 2/3 scored' }));
++  expect(
++    screen.getByRole('button', { name: 'scenario-b / evaluated target target-a: 0.700, 1/1 scored' }),
++  ).toHaveTextContent(/^0\.700$/);
++  fireEvent.click(screen.getByRole('button', { name: 'scenario-a / evaluated target target-a: 0.000, 1/1 scored' }));
 +  expect(scrollIntoView).toHaveBeenCalledWith({ block: 'start' });
-+  const table = await sessionTable();
++  let table = await sessionTable();
 +  expect(within(table).getByText('0')).toBeInTheDocument();
-+  const missingRow = within(table)
-+    .getByRole('checkbox', { name: 'Select session missing' })
-+    .closest('[role="row"]') as HTMLElement;
-+  expect(within(missingRow).getAllByText('Unavailable')).not.toHaveLength(0);
-+  expect(screen.getByText('Requested and evaluated targets do not match')).toBeInTheDocument();
-+  expect(within(table).queryByText('other')).not.toBeInTheDocument();
-+  expect(within(table).queryByRole('columnheader', { name: /evaluated target/i })).not.toBeInTheDocument();
-+  expect(screen.queryByText('No recorded metadata conflict')).not.toBeInTheDocument();
-+  expect(within(table).queryByRole('columnheader', { name: 'Evidence' })).not.toBeInTheDocument();
-+  expect(within(table).queryByText('other-cell')).not.toBeInTheDocument();
 +  expect(within(table).getByRole('link', { name: 'zero' })).toHaveAttribute(
 +    'href',
 +    expect.stringContaining('/chat-sessions/zero'),
 +  );
++  expect(within(table).queryByRole('columnheader', { name: /evaluated target/i })).not.toBeInTheDocument();
++  expect(within(table).queryByRole('columnheader', { name: 'Evidence' })).not.toBeInTheDocument();
 +  const compare = screen.getByRole('button', { name: 'Compare selected sessions' });
 +  expect(compare).toBeDisabled();
 +  await user.hover(compare.parentElement as HTMLElement);
@@ -5659,7 +5664,22 @@
 +  await user.unhover(compare.parentElement as HTMLElement);
 +  fireEvent.click(within(table).getByRole('checkbox', { name: 'Select session zero' }));
 +  expect(compare).toBeDisabled();
++  fireEvent.click(
++    screen.getByRole('button', { name: 'scenario-a / requested target target-a: Unavailable, 0/1 scored' }),
++  );
++  table = await sessionTable();
++  const missingRow = within(table)
++    .getByRole('checkbox', { name: 'Select session missing' })
++    .closest('[role="row"]') as HTMLElement;
++  expect(within(missingRow).getAllByText('Unavailable')).not.toHaveLength(0);
++  expect(within(table).queryByRole('link', { name: 'zero' })).not.toBeInTheDocument();
 +  fireEvent.click(within(table).getByRole('checkbox', { name: 'Select session missing' }));
++  expect(compare).toBeEnabled();
++  fireEvent.click(screen.getByRole('button', { name: 'scenario-a / evaluated target other: 1.000, 1/1 scored' }));
++  table = await sessionTable();
++  expect(screen.getByText('Requested and evaluated targets do not match')).toBeInTheDocument();
++  expect(within(table).queryByText('other')).not.toBeInTheDocument();
++  expect(within(table).queryByText('other-cell')).not.toBeInTheDocument();
 +  expect(compare).toBeEnabled();
 +  fireEvent.click(screen.getByRole('button', { name: 'Clear checked sessions' }));
 +  expect(compare).toBeDisabled();
@@ -5677,9 +5697,9 @@
 +  const table = screen.getByRole('table', { name: 'Open World results matrix' });
 +  expect(within(table.querySelector('thead') as HTMLElement).getAllByRole('columnheader')).toHaveLength(4);
 +  expect(within(table).queryByText('Average across cases')).not.toBeInTheDocument();
-+  expect(within(table).getByRole('button', { name: 'scenario-a / target-a: 0.000, 2/2 scored' })).toHaveTextContent(
-+    '2 episodes',
-+  );
++  expect(
++    within(table).getByRole('button', { name: 'scenario-a / evaluated target target-a: 0.000, 2/2 scored' }),
++  ).toHaveTextContent('2 episodes');
 +});
 +
 +it('exposes unavailable metadata and conflicts in matrix summaries', async () => {
@@ -5688,9 +5708,9 @@
 +    episode('known', 0.8),
 +  ]);
 +  expect(screen.getByText('1 episodes have conflicting metadata.')).toBeInTheDocument();
-+  expect(screen.getByRole('button', { name: 'scenario-a / target-a: 0.200, 1/1 scored' })).toHaveTextContent(
-+    '1 metadata conflict',
-+  );
++  expect(
++    screen.getByRole('button', { name: 'scenario-a / evaluated target target-a: 0.200, 1/1 scored' }),
++  ).toHaveTextContent('1 metadata conflict');
 +});
 +
 +it('shows the matrix below score distributions and drills review totals into exactly the affected episodes', async () => {
@@ -5704,7 +5724,7 @@
 +    'href',
 +    '/experiments/123?workflowType=machine_learning',
 +  );
-+  expect(screen.getByLabelText('Scenario/target pairs: 1')).toBeInTheDocument();
++  expect(screen.getByLabelText('Scenario/evaluated target pairs: 1')).toBeInTheDocument();
 +  expect(screen.getByLabelText('Episodes: 4')).toBeInTheDocument();
 +  const matrix = screen.getByRole('table', { name: 'Open World results matrix' });
 +  const chart = screen.getByRole('region', { name: 'Episode score distributions' });
@@ -5736,8 +5756,10 @@
 +    ],
 +    '/?workspace=open-world',
 +  );
-+  expect(screen.getByLabelText('Scenario/target pairs: 1')).toHaveTextContent('1 scenario/target pair');
-+  expect(screen.queryByRole('button', { name: 'Scenario/target pairs: 1' })).not.toBeInTheDocument();
++  expect(screen.getByLabelText('Scenario/evaluated target pairs: 1')).toHaveTextContent(
++    '1 scenario/evaluated target pair',
++  );
++  expect(screen.queryByRole('button', { name: 'Scenario/evaluated target pairs: 1' })).not.toBeInTheDocument();
 +  expect(screen.queryByRole('button', { name: 'Episodes: 5' })).not.toBeInTheDocument();
 +  expect(screen.getByRole('link', { name: 'Runs: 2 (model training)' })).toHaveAttribute(
 +    'href',
@@ -5753,7 +5775,7 @@
 +  expect(scoredCount).toHaveTextContent('3 scored episodes');
 +  expect(
 +    within(scoredCount.closest('article') as HTMLElement)
-+      .getByText('0.400')
++      .getByText('Unavailable', { exact: true })
 +      .closest('button'),
 +  ).toBeNull();
 +  fireEvent.click(scoredCount);
@@ -5790,7 +5812,7 @@
 +  renderMatrix([episode('a', 0.5)], '/?resultsEpisodes=%5B%22a%22%5D');
 +  const contributors = screen.getByRole('region', { name: 'Sessions' });
 +  expect(contributors).not.toHaveFocus();
-+  const row = screen.getByRole('button', { name: 'Inspect scenario scenario-a / target target-a' });
++  const row = screen.getByRole('button', { name: 'Inspect scenario scenario-a / evaluated target target-a' });
 +  row.focus();
 +  await user.keyboard('{Enter}');
 +  expect(contributors).toHaveFocus();
@@ -5811,7 +5833,7 @@
 +    episode('d', 0.9, { scenario: 'scenario-b' }),
 +  ]);
 +  const sessions = within(screen.getByRole('region', { name: 'Sessions' }));
-+  fireEvent.click(screen.getByRole('button', { name: 'scenario-a / target-a: 0.200, 1/1 scored' }));
++  fireEvent.click(screen.getByRole('button', { name: 'scenario-a / evaluated target target-a: 0.200, 1/1 scored' }));
 +  await sessionTable();
 +  expect(sessions.getByRole('link', { name: 'a' })).toBeInTheDocument();
 +  expect(sessions.queryByText('Matrix cell')).not.toBeInTheDocument();
@@ -5920,7 +5942,7 @@
 +    episode('d', 0.8, { scenario: 'scenario-b', runId: 'invocation-b', runName: 'Run B' }),
 +  ]);
 +  const sessions = within(screen.getByRole('region', { name: 'Sessions' }));
-+  fireEvent.click(screen.getByRole('button', { name: 'scenario-a / target-a: 0.200, 1/1 scored' }));
++  fireEvent.click(screen.getByRole('button', { name: 'scenario-a / evaluated target target-a: 0.200, 1/1 scored' }));
 +  await sessionTable();
 +  fireEvent.click(sessions.getByRole('checkbox', { name: 'Select session a' }));
 +  await user.click(sessions.getByRole('button', { name: 'Filter scenario_id' }));
@@ -5957,7 +5979,7 @@
 +    '/',
 +  );
 +  const sessions = within(screen.getByRole('region', { name: 'Sessions' }));
-+  fireEvent.click(screen.getByRole('button', { name: 'scenario-a / target-a: 0.200, 1/1 scored' }));
++  fireEvent.click(screen.getByRole('button', { name: 'scenario-a / evaluated target target-a: 0.200, 1/1 scored' }));
 +  await sessionTable();
 +  expect(sessions.getByRole('link', { name: 'a' })).toBeInTheDocument();
 +  expect(sessions.queryByRole('link', { name: 'b' })).not.toBeInTheDocument();
@@ -6052,16 +6074,81 @@
 +  });
 +  expect(fetchMock.mock.calls[1][2]).toMatchObject({ page_token: 'later-decisions' });
 +});
++
++it('populates all 24 evaluated cases across eight runs and drills unaligned cells into their exact sessions', async () => {
++  const episodes = Array.from({ length: 8 }, (_, invocation) =>
++    Array.from({ length: 24 }, (_, index) =>
++      episode(`run-${invocation}-episode-${index}`, (index + invocation) / 32, {
++        runId: `invocation-${invocation}`,
++        runName: `Run ${invocation}`,
++        scenario: `scenario-${Math.floor(index / 12)}`,
++        target: invocation >= 6 ? '' : invocation === 2 ? 'constant-requested-target' : `target-${index % 12}`,
++        evaluatedTarget: `target-${index % 12}`,
++        alignmentMode: invocation >= 6 ? 'unaligned' : 'aligned',
++      }),
++    ),
++  ).flat();
++  renderMatrix(episodes, '/?resultsEpisodes=[]');
++  const matrix = screen.getByRole('table', { name: 'Open World results matrix' });
++  expect(within(matrix.querySelector('thead') as HTMLElement).getAllByRole('columnheader')).toHaveLength(9);
++  expect(matrix.querySelectorAll('tbody tr')).toHaveLength(24);
++  expect(matrix.querySelectorAll('tbody td button')).toHaveLength(192);
++  expect(within(matrix).queryByText('No episodes')).not.toBeInTheDocument();
++  expect(screen.getByLabelText('Scenario/evaluated target pairs: 24')).toBeInTheDocument();
++  expect(within(matrix).getByRole('columnheader', { name: 'Scenario / Evaluated target' })).toBeInTheDocument();
++  expect(within(matrix.querySelector('thead') as HTMLElement).getAllByText('Alignment: Unaligned')).toHaveLength(2);
++  fireEvent.click(within(matrix.querySelector('tbody tr') as HTMLElement).getAllByRole('button')[7]);
++  let table = await sessionTable();
++  expect(within(table).getByRole('checkbox', { name: 'Select session run-6-episode-0' })).toBeInTheDocument();
++  expect(within(table).getAllByRole('checkbox', { name: /^Select session / })).toHaveLength(1);
++  expect(screen.queryByRole('button', { name: 'Remove target filter' })).not.toBeInTheDocument();
++  fireEvent.click(screen.getByRole('button', { name: 'Inspect scenario scenario-0 / evaluated target target-0' }));
++  table = await sessionTable();
++  expect(within(table).getAllByRole('checkbox', { name: /^Select session / })).toHaveLength(8);
++  for (let invocation = 0; invocation < 8; invocation++) {
++    expect(
++      within(table).getByRole('checkbox', { name: `Select session run-${invocation}-episode-0` }),
++    ).toBeInTheDocument();
++  }
++});
++
++it('keeps unknown evaluated cases separate and explains why a comparable mean is unavailable', async () => {
++  renderMatrix(
++    [episode('unknown-a', 0.2, { evaluatedTarget: '' }), episode('unknown-b', 0.8, { evaluatedTarget: '' })],
++    '/?resultsEpisodes=[]',
++  );
++  const matrix = screen.getByRole('table', { name: 'Open World results matrix' });
++  expect(matrix.querySelectorAll('tbody tr')).toHaveLength(2);
++  expect(
++    within(matrix).getByRole('button', { name: 'scenario-a / evaluated target Unavailable: 0.200, 1/1 scored' }),
++  ).toHaveTextContent('0.200');
++  expect(
++    within(matrix).getByRole('button', { name: 'scenario-a / evaluated target Unavailable: 0.800, 1/1 scored' }),
++  ).toHaveTextContent('0.800');
++  const summary = screen
++    .getByRole('button', { name: 'View scored episodes for Run A' })
++    .closest('article') as HTMLElement;
++  expect(within(summary).getByText('Unavailable', { exact: true })).toBeInTheDocument();
++  expect(summary).toHaveTextContent('Mean unavailable: a scored episode has no recorded scenario or evaluated target.');
++  expect(screen.queryByRole('button', { name: /^Mean / })).not.toBeInTheDocument();
++  expect(screen.getAllByRole('button', { name: /^Episode score / })).toHaveLength(2);
++});
 --- /dev/null
 +++ b/mlflow/server/js/src/experiment-tracking/pages/open-world-results/OpenWorldResultsPage.tsx
-@@ -0,0 +1,604 @@
+@@ -0,0 +1,619 @@
 +import { useCallback, useEffect, useMemo, useRef } from 'react';
 +import { Alert, Button, Typography, useDesignSystemTheme } from '@databricks/design-system';
 +import { type TraceFilterModel } from '@databricks/web-shared/traces-table';
 +import { Link, useParams, useSearchParams } from '../../../common/utils/RoutingUtils';
 +import Routes from '../../routes';
 +import { buildWorkflowTypeQueryString, WorkflowType } from '../../../common/contexts/WorkflowTypeContext';
-+import { aggregateEpisodes, type OpenWorldEpisode } from './openWorldResultsData';
++import {
++  aggregateEpisodes,
++  episodeCaseKey,
++  episodeCaseTarget,
++  requestedTargetLabel,
++  type OpenWorldEpisode,
++} from './openWorldResultsData';
 +import { useOpenWorldEpisodes } from './useOpenWorldEpisodes';
 +import { OpenWorldResultsCharts } from './OpenWorldResultsCharts';
 +import { OpenWorldResultsSectionTitle } from './OpenWorldResultsHelp';
@@ -6075,7 +6162,11 @@
 +
 +const recorded = (value: string) => value || 'Unavailable';
 +const scoreLabel = (value: number | undefined) => (value === undefined ? 'Unavailable' : value.toFixed(3));
-+const caseKey = (episode: OpenWorldEpisode) => JSON.stringify([episode.scenario, episode.target]);
++const caseKey = episodeCaseKey;
++const caseTargetLabel = (episode: OpenWorldEpisode) =>
++  episode.score === undefined ? 'Requested target' : 'Evaluated target';
++const caseTargetValue = (episode: OpenWorldEpisode) =>
++  episode.score === undefined ? requestedTargetLabel(episode) : recorded(episode.evaluatedTarget);
 +const columnKey = (episode: OpenWorldEpisode) =>
 +  JSON.stringify([episode.adm, episode.model, episode.runId, episode.driver, episode.compatibilityKey]);
 +const unique = (values: string[]) => [...new Set(values)].sort();
@@ -6136,7 +6227,9 @@
 +    setParams(next, { replace: true });
 +  };
 +  const runCount = new Set(episodes.map((episode) => episode.runId).filter(Boolean)).size;
-+  const knownCases = episodes.filter((episode) => episode.scenario && episode.target);
++  const knownCases = episodes.filter(
++    (episode) => episode.score !== undefined && episode.scenario && episodeCaseTarget(episode),
++  );
 +  const knownCaseCount = new Set(knownCases.map(caseKey)).size;
 +  const rows = [...new Map(episodes.map((episode) => [caseKey(episode), episode])).entries()].sort((a, b) =>
 +    a[0].localeCompare(b[0]),
@@ -6286,7 +6379,7 @@
 +          <OpenWorldResultsSectionTitle
 +            title="Results overview"
 +            componentId="mlflow.open-world.results.help"
-+            help="Each scenario/target pair combines one scenario with one KDMA target."
++            help="Scored pairs use the scenario and evaluated target reported by TA3. Requested targets remain separate; unscored episodes appear under requested-target rows."
 +          />
 +        </div>
 +        <div css={{ display: 'flex', alignItems: 'baseline', gap: 24, flexWrap: 'wrap' }}>
@@ -6298,8 +6391,8 @@
 +          >
 +            <strong css={{ fontSize: 20 }}>{runCount}</strong> {runCount === 1 ? 'run' : 'runs'}
 +          </Link>
-+          <Typography.Text aria-label={`Scenario/target pairs: ${knownCaseCount}`} css={{ fontSize: 14 }}>
-+            <strong css={{ fontSize: 20 }}>{knownCaseCount}</strong> scenario/target{' '}
++          <Typography.Text aria-label={`Scenario/evaluated target pairs: ${knownCaseCount}`} css={{ fontSize: 14 }}>
++            <strong css={{ fontSize: 20 }}>{knownCaseCount}</strong> scenario/evaluated target{' '}
 +            {knownCaseCount === 1 ? 'pair' : 'pairs'}
 +          </Typography.Text>
 +          <Typography.Text aria-label={`Episodes: ${episodes.length}`} css={{ fontSize: 14 }}>
@@ -6347,7 +6440,7 @@
 +            <OpenWorldResultsSectionTitle
 +              title="Performance by run"
 +              componentId="mlflow.open-world.results.run-summary-help"
-+              help="Mean score with equal weight for each scenario/target pair. Missing scores are excluded."
++              help="Mean score with equal weight for each scenario and evaluated target pair. Missing scores are excluded."
 +            />
 +            <div
 +              css={{
@@ -6380,6 +6473,7 @@
 +                    >
 +                      {summary.scored} scored {summary.scored === 1 ? 'episode' : 'episodes'}
 +                    </Button>
++                    {summary.meanUnavailableReason && <div>{summary.meanUnavailableReason}</div>}
 +                    {summary.mismatches > 0 && <div>{summary.mismatches} target mismatches</div>}
 +                    <div css={{ marginTop: 8, fontSize: 12, overflowWrap: 'anywhere' }}>
 +                      {episode.sourceVersion && <div>Source revision: {episode.sourceVersion}</div>}
@@ -6413,7 +6507,7 @@
 +          <OpenWorldResultsSectionTitle
 +            title="Scenario/target matrix"
 +            componentId="mlflow.open-world.results.matrix-help"
-+            help="Mean scores by scenario/target pair and run. Select a score, row, or column to filter the sessions below."
++            help="Recorded scores by scenario, evaluated target, and run. Unscored rows use requested targets. Select a score, row, or column to inspect its exact sessions."
 +          />
 +          <div css={{ overflowX: 'auto', maxWidth: '100%' }}>
 +            <table
@@ -6433,7 +6527,7 @@
 +              </colgroup>
 +              <thead>
 +                <tr>
-+                  <th style={rowHeaderStyle}>Scenario / KDMA target</th>
++                  <th style={rowHeaderStyle}>Scenario / Evaluated target</th>
 +                  {columns.map(([key, episode]) => (
 +                    <th key={key} style={columnHeaderStyle}>
 +                      <Button
@@ -6472,7 +6566,7 @@
 +                      <Button
 +                        componentId="mlflow.open-world.results.matrix-row"
 +                        css={headerButtonCss}
-+                        aria-label={`Inspect scenario ${recorded(episode.scenario)} / target ${recorded(episode.target)}`}
++                        aria-label={`Inspect scenario ${recorded(episode.scenario)} / ${caseTargetLabel(episode).toLowerCase()} ${caseTargetValue(episode)}`}
 +                        aria-pressed={selectedCell === `row:${row}`}
 +                        onClick={() => setSelectedCell(`row:${row}`)}
 +                      >
@@ -6486,7 +6580,9 @@
 +                          }}
 +                        >
 +                          <span css={{ display: 'block' }}>{recorded(episode.scenario)}</span>
-+                          <span css={{ display: 'block' }}>{recorded(episode.target)}</span>
++                          <span css={{ display: 'block' }}>
++                            {caseTargetLabel(episode)}: {caseTargetValue(episode)}
++                          </span>
 +                        </span>
 +                      </Button>
 +                    </th>
@@ -6500,7 +6596,7 @@
 +                            <Button
 +                              componentId="mlflow.open-world.results.cell"
 +                              css={scoreButtonCss}
-+                              aria-label={`${recorded(episode.scenario)} / ${recorded(episode.target)}: ${scoreLabel(summary.mean)}, ${summary.scored}/${summary.total} scored`}
++                              aria-label={`${recorded(episode.scenario)} / ${caseTargetLabel(episode).toLowerCase()} ${caseTargetValue(episode)}: ${scoreLabel(summary.mean)}, ${summary.scored}/${summary.total} scored`}
 +                              onClick={() => setSelectedCell(key)}
 +                            >
 +                              <span>
@@ -6938,7 +7034,7 @@
 +};
 --- /dev/null
 +++ b/mlflow/server/js/src/experiment-tracking/pages/open-world-results/OpenWorldRunIdentity.tsx
-@@ -0,0 +1,32 @@
+@@ -0,0 +1,34 @@
 +import type { OpenWorldEpisode } from './openWorldResultsData';
 +
 +const recorded = (value: string) => value || 'Unavailable';
@@ -6969,6 +7065,8 @@
 +    </span>
 +    <span>Model: {recorded(episode.model)}</span>
 +    <span>Run: {getRunDisplayName(episode)}</span>
++    {episode.alignmentMode === 'unaligned' && <span>Alignment: Unaligned</span>}
++    {episode.alignmentMode === 'aligned' && <span>Alignment: Targeted</span>}
 +  </span>
 +);
 --- /dev/null
@@ -7003,7 +7101,7 @@
 +              assessment_name: 'ta3_session_alignment_score',
 +              source: { source_type: 'CODE', source_id: 'raw_align_system.log' },
 +              feedback: { value: score },
-+              metadata: { 'mlflow.trace.session': session, alignment_target_id: 'a' },
++              metadata: { 'mlflow.trace.session': session, alignment_target_id: target },
 +            },
 +          ],
 +  }) as ModelTraceInfoV3;
@@ -7060,7 +7158,7 @@
 +});
 --- /dev/null
 +++ b/mlflow/server/js/src/experiment-tracking/pages/open-world-results/openWorldResultsData.ts
-@@ -0,0 +1,145 @@
+@@ -0,0 +1,170 @@
 +import {
 +  SESSION_ID_METADATA_KEY,
 +  getAssessmentValue,
@@ -7080,6 +7178,7 @@
 +  scenario: string;
 +  target: string;
 +  evaluatedTarget: string;
++  alignmentMode?: string;
 +  sourceVersion: string;
 +  sourceFamily: string;
 +  scoringVersion: string;
@@ -7099,6 +7198,7 @@
 +  sourceVersion: 'align.source_version',
 +  sourceFamily: 'align.source_family',
 +  driver: 'align.driver',
++  alignmentMode: 'align.alignment_mode',
 +} as const;
 +
 +export const buildOpenWorldEpisodes = (traces: ModelTraceInfoV3[]): OpenWorldEpisode[] => {
@@ -7156,14 +7256,33 @@
 +    });
 +};
 +
++export const episodeCaseTarget = (episode: OpenWorldEpisode) =>
++  episode.score === undefined ? episode.target : episode.evaluatedTarget;
++
++export const episodeCaseKey = (episode: OpenWorldEpisode) =>
++  episode.score !== undefined && (!episode.scenario || !episode.evaluatedTarget)
++    ? JSON.stringify(['unknown-evaluated-case', episode.id])
++    : JSON.stringify([
++        episode.scenario,
++        episode.score === undefined ? 'requested' : 'evaluated',
++        episodeCaseTarget(episode),
++      ]);
++
++export const requestedTargetLabel = (episode: OpenWorldEpisode) =>
++  episode.target || (episode.alignmentMode === 'unaligned' ? 'Unaligned (no requested target)' : 'No requested target');
++
 +export type EpisodeWeighting = 'episode' | 'equal-case';
 +export const aggregateEpisodes = (episodes: OpenWorldEpisode[], weighting: EpisodeWeighting = 'episode') => {
 +  const scored = episodes.filter((episode) => episode.score !== undefined);
 +  const cases = new Map<string, number[]>();
 +  scored.forEach((episode) => {
-+    const key = JSON.stringify([episode.compatibilityKey, episode.scenario, episode.target]);
++    const key = JSON.stringify([episode.compatibilityKey, episodeCaseKey(episode)]);
 +    cases.set(key, [...(cases.get(key) ?? []), episode.score as number]);
 +  });
++  const meanUnavailableReason =
++    weighting === 'equal-case' && scored.some((episode) => !episode.scenario || !episode.evaluatedTarget)
++      ? 'Mean unavailable: a scored episode has no recorded scenario or evaluated target.'
++      : undefined;
 +  const values =
 +    weighting === 'episode'
 +      ? scored.map((episode) => episode.score as number)
@@ -7174,7 +7293,11 @@
 +    scored: scored.length,
 +    missing: episodes.length - scored.length,
 +    mismatches: episodes.filter((episode) => episode.targetMismatch).length,
-+    mean: values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : undefined,
++    mean:
++      values.length && !meanUnavailableReason
++        ? values.reduce((sum, value) => sum + value, 0) / values.length
++        : undefined,
++    meanUnavailableReason,
 +  };
 +};
 +
