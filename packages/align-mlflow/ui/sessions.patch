@@ -2818,7 +2818,7 @@
 +};
 --- /dev/null
 +++ b/mlflow/server/js/src/experiment-tracking/components/experiment-page/components/traces-v4/hooks/useTracesV4SortedPage.test.tsx
-@@ -0,0 +1,163 @@
+@@ -0,0 +1,189 @@
 +import { afterEach, beforeEach, describe, expect, jest, test } from '@jest/globals';
 +import { act, fireEvent, render, screen } from '@testing-library/react';
 +import { useState, type ReactNode } from 'react';
@@ -2860,14 +2860,24 @@
 +            },
 +          ],
 +  });
-+const SortedSessions = ({ sort = 'tag:scenario_id', filter = '' }: { sort?: string; filter?: string }) => {
-+  const [pageIndex, setPageIndex] = useState(1);
++const SortedSessions = ({
++  sort = 'tag:scenario_id',
++  filter = '',
++  initialPage = 1,
++  grouped = true,
++}: {
++  sort?: string;
++  filter?: string;
++  initialPage?: number;
++  grouped?: boolean;
++}) => {
++  const [pageIndex, setPageIndex] = useState(initialPage);
 +  const page = useTracesV4SortedPage({
 +    locations,
 +    filter,
 +    sort,
 +    direction: 'asc',
-+    isGroupedBySession: true,
++    isGroupedBySession: grouped,
 +    pageIndex,
 +    pageSize: 1,
 +    enabled: true,
@@ -2946,6 +2956,22 @@
 +    expect(fetchMock.mock.calls[2][2]).toMatchObject({ filter: "request_metadata.`mlflow.trace.session` = 'current'" });
 +  });
 +
++  test.each([true, false])('filtering on a later page shows the first matching row (grouped: %s)', async (grouped) => {
++    const a = member('trace-a', 'a', 1, 'a');
++    const b = member('trace-b', 'b', 2, 'b');
++    fetchMock.mockResolvedValueOnce({ traces: [a, b] });
++    const view = render(<SortedSessions grouped={grouped} initialPage={2} />, { wrapper });
++    expect(await screen.findByText('trace-b')).toBeVisible();
++    expect(screen.getByRole('button', { name: 'Previous sessions' })).toBeEnabled();
++
++    fetchMock.mockResolvedValue({ traces: [a] });
++    view.rerender(<SortedSessions grouped={grouped} filter="tags.scenario_id = 'a'" />);
++    expect(await screen.findByText('trace-a')).toBeVisible();
++    expect(screen.getAllByRole('listitem')).toHaveLength(1);
++    expect(screen.getByRole('button', { name: 'Previous sessions' })).toBeDisabled();
++    expect(screen.getByRole('button', { name: 'Next sessions' })).toBeDisabled();
++  });
++
 +  test('orders by current native run names rather than recorded trace tag names', async () => {
 +    const names = deferred();
 +    const a = member('trace-a', 'a');
@@ -2984,8 +3010,8 @@
 +});
 --- /dev/null
 +++ b/mlflow/server/js/src/experiment-tracking/components/experiment-page/components/traces-v4/hooks/useTracesV4SortedPage.ts
-@@ -0,0 +1,189 @@
-+import { useCallback, useMemo } from 'react';
+@@ -0,0 +1,197 @@
++import { useCallback, useEffect, useMemo, useRef } from 'react';
 +import { useQuery } from '@databricks/web-shared/query-client';
 +import { SEARCH_MLFLOW_TRACES_QUERY_KEY } from '@databricks/web-shared/genai-traces-table';
 +import {
@@ -3070,6 +3096,14 @@
 +  completeSessions: boolean;
 +  runNames?: Readonly<Record<string, string>>;
 +} => {
++  const populationKey = JSON.stringify([locations, filter ?? null, isGroupedBySession]);
++  const previousPopulationKey = useRef(populationKey);
++  useEffect(() => {
++    if (previousPopulationKey.current === populationKey) return;
++    previousPopulationKey.current = populationKey;
++    if (enabled) onPageIndexChange(1);
++  }, [populationKey, enabled, onPageIndexChange]);
++
 +  const query = useQuery({
 +    queryKey: [SEARCH_MLFLOW_TRACES_QUERY_KEY, 'sort-population', locations, filter ?? null],
 +    queryFn: ({ signal }) => fetchTracesV4SortPopulation(locations, filter, signal),
