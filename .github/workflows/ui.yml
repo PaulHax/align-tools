@@ -1,0 +1,51 @@
+name: UI
+
+on:
+  pull_request:
+    paths:
+      - "packages/align-mlflow/ui/**"
+      - "packages/align-mlflow/scripts/install-ui.sh"
+      - "packages/align-mlflow/scripts/setup.sh"
+      - "uv.lock"
+      - ".github/workflows/ui.yml"
+  push:
+    branches: [main, develop]
+    paths:
+      - "packages/align-mlflow/ui/**"
+      - "uv.lock"
+      - ".github/workflows/ui.yml"
+
+jobs:
+  browser:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v4
+        with:
+          enable-cache: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24.14.0"
+          cache: npm
+          cache-dependency-path: packages/align-mlflow/ui/e2e/package-lock.json
+      - run: uv python install 3.12
+      - run: uv sync --frozen --dev --python 3.12
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/align-mlflow/ui
+          key: ui-${{ runner.os }}-${{ hashFiles('packages/align-mlflow/ui/sessions.patch', 'packages/align-mlflow/ui/install.py') }}
+      - name: Build and install the maintained UI
+        run: uv run --no-sync python packages/align-mlflow/ui/install.py
+      - run: npm ci
+        working-directory: packages/align-mlflow/ui/e2e
+      - run: npx playwright install --with-deps chromium
+        working-directory: packages/align-mlflow/ui/e2e
+      - run: npm test
+        working-directory: packages/align-mlflow/ui/e2e
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: browser-results
+          path: |
+            packages/align-mlflow/ui/e2e/playwright-report
+            packages/align-mlflow/ui/e2e/test-results

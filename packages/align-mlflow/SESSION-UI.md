@@ -21,23 +21,47 @@ See [server setup](SERVER.md#quick-start).
 Open **Open World results** in the experiment's Evaluation navigation.
 **Results overview** shows run, scenario/target pair, and episode counts.
 Missing scores, target mismatches, and metadata conflicts link to affected
-sessions. **Runs** opens the experiment's **Model training** runs table.
+sessions. **Runs** opens the experiment's **Evaluation runs** table, including
+recorded final score metrics. Use its columns and comparisons to inspect runs.
 
-**Performance by run** separates recorded configurations by run, ADM, model,
-driver, and provenance. **Open run** shows full run details; the **scored episodes**
-count opens the contributing sessions. The mean gives each scored scenario/target
-pair equal weight, averaging repeated scored episodes within each pair first.
+**Results overview**, **Episode scores**, **Scenario/target matrix**, and
+**Sessions (episodes)** expand or collapse when you select their heading or left
+chevron. Expanded sections use the page's main vertical scroll. Wide tables and
+plots retain horizontal scrolling.
+An information icon beside each heading explains its contents. Sessions start
+collapsed and open when a chart, matrix, or review link selects episodes.
+
+The plot mean gives each scored scenario and evaluated target pair equal weight,
+averaging repeated scored episodes within each pair first.
+The evaluated target comes from the recorded TA3 assessment; requested action
+targets are retained separately. Configurations explicitly recorded as unaligned
+are labelled **Unaligned**. An absent requested target alone does not establish
+the alignment mode. A mean is unavailable when a scored episode lacks a recorded
+scenario or evaluated target; its raw score remains available for inspection.
+
 Missing scores are excluded, never treated as zero. This differs from the
 importer's [episode-weighted run mean](INGESTION.md#run-summary-scores) when
 repetition counts differ. Check coverage and source revisions before comparing runs.
 
-**Episode scores** shows a clickable dot for each scored episode and a diamond
-for the mean. Hover or focus a point for its score and metadata. The axis is fixed
+**Episode scores** shows clickable score markers and a diamond for the mean.
+Episodes with exactly equal scores share a counted marker; selecting it opens
+all contributing episodes. Nearby distinct scores remain separate. Hover or focus
+a marker for its score and metadata. The axis is fixed
 from 0 to 1; out-of-range scores appear at the nearest boundary, with their raw
-values in tooltips and summaries. Missing scores remain accessible through the
-overview and session table.
+values in tooltips and summaries. Tooltips show a matching evaluated and requested
+target once, with separate requested context for mismatched, unaligned, or missing
+targets. Missing scores remain accessible through the overview and session table.
+Vertical positions only separate nearby markers and stay stable when the plot
+width changes; horizontal positions follow the score axis.
 
-The **Scenario/target matrix** shows scores by configuration and evaluation case.
+The **Scenario/target matrix** shows scores by configuration, scenario, and
+**Evaluated target**. Scored episodes use the target reported by TA3, including
+unaligned configurations that were scored against that target. Unscored episodes
+appear in separate rows labelled **Requested target**; they are not assigned an
+inferred evaluated target. Run columns lead with the recorded ADM implementation
+name and wrap it within a readable column width. Hover or focus a case for its
+full IDs, or use a run's information button for its configuration, provenance,
+and run details link. Case labels stay visible while scrolling horizontally.
 Repeated episodes show a count; incomplete results show scored/total counts.
 Missing scores and absent episodes are distinct. Select a row for that case
 across runs, a column for that configuration, or a cell for its contributing
@@ -47,7 +71,7 @@ Chart points, matrix selections, and review links filter the **Sessions (episode
 table below. Edit conditions from a column header or **Filters**, remove a
 condition to broaden results, or use **Clear filters**. New chart and matrix
 selections replace the table filters. Filters and drilldowns are preserved in
-the URL. **Back to results** returns to the summary.
+the URL.
 
 The table supports the same filtering, column controls, and comparisons as
 **Traces**. A matching decision includes its complete session, so opening or
@@ -92,12 +116,13 @@ the current table.
 
 Compare two or more sessions with any scenarios, targets, ADMs, models, or runs.
 Each pane shows recorded metadata, episode score, and its own decision sequence.
-The comparison scrolls horizontally when needed. Clicking a sidebar step selects
-and scrolls to that session's decision.
+The comparison scrolls horizontally when needed. Single-session and comparison
+pages share the decision viewer, navigation, and selection behavior. Clicking a
+sidebar step selects and scrolls to that session's decision.
 
 Choose decisions from two or three sessions, then click **Compare selected
-decisions**. **Clear selected decision** removes a decision from that comparison
-without closing its session. Decisions need no matching step numbers. Comparison
+decisions**. Select another decision to replace a session's choice. Decisions
+need no matching step numbers. Comparison
 URLs can be reopened or shared with people who have access to the same server.
 For individual traces in ungrouped **Traces**, select two or three rows and use
 **Actions > Compare**.
