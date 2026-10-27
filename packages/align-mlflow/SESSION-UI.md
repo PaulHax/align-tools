@@ -25,8 +25,9 @@ sessions. **Runs** opens the experiment's **Evaluation runs** table, including
 recorded final score metrics. Use its columns and comparisons to inspect runs.
 
 **Results overview**, **Episode scores**, **Scenario/target matrix**, and
-**Sessions (episodes)** have expand/collapse controls. Expanded sections use the
-page's main vertical scroll. Wide tables and plots retain horizontal scrolling.
+**Sessions (episodes)** expand or collapse when you select their heading or left
+chevron. Expanded sections use the page's main vertical scroll. Wide tables and
+plots retain horizontal scrolling.
 An information icon beside each heading explains its contents. Sessions start
 collapsed and open when a chart, matrix, or review link selects episodes.
 
@@ -50,6 +51,8 @@ from 0 to 1; out-of-range scores appear at the nearest boundary, with their raw
 values in tooltips and summaries. Tooltips show a matching evaluated and requested
 target once, with separate requested context for mismatched, unaligned, or missing
 targets. Missing scores remain accessible through the overview and session table.
+Vertical positions only separate nearby markers and stay stable when the plot
+width changes; horizontal positions follow the score axis.
 
 The **Scenario/target matrix** shows scores by configuration, scenario, and
 **Evaluated target**. Scored episodes use the target reported by TA3, including

@@ -7,6 +7,19 @@ const closeAssistant = async (page) => {
   await close.click();
   await expect(close).not.toBeVisible();
 };
+const clickButtonPart = async (button, part) => {
+  await button.scrollIntoViewIfNeeded();
+  const [buttonBounds, partBounds] = await Promise.all([
+    button.boundingBox(),
+    part.boundingBox(),
+  ]);
+  await button.click({
+    position: {
+      x: partBounds.x + partBounds.width / 2 - buttonBounds.x,
+      y: partBounds.y + partBounds.height / 2 - buttonBounds.y,
+    },
+  });
+};
 
 const expectSessions = async (page, traces) => {
   const sessions = page.getByRole("region", { name: "Sessions", exact: true });
@@ -180,14 +193,35 @@ test("keeps section explanations in independent header help popovers", async ({
     });
     await help.focus();
     await expect(header).toHaveAttribute("aria-expanded", expanded);
+    const heading = page.getByRole("heading", { name, exact: true });
+    await expect(
+      heading.getByRole("button", { name, exact: true }),
+    ).toHaveCount(1);
+    await expect(
+      heading.getByRole("button", { name: `About ${name}`, exact: true }),
+    ).toHaveCount(0);
+    expect(
+      await help.evaluate((element) =>
+        element.parentElement.closest(
+          'h3,button[aria-expanded],[role="button"][aria-expanded]',
+        ),
+      ),
+    ).toBeNull();
     const [headerBounds, helpBounds] = await Promise.all([
       header.boundingBox(),
       help.boundingBox(),
     ]);
-    expect(helpBounds.y).toBeGreaterThanOrEqual(headerBounds.y - 1);
-    expect(helpBounds.y + helpBounds.height).toBeLessThanOrEqual(
-      headerBounds.y + headerBounds.height + 1,
+    expect(helpBounds.x).toBeGreaterThanOrEqual(
+      headerBounds.x + headerBounds.width,
     );
+    expect(
+      Math.abs(
+        helpBounds.y +
+          helpBounds.height / 2 -
+          headerBounds.y -
+          headerBounds.height / 2,
+      ),
+    ).toBeLessThanOrEqual(2);
     await page.keyboard.press("Enter");
     await expect(explanation).toBeVisible();
     await expect(header).toHaveAttribute("aria-expanded", expanded);
@@ -245,12 +279,31 @@ test("collapses native sections and restores sessions when inspecting a matrix s
     "Scenario/target matrix",
   ]) {
     const button = sectionButton(page, name);
+    await expect(button.getByText("Expand", { exact: true })).toHaveCount(0);
+    await expect(button.getByText("Collapse", { exact: true })).toHaveCount(0);
+    const heading = page.getByRole("heading", { name, exact: true });
+    await expect(
+      heading.getByRole("button", { name, exact: true }),
+    ).toHaveCount(1);
     await expect(button).toHaveAttribute("aria-expanded", "true");
-    await expect(button.getByText("Collapse", { exact: true })).toBeVisible();
-    await button.click();
+    const text = button.getByText(name, { exact: true });
+    const chevron = button.locator("svg");
+    await expect(chevron).toHaveCount(1);
+    const [iconBounds, textBounds] = await Promise.all([
+      chevron.boundingBox(),
+      text.boundingBox(),
+    ]);
+    expect(iconBounds.x + iconBounds.width).toBeLessThanOrEqual(
+      textBounds.x + 1,
+    );
+    await clickButtonPart(button, text);
     await expect(button).toHaveAttribute("aria-expanded", "false");
-    await expect(button.getByText("Expand", { exact: true })).toBeVisible();
-    await button.click();
+    await clickButtonPart(button, chevron);
+    await expect(button).toHaveAttribute("aria-expanded", "true");
+    await button.focus();
+    await page.keyboard.press("Enter");
+    await expect(button).toHaveAttribute("aria-expanded", "false");
+    await page.keyboard.press("Space");
     await expect(button).toHaveAttribute("aria-expanded", "true");
   }
   await expect(sectionButton(page, "Sessions (episodes)")).toHaveAttribute(
@@ -258,10 +311,21 @@ test("collapses native sections and restores sessions when inspecting a matrix s
     "false",
   );
   await expect(
-    sectionButton(page, "Sessions (episodes)").getByText("Expand", {
-      exact: true,
-    }),
-  ).toBeVisible();
+    page.getByRole("button", { name: /^(Expand|Collapse)$/ }),
+  ).toHaveCount(0);
+  const sessionsToggle = sectionButton(page, "Sessions (episodes)");
+  await clickButtonPart(
+    sessionsToggle,
+    sessionsToggle.getByText("Sessions (episodes)", { exact: true }),
+  );
+  await expect(sessionsToggle).toHaveAttribute("aria-expanded", "true");
+  await clickButtonPart(sessionsToggle, sessionsToggle.locator("svg"));
+  await expect(sessionsToggle).toHaveAttribute("aria-expanded", "false");
+  await sessionsToggle.focus();
+  await page.keyboard.press("Enter");
+  await expect(sessionsToggle).toHaveAttribute("aria-expanded", "true");
+  await page.keyboard.press("Space");
+  await expect(sessionsToggle).toHaveAttribute("aria-expanded", "false");
   const matrix = page.getByRole("table", {
     name: "Open World results matrix",
     exact: true,
@@ -481,6 +545,37 @@ test("deduplicates matching targets while retaining mismatched and unaligned evi
       .getByRole("tooltip")
       .getByText("Unaligned (no requested target)", { exact: true }),
   ).toBeVisible();
+  const identity = (run) =>
+    page.getByRole("button", {
+      name: `${run.adm} / ${run.model} · ${run.name}`,
+      exact: true,
+    });
+  await identity(configuration).hover();
+  await expect(
+    page
+      .getByRole("tooltip")
+      .getByText(`Model: ${configuration.model}`, { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("tooltip").getByText("Alignment: Targeted", { exact: true }),
+  ).toHaveCount(0);
+  await page.mouse.move(0, 0);
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("tooltip")).toHaveCount(0);
+  await identity(baseline).hover();
+  await expect(
+    page
+      .getByRole("tooltip")
+      .getByText(`Model: ${baseline.model}`, { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page
+      .getByRole("tooltip")
+      .getByText("Alignment: Unaligned", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("tooltip").getByText("Alignment: Targeted", { exact: true }),
+  ).toHaveCount(0);
 });
 
 test.describe("large comparison", () => {
@@ -590,7 +685,11 @@ test.describe("large comparison", () => {
       await expect(button).toBeInViewport();
       await page.keyboard.press(key);
       await expect(button).toHaveAttribute("aria-expanded", "false");
-      await expect(button.getByText("Expand", { exact: true })).toBeVisible();
+      await expect(
+        page
+          .getByRole("heading", { name, exact: true })
+          .getByRole("button", { name, exact: true }),
+      ).toBeInViewport();
       const regionName =
         name === "Episode scores"
           ? "Episode score plots"

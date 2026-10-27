@@ -150,72 +150,154 @@ test("keeps focused plot and matrix targets visible in the main page", async ({
   expect(offsets.left).toBeGreaterThan(0);
 });
 
-test("resizes plots with round markers and an unstretched score axis", async ({
-  page,
-  population,
-}) => {
-  await openResults(page, population);
-  const plots = page.getByRole("region", {
-    name: "Episode score plots",
-    exact: true,
-  });
-  const axis = plots.getByRole("img", {
-    name: "Alignment score axis",
-    exact: true,
-  });
-  const plot = runPlot(page, population.configurations[0]);
-  const marker = plot
-    .getByRole("button", { name: /^Episode score 0;/ })
-    .locator(".episode-marker");
-  const measuredWidths = [];
-  for (const width of [1314, 1800, 1000]) {
-    await page.setViewportSize({ width, height: 1000 });
-    await page.waitForFunction(() => {
-      const axis = document.querySelector(
-        'svg[aria-label="Alignment score axis"]',
-      );
-      return (
-        axis &&
-        axis.viewBox.baseVal.width ===
-          Math.round(axis.parentElement.getBoundingClientRect().width)
-      );
+test.describe("responsive plots", () => {
+  test.use({ duplicateScores: true });
+
+  test("resizes the score axis while preserving marker lanes and row heights", async ({
+    page,
+    population,
+  }) => {
+    await openResults(page, population);
+    const plots = page.getByRole("region", {
+      name: "Episode score plots",
+      exact: true,
     });
-    const wrapperBounds = await axis.locator("..").boundingBox();
-    const measuredWidth = Math.round(wrapperBounds.width);
-    await expect(axis).toHaveAttribute("viewBox", `0 0 ${measuredWidth} 36`);
-    await expect(plot).toHaveAttribute(
-      "viewBox",
-      new RegExp(`^0 0 ${measuredWidth} `),
+    const axis = plots.getByRole("img", {
+      name: "Alignment score axis",
+      exact: true,
+    });
+    const plot = runPlot(page, population.configurations[0]);
+    const marker = plot
+      .getByRole("button", { name: /^Episode score 0;/ })
+      .locator(".episode-marker");
+    const middle = plot
+      .getByRole("button", { name: /^Episode score 0\.3;/ })
+      .locator(".episode-marker");
+    const counted = runPlot(page, population.configurations[1]).getByRole(
+      "button",
+      { name: /^Episode score 0\.5; 2 episodes;/ },
     );
-    expect(await axis.getAttribute("preserveAspectRatio")).not.toBe("none");
-    expect(await plot.getAttribute("preserveAspectRatio")).not.toBe("none");
-    const circleBounds = await marker.boundingBox();
-    expect(Math.abs(circleBounds.width - circleBounds.height)).toBeLessThan(
-      0.1,
+    const nearby = runPlot(page, population.configurations[1]).getByRole(
+      "button",
+      { name: /^Episode score 0\.5001;/ },
     );
-    const circleStyle = await marker.evaluate((element) => ({
-      diameter: element.r.baseVal.value * 2,
-      strokeWidth: Number.parseFloat(getComputedStyle(element).strokeWidth),
-    }));
-    expect(circleBounds.width).toBeGreaterThanOrEqual(circleStyle.diameter);
-    expect(circleBounds.width).toBeLessThanOrEqual(
-      circleStyle.diameter + circleStyle.strokeWidth + 0.1,
-    );
-    const dimensions = await plot.evaluate((element) => {
-      const bounds = element.getBoundingClientRect();
-      return {
-        width: bounds.width,
-        height: bounds.height,
+    const measure = async () => {
+      await page.waitForFunction(() => {
+        const axis = document.querySelector(
+          'svg[aria-label="Alignment score axis"]',
+        );
+        return (
+          axis &&
+          axis.viewBox.baseVal.width ===
+            Math.round(axis.parentElement.getBoundingClientRect().width)
+        );
+      });
+      const measuredWidth = Math.round(
+        (await axis.locator("..").boundingBox()).width,
+      );
+      await expect(axis).toHaveAttribute("viewBox", `0 0 ${measuredWidth} 36`);
+      await expect(plot).toHaveAttribute(
+        "viewBox",
+        new RegExp(`^0 0 ${measuredWidth} `),
+      );
+      expect(await axis.getAttribute("preserveAspectRatio")).not.toBe("none");
+      expect(await plot.getAttribute("preserveAspectRatio")).not.toBe("none");
+      await expect(counted).toHaveCount(1);
+      await expect(counted.locator("text")).toHaveText("2");
+      await expect(nearby).toHaveCount(1);
+      for (const circle of [marker, counted.locator(".episode-marker")]) {
+        const bounds = await circle.boundingBox();
+        const dimensions = await circle.evaluate((element) => ({
+          diameter: element.r.baseVal.value * 2,
+          strokeWidth: Number.parseFloat(getComputedStyle(element).strokeWidth),
+        }));
+        expect(Math.abs(bounds.width - bounds.height)).toBeLessThan(0.1);
+        expect(bounds.width).toBeGreaterThanOrEqual(dimensions.diameter);
+        expect(bounds.width).toBeLessThanOrEqual(
+          dimensions.diameter + dimensions.strokeWidth + 0.1,
+        );
+      }
+      const rows = await plots
+        .getByRole("group", { name: /^Episode scores for / })
+        .evaluateAll((elements) =>
+          elements
+            .map((element) => ({
+              name: element.getAttribute("aria-label"),
+              svgHeight: element.getBoundingClientRect().height,
+              rowHeight: element.parentElement.getBoundingClientRect().height,
+              viewBoxHeight: element.viewBox.baseVal.height,
+              points: [...element.querySelectorAll('g[role="button"]')]
+                .filter((point) =>
+                  point.getAttribute("aria-label").startsWith("Episode score "),
+                )
+                .map((point) => ({
+                  name: point.getAttribute("aria-label"),
+                  cy: point.querySelector(".episode-marker").getAttribute("cy"),
+                  count: Number(
+                    point
+                      .getAttribute("aria-label")
+                      .match(/; (\d+) episodes;/)?.[1] || 1,
+                  ),
+                }))
+                .sort((left, right) => left.name.localeCompare(right.name)),
+            }))
+            .sort((left, right) => left.name.localeCompare(right.name)),
+        );
+      expect(rows).toHaveLength(8);
+      expect(
+        rows
+          .flatMap((row) => row.points)
+          .reduce((sum, point) => sum + point.count, 0),
+      ).toBe(192);
+      for (const row of rows) expect(row.svgHeight).toBe(row.viewBoxHeight);
+      const dimensions = await plot.evaluate((element) => ({
+        width: element.getBoundingClientRect().width,
         viewBox: element.viewBox.baseVal.width,
-        viewBoxHeight: element.viewBox.baseVal.height,
+      }));
+      expect(
+        Math.abs(dimensions.width - dimensions.viewBox),
+      ).toBeLessThanOrEqual(1);
+      return {
+        width: measuredWidth,
+        middleX: Number(await middle.getAttribute("cx")),
+        rows,
       };
+    };
+    const states = [];
+    for (const width of [1314, 1800, 1000]) {
+      await page.setViewportSize({ width, height: 1000 });
+      states.push(await measure());
+    }
+    expect(states[1].width).toBeGreaterThan(states[0].width);
+    expect(states[2].width).toBeLessThan(states[1].width);
+    expect(states[1].middleX).toBeGreaterThan(states[0].middleX);
+    expect(states[2].middleX).toBeLessThan(states[1].middleX);
+    for (const state of states.slice(1))
+      expect(state.rows).toEqual(states[0].rows);
+    await page.setViewportSize({ width: 1314, height: 1000 });
+    const close = page
+      .locator('[data-assistant-ui="true"]')
+      .getByRole("button", { name: "Close", exact: true });
+    await close.click();
+    await expect(close).not.toBeVisible();
+    const withoutPanel = await measure();
+    expect(withoutPanel.width).toBeGreaterThan(states[0].width);
+    expect(withoutPanel.rows).toEqual(states[0].rows);
+    await page.setViewportSize({ width: 1243, height: 1000 });
+    const userWidth = await measure();
+    expect(userWidth.rows).toEqual(states[0].rows);
+    await page
+      .getByRole("heading", { name: "Results overview", exact: true })
+      .evaluate((element) =>
+        element.scrollIntoView({
+          block: "start",
+          inline: "nearest",
+          behavior: "instant",
+        }),
+      );
+    await page.mouse.move(0, 0);
+    await page.screenshot({
+      path: test.info().outputPath("header-plots-1243.png"),
     });
-    expect(Math.abs(dimensions.width - dimensions.viewBox)).toBeLessThanOrEqual(
-      1,
-    );
-    expect(dimensions.height).toBe(dimensions.viewBoxHeight);
-    measuredWidths.push(measuredWidth);
-  }
-  expect(measuredWidths[1]).toBeGreaterThan(measuredWidths[0]);
-  expect(measuredWidths[2]).toBeLessThan(measuredWidths[1]);
+  });
 });

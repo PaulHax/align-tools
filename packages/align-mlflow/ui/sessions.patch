@@ -5085,7 +5085,7 @@
            </div>
 --- /dev/null
 +++ b/mlflow/server/js/src/experiment-tracking/pages/open-world-results/OpenWorldResultsCharts.test.tsx
-@@ -0,0 +1,405 @@
+@@ -0,0 +1,422 @@
 +import { beforeEach, describe, expect, jest, test } from '@jest/globals';
 +import { act, fireEvent, render, screen, within } from '@testing-library/react';
 +import userEvent from '@testing-library/user-event';
@@ -5449,8 +5449,14 @@
 +      await user.keyboard('{Escape}');
 +    }
 +  });
-+  test('shares measured plot width across axes and rows without stretching markers or labels', () => {
-+    const episodes = [episode('zero', 0), episode('half', 0.5), episode('one', 1)];
++  test('resizes score positions without stretching markers or changing their vertical lanes', () => {
++    const episodes = [
++      episode('zero', 0),
++      episode('half', 0.5),
++      episode('near-a', 0.54),
++      episode('near-b', 0.54),
++      episode('one', 1),
++    ];
 +    const onSelectEpisodes = jest.fn();
 +    const { rerender } = render(
 +      <DesignSystemProvider>
@@ -5460,7 +5466,12 @@
 +    const axis = screen.getByRole('img', { name: 'Alignment score axis' });
 +    const plot = screen.getByRole('group', { name: /Episode scores for/ });
 +    const half = screen.getByRole('button', { name: /Episode score 0.5;/ });
++    const near = screen.getByRole('button', { name: /Episode score 0.54; 2 episodes;/ });
++    const initialLanes = screen
++      .getAllByRole('button', { name: /Episode score / })
++      .map((marker) => marker.querySelector('.episode-marker')?.getAttribute('cy'));
 +    expect(axis).toHaveAttribute('viewBox', '0 0 600 36');
++    expect(near.querySelector('.episode-marker')).toHaveAttribute('cy', '32');
 +    for (const width of [420, 900]) {
 +      jest.mocked(useDynamicPlotSize).mockReturnValue({
 +        containerDiv: null,
@@ -5475,11 +5486,17 @@
 +        </DesignSystemProvider>,
 +      );
 +      expect(axis).toHaveAttribute('viewBox', `0 0 ${width} 36`);
-+      expect(plot).toHaveAttribute('viewBox', `0 0 ${width} 60`);
++      expect(plot).toHaveAttribute('viewBox', `0 0 ${width} 76`);
++      expect(
++        screen
++          .getAllByRole('button', { name: /Episode score / })
++          .map((marker) => marker.querySelector('.episode-marker')?.getAttribute('cy')),
++      ).toEqual(initialLanes);
 +      expect(axis).not.toHaveAttribute('preserveAspectRatio', 'none');
 +      expect(plot).not.toHaveAttribute('preserveAspectRatio', 'none');
 +      expect(half.querySelector('.episode-marker')).toHaveAttribute('cx', String(width / 2));
 +      expect(half.querySelector('.episode-marker')).toHaveAttribute('r', '6');
++      expect(near.querySelector('.episode-marker')).toHaveAttribute('r', '10');
 +      expect(screen.getByRole('button', { name: /Episode score 0;/ }).querySelector('.episode-marker')).toHaveAttribute(
 +        'cx',
 +        '24',
@@ -5493,7 +5510,7 @@
 +});
 --- /dev/null
 +++ b/mlflow/server/js/src/experiment-tracking/pages/open-world-results/OpenWorldResultsCharts.tsx
-@@ -0,0 +1,480 @@
+@@ -0,0 +1,485 @@
 +/* eslint-disable jsx-a11y/no-noninteractive-tabindex -- The named horizontal plot scroller is a keyboard entry point. */
 +import { useEffect, useState, type KeyboardEvent } from 'react';
 +import { Global } from '@emotion/react';
@@ -5528,9 +5545,13 @@
 +  lineHeight: '16px !important',
 +} as const;
 +const pointSpacing = 20;
++const minimumPlotWidth = 420;
++const horizontalMarkerSpacing = 22;
++const plotColumns = `minmax(180px, 260px) minmax(${minimumPlotWidth}px, 1fr)`;
 +const ticks = [0, 0.25, 0.5, 0.75, 1];
 +const outOfRange = (score: number) => score < 0 || score > 1;
 +const plottedScore = (score: number) => Math.max(0, Math.min(1, score));
++const scorePosition = (score: number, width: number) => 24 + plottedScore(score) * (width - 48);
 +const rangeContext = (score: number): [string, string][] =>
 +  outOfRange(score) ? [['Range', `Outside 0 to 1; plotted at ${plottedScore(score)}`]] : [];
 +
@@ -5550,7 +5571,7 @@
 +);
 +
 +export const EPISODE_SCORES_HELP =
-+  'Dots show recorded episode scores; identical scores share a marker with an episode count. Diamonds show the mean with equal weight for each scenario and evaluated target pair, excluding missing scores. Select either to view its sessions.';
++  'Dots show recorded episode scores; identical scores share a marker with an episode count. Vertical positions separate nearby markers. Diamonds show the mean with equal weight for each scenario and evaluated target pair, excluding missing scores. Select either to view its sessions.';
 +
 +const contextValue = (values: string[], plural: string) => {
 +  const unique = [...new Set(values)];
@@ -5582,7 +5603,7 @@
 +  const { theme } = useDesignSystemTheme();
 +  const { setContainerDiv, layoutWidth } = useDynamicPlotSize();
 +  const plotWidth = layoutWidth && layoutWidth > 48 ? layoutWidth : 600;
-+  const x = (score: number) => 24 + plottedScore(score) * (plotWidth - 48);
++  const x = (score: number) => scorePosition(score, plotWidth);
 +  const [openTooltip, setOpenTooltip] = useState<string>();
 +  const updateTooltip = (key: string, open: boolean) =>
 +    setOpenTooltip((current) => (open ? key : current === key ? undefined : current));
@@ -5630,7 +5651,7 @@
 +          <div
 +            css={{
 +              display: 'grid',
-+              gridTemplateColumns: 'minmax(180px, 260px) minmax(420px, 1fr)',
++              gridTemplateColumns: plotColumns,
 +              padding: '4px 12px',
 +              gap: 12,
 +              background: theme.colors.backgroundPrimary,
@@ -5673,8 +5694,9 @@
 +            const laneEnds: number[] = [];
 +            const points = [...identicalScores.values()].map((members) => {
 +              const item = members[0];
-+              const position = x(item.score as number);
-+              const availableLane = laneEnds.findIndex((end) => position - end >= pointSpacing);
++              // Packing at the narrowest plot keeps vertical positions stable when the viewport changes.
++              const position = scorePosition(item.score as number, minimumPlotWidth);
++              const availableLane = laneEnds.findIndex((end) => position - end >= horizontalMarkerSpacing);
 +              const lane = availableLane < 0 ? laneEnds.length : availableLane;
 +              laneEnds[lane] = position;
 +              return { item, members, lane };
@@ -5688,7 +5710,7 @@
 +                key={group.key}
 +                css={{
 +                  display: 'grid',
-+                  gridTemplateColumns: 'minmax(180px, 260px) minmax(420px, 1fr)',
++                  gridTemplateColumns: plotColumns,
 +                  alignItems: 'center',
 +                  borderTop: `1px solid ${theme.colors.border}`,
 +                  padding: '6px 12px',
@@ -5976,7 +5998,7 @@
 +};
 --- /dev/null
 +++ b/mlflow/server/js/src/experiment-tracking/pages/open-world-results/OpenWorldResultsPage.test.tsx
-@@ -0,0 +1,756 @@
+@@ -0,0 +1,755 @@
 +import { useState } from 'react';
 +import { it, expect, jest, beforeEach, afterEach } from '@jest/globals';
 +import userEvent, { PointerEventsCheckLevel } from '@testing-library/user-event';
@@ -6630,11 +6652,10 @@
 +  const sessions = screen.getByRole('button', { name: 'Sessions (episodes)' });
 +  for (const section of [overview, scores, matrix]) {
 +    expect(section).toHaveAttribute('aria-expanded', 'true');
-+    expect(within(section).getByText('Collapse')).toBeInTheDocument();
 +  }
 +  await user.click(overview);
 +  expect(overview).toHaveAttribute('aria-expanded', 'false');
-+  expect(within(overview).getByText('Expand')).toBeInTheDocument();
++  expect(within(overview).getByText('Results overview')).toBeInTheDocument();
 +  expect(sessions).toHaveAttribute('aria-expanded', 'false');
 +  await user.click(scores);
 +  expect(scores).toHaveAttribute('aria-expanded', 'false');
@@ -7515,7 +7536,7 @@
 +export default OpenWorldResultsPage;
 --- /dev/null
 +++ b/mlflow/server/js/src/experiment-tracking/pages/open-world-results/OpenWorldResultsSection.tsx
-@@ -0,0 +1,59 @@
+@@ -0,0 +1,69 @@
 +import { useEffect, useState, type ReactNode } from 'react';
 +import { Button, ChevronDownIcon, ChevronRightIcon, InfoIcon, Popover, Typography } from '@databricks/design-system';
 +
@@ -7539,7 +7560,30 @@
 +    <section aria-labelledby={titleId} css={{ minWidth: 0, flexShrink: 0 }}>
 +      <div css={{ display: 'flex', alignItems: 'center', gap: 4 }}>
 +        <Typography.Title id={titleId} level={3} withoutMargins css={{ fontSize: 16 }}>
-+          {title}
++          <Button
++            componentId={`${componentId}.toggle`}
++            type="tertiary"
++            aria-label={title}
++            aria-expanded={expanded}
++            aria-controls={contentId}
++            icon={expanded ? <ChevronDownIcon /> : <ChevronRightIcon />}
++            onClick={onToggle}
++            css={{
++              '&&': {
++                height: 'auto !important',
++                minHeight: 0,
++                padding: '0 !important',
++                border: 'none !important',
++                color: 'inherit',
++                font: 'inherit',
++                lineHeight: 'inherit',
++                textAlign: 'left',
++                justifyContent: 'flex-start',
++              },
++            }}
++          >
++            {title}
++          </Button>
 +        </Typography.Title>
 +        <Popover.Root componentId={`${componentId}.help`}>
 +          <Popover.Trigger asChild>
@@ -7555,19 +7599,6 @@
 +            <Typography.Paragraph withoutMargins>{help}</Typography.Paragraph>
 +          </Popover.Content>
 +        </Popover.Root>
-+        <Button
-+          componentId={`${componentId}.toggle`}
-+          type="tertiary"
-+          size="small"
-+          aria-label={title}
-+          aria-expanded={expanded}
-+          aria-controls={contentId}
-+          icon={expanded ? <ChevronDownIcon /> : <ChevronRightIcon />}
-+          onClick={onToggle}
-+          css={{ marginLeft: 'auto' }}
-+        >
-+          <span aria-hidden="true">{expanded ? 'Collapse' : 'Expand'}</span>
-+        </Button>
 +      </div>
 +      <div id={contentId} hidden={!expanded} css={{ paddingTop: 8 }}>
 +        {(expanded || hasOpened) && children}
@@ -7854,7 +7885,7 @@
 +};
 --- /dev/null
 +++ b/mlflow/server/js/src/experiment-tracking/pages/open-world-results/OpenWorldRunIdentity.tsx
-@@ -0,0 +1,34 @@
+@@ -0,0 +1,33 @@
 +import type { OpenWorldEpisode } from './openWorldResultsData';
 +
 +const recorded = (value: string) => value || 'Unavailable';
@@ -7886,7 +7917,6 @@
 +    <span>Model: {recorded(episode.model)}</span>
 +    <span>Run: {getRunDisplayName(episode)}</span>
 +    {episode.alignmentMode === 'unaligned' && <span>Alignment: Unaligned</span>}
-+    {episode.alignmentMode === 'aligned' && <span>Alignment: Targeted</span>}
 +  </span>
 +);
 --- /dev/null
