@@ -4,7 +4,7 @@
 
 These steps create a new instance. For the installed ITM server, use the [service commands](#manage-the-instance-on-itm).
 
-1. **Install the server and session UI.** Requires Git, `uv`, and Node.js **24.14+ within 24.x** on `PATH`.
+1. **Install MLflow and all Open World UI features.** Requires Git, `uv`, and Node.js **24.14+ within 24.x** on `PATH`.
 
    ```bash
    git clone https://github.com/PaulHax/align-tools.git
@@ -27,7 +27,7 @@ These steps create a new instance. For the installed ITM server, use the [servic
 
    Open <http://10.50.57.47:5000>. Stop a foreground server with **Ctrl-C**. Follow [Import Align runs](INGESTION.md) to add data.
 
-After importing, open **Open World results** or filter the experiment's **Traces** table. Use **Views** to save a [personal layout](SESSION-UI.md#saved-views). Server setup and ingestion do not create saved views.
+After importing, open **Open World results** or filter the experiment's **Traces** table. See the [UI guide](SESSION-UI.md) for comparisons and saved views.
 
 ## Manage the instance on ITM
 
@@ -54,7 +54,6 @@ journalctl --user -u open-world-mlflow.service -n 50 -f
 | `/data/shared/mlflow/mlflow.db` | Runs, traces, sessions, scores, annotations, and saved views |
 | `/data/shared/mlflow/artifacts/` | Run artifacts and original source archives |
 
-- **Runtime data stays outside Git.** Keep code, the UI patch, and configuration examples in the repository.
 - **The server account owns writes.** Importers use HTTP and need no direct access to the database or artifact directory.
 - **SQLite working files** (`mlflow.db-wal` and `mlflow.db-shm`) may appear while the server runs. Do not delete a live WAL.
 
@@ -78,13 +77,13 @@ The [environment example](examples/server.env.example) uses MLflow's built-in va
 
 ### Local SQLite launcher
 
-- `scripts/server.sh` is a **local SQLite launcher**, using an absolute `MLFLOW_TRACKING_URI=sqlite:////path/to/mlflow.db`.
+- `packages/align-mlflow/scripts/server.sh` starts a local server with an absolute `MLFLOW_TRACKING_URI=sqlite:////path/to/mlflow.db`.
 - It creates adjacent `artifacts/` and disables the HTTP artifact proxy. Use the native startup command above for the shared server.
 - Server flags **do not migrate `file://` artifact locations**. Copy artifacts and update their recorded locations as a separate, verified migration.
 
 ## Upgrade
 
-From a clean deployed checkout, after backing up. These commands deploy `origin/main`, including from an older integration checkout:
+Back up first and review dependency changes. From a clean deployed checkout, these commands deploy `origin/main`:
 
 ```bash
 systemctl --user stop open-world-mlflow.service
@@ -95,8 +94,7 @@ uv run --no-sync mlflow db upgrade sqlite:////data/shared/mlflow/mlflow.db
 systemctl --user start open-world-mlflow.service
 ```
 
-- Setup installs the **locked MLflow 3.17.2 environment and session UI together**. Reload browsers afterward; a global MLflow installation does not include the patch.
-- Review dependency changes first. MLflow version changes may require database schema and UI patch updates.
+Setup installs **MLflow 3.17.2 and all Open World UI features**. Use this environment to run the server and reload browsers afterward. The UI installer requires this exact MLflow version.
 
 ## Back up, restore, or move
 
@@ -107,7 +105,7 @@ systemctl --user start open-world-mlflow.service
 
 ## Slow SQLite trace search
 
-Local SQLite `sync` refreshes query statistics automatically; **HTTP imports skip it**. After large HTTP imports, run from the server checkout on the host. This updates planner statistics and retains all data and IDs:
+After a large HTTP import, refresh SQLite query statistics from the server checkout on the host. Local SQLite imports do this automatically. The command preserves data and IDs:
 
 ```bash
 uv run --no-sync python - <<'PY'
