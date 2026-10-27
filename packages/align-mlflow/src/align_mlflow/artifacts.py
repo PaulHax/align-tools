@@ -1,4 +1,4 @@
-"""Captured timing and optional log evidence, separate from launch provenance."""
+"""Captured timing and available log evidence, separate from launch provenance."""
 
 import hashlib
 import json

@@ -39,7 +39,7 @@ Rerun the command to resume or add records. Run **one bulk import at a time**; b
 | `meta.json` | No | Version and TA3 username; uploaded when present |
 | `timing.json` | No | Recorded action durations when aligned with the saved actions |
 | `align_system.log` | No | Recorded start date when the run folder has no timestamp |
-| `raw_align_system.log` | No | Decision evidence and TA3 completion scores; upload is optional |
+| `raw_align_system.log` | No | Decision evidence and TA3 completion scores; uploaded when present |
 
 - **Driver:** `driver._target_` in `.hydra/config.yaml` must start with `align_system.drivers.itm_open_world`. Other drivers and folders missing required files are skipped.
 - **Import location:** run the script on a computer that can read the source directory. Relative paths resolve from your current directory.
@@ -48,7 +48,7 @@ Rerun the command to resume or add records. Run **one bulk import at a time**; b
 - **Durations:** optional timing data must align with the saved actions. Missing or invalid timing produces a warning and an unknown duration with a minimum display placeholder. Reruns retain captured durations; appended actions use raw timing only when it agrees with previously measured durations.
 - **Timestamps:** absolute times are synthetic, based on the run folder's timestamp, then the first dated `align_system.log` entry, then the config file's modification time. Dates without a timezone use local time. Reruns retain the captured origin.
 
-To retain the full raw log as a downloadable run artifact, use `--include-log` with the CLI, or set `MLFLOW_INCLUDE_LOG=1` with `ingest.sh`. With `watch --include-log`, each changed log is retained as a full snapshot; use a final `sync --include-log` to retain one completed snapshot. Without this option, the complete log remains only in its source directory.
+Available raw logs are saved automatically as downloadable run artifacts. Watch retains a full snapshot whenever the log changes.
 
 If saved timing cannot be recovered, imports warn and new actions resume after the last confirmed trace with unknown durations. Existing traces keep their timestamps.
 

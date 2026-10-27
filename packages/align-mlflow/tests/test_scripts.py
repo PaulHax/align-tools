@@ -67,7 +67,6 @@ def test_import_and_server_share_configured_storage(tmp_path, transport):
         "MLFLOW_TRACKING_URI": f"sqlite:///{storage}/tracking.db",
         "MLFLOW_EXPERIMENT_NAME": "script configuration test",
         "MLFLOW_PORT": "0",
-        "MLFLOW_INCLUDE_LOG": "1",
     }
 
     def import_twice(import_env):

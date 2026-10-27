@@ -37,7 +37,7 @@ def test_log_bytes_and_changed_record_index_have_independent_snapshots(tmp_path)
     (run / "raw_align_system.log").write_bytes(original_log)
     client, eid = store(tmp_path)
 
-    first = sync_run(eid, run, include_log=True)
+    first = sync_run(eid, run)
     assert first.error is None
     source = client.search_runs([eid])[0]
     reference = json.loads(source.data.tags["align.log_snapshot"])
@@ -54,7 +54,7 @@ def test_log_bytes_and_changed_record_index_have_independent_snapshots(tmp_path)
     assert len(json.loads(first_index)["records"]) == 1
 
     (run / "input_output.json").write_text(json.dumps(records))
-    second = sync_run(eid, run, include_log=True)
+    second = sync_run(eid, run)
     assert second.error is None
     assert second.new_steps == 1
     updated = json.loads(
@@ -84,8 +84,47 @@ def test_log_bytes_and_changed_record_index_have_independent_snapshots(tmp_path)
         )
         == 2
     )
-    assert sync_run(eid, run, include_log=True).new_steps == 0
+    assert sync_run(eid, run).new_steps == 0
     assert len(client.search_traces(locations=[eid])) == 2
+
+
+def test_missing_raw_log_imports_actions_and_retains_a_later_available_log(tmp_path):
+    run = write_run(tmp_path / "source", episode_records(None)[:1], [])
+    log_path = run / "raw_align_system.log"
+    log_path.unlink()
+    client, eid = store(tmp_path)
+
+    first = sync_run(eid, run)
+    assert first.error is None
+    assert first.new_steps == 1
+    source = client.search_runs([eid])[0]
+    assert "align.log_snapshot" not in source.data.tags
+    original_trace = client.search_traces(locations=[eid])[0].to_dict()
+
+    content = b"Late diagnostic\r\n"
+    log_path.write_bytes(content)
+    second = sync_run(eid, run)
+    assert second.error is None
+    assert second.new_steps == 0
+    reference = json.loads(
+        client.get_run(source.info.run_id).data.tags["align.log_snapshot"]
+    )
+    assert (
+        downloaded(
+            client, source.info.run_id, reference["artifact_path"], tmp_path / "log"
+        )
+        == content
+    )
+
+    log_path.unlink()
+    third = sync_run(eid, run)
+    assert third.error is None
+    assert third.new_steps == 0
+    assert (
+        json.loads(client.get_run(source.info.run_id).data.tags["align.log_snapshot"])
+        == reference
+    )
+    assert client.search_traces(locations=[eid])[0].to_dict() == original_trace
 
 
 def test_incomplete_timing_artifact_recovers_only_original_snapshot(tmp_path):
@@ -341,9 +380,9 @@ def test_interrupted_raw_log_upload_resumes_with_original_bytes(tmp_path, monkey
         return upload(self, run_id, local_path, artifact_path)
 
     monkeypatch.setattr(MlflowClient, "log_artifact", interrupt_once)
-    assert sync_run(eid, run, include_log=True).error is not None
+    assert sync_run(eid, run).error is not None
     assert not client.search_traces(locations=[eid])
-    resumed = sync_run(eid, run, include_log=True)
+    resumed = sync_run(eid, run)
     assert resumed.error is None
     assert resumed.new_steps == 1
     source = client.search_runs([eid])[0]
