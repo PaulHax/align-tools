@@ -3769,7 +3769,7 @@
 +};
 --- /dev/null
 +++ b/mlflow/server/js/src/experiment-tracking/pages/experiment-chat-sessions/single-chat-view/ExperimentChatSessionComparison.test.tsx
-@@ -0,0 +1,305 @@
+@@ -0,0 +1,306 @@
 +import { beforeEach, describe, expect, jest, test } from '@jest/globals';
 +import { render, screen, within } from '@testing-library/react';
 +import userEvent from '@testing-library/user-event';
@@ -3889,8 +3889,8 @@
 +  test('shows full independent sequences with different scenarios and targets in the same run and keeps exact links', async () => {
 +    const user = userEvent.setup();
 +    const { rerenderPair } = renderComparison();
-+    const left = within(screen.getByRole('region', { name: 'Left session' }));
-+    const right = within(screen.getByRole('region', { name: 'Right session' }));
++    const left = within(screen.getByRole('region', { name: 'left' }));
++    const right = within(screen.getByRole('region', { name: 'right' }));
 +    await left.findByText('tr-left-1 output');
 +    await right.findByText('tr-right-3 output');
 +    expect(
@@ -3914,8 +3914,8 @@
 +    expect(right.getByText('scenario-right')).toBeInTheDocument();
 +    expect(left.getByText('target-left')).toBeInTheDocument();
 +    expect(right.getByText('target-right')).toBeInTheDocument();
-+    expect(left.getByLabelText('Left recorded scores')).toHaveTextContent('TA3 alignment score: 0.3');
-+    expect(right.getByLabelText('Right recorded scores')).toHaveTextContent('TA3 alignment score: 0.7');
++    expect(left.getByLabelText('left recorded scores')).toHaveTextContent('TA3 alignment score: 0.3');
++    expect(right.getByLabelText('right recorded scores')).toHaveTextContent('TA3 alignment score: 0.7');
 +    expect(left.getByRole('link', { name: 'left' })).toHaveAttribute('href', '/experiments/1/chat-sessions/left');
 +    expect(right.getByRole('link', { name: 'right' })).toHaveAttribute('href', '/experiments/1/chat-sessions/right');
 +    const compare = screen.getByRole('button', { name: 'Compare selected decisions' });
@@ -3923,13 +3923,21 @@
 +    await user.hover(left.getByText('tr-left-1 output'));
 +    await user.hover(right.getByText('tr-right-1 output'));
 +    expect(compare).toBeDisabled();
++    await user.click(left.getByText('tr-left-2 output'));
++    expect(
++      within(left.getByRole('navigation', { name: 'left decisions' })).getByRole('button', { name: 'left trace 2' }),
++    ).toHaveAttribute('aria-pressed', 'true');
++    expect(
++      within(left.getByRole('group', { name: 'left trace 2' })).getByRole('button', { name: 'left trace 2' }),
++    ).toHaveAttribute('aria-pressed', 'true');
 +    await user.click(
-+      within(left.getByRole('navigation', { name: 'Left decisions' })).getByRole('button', { name: 'left trace 2' }),
-+    );
-+    await user.click(
-+      within(right.getByRole('navigation', { name: 'Right decisions' })).getByRole('button', { name: 'right trace 3' }),
++      within(right.getByRole('navigation', { name: 'right decisions' })).getByRole('button', { name: 'right trace 3' }),
 +    );
 +    expect(compare).toBeEnabled();
++    await user.hover(left.getByText('tr-left-1 output'));
++    expect(
++      within(left.getByRole('navigation', { name: 'left decisions' })).getByRole('button', { name: 'left trace 2' }),
++    ).toHaveAttribute('aria-pressed', 'true');
 +    expect(left.getByRole('link', { name: 'Open selected trace tr-left-2' })).toHaveAttribute(
 +      'href',
 +      '/experiments/1/traces?selectedTraceId=tr-left-2',
@@ -3946,31 +3954,33 @@
 +    rerenderPair('right', 'left');
 +    expect(screen.queryByText('Comparing selected decisions')).not.toBeInTheDocument();
 +    expect(screen.getByRole('button', { name: 'Compare selected decisions' })).toBeDisabled();
-+    await within(screen.getByRole('region', { name: 'Left session' })).findByText('tr-right-3 output');
++    await within(screen.getByRole('region', { name: 'right' })).findByText('tr-right-3 output');
 +    expect(
-+      within(screen.getByRole('navigation', { name: 'Left decisions' })).getByRole('button', { name: 'right trace 3' }),
++      within(screen.getByRole('navigation', { name: 'right decisions' })).getByRole('button', {
++        name: 'right trace 3',
++      }),
 +    ).toHaveAttribute('aria-pressed', 'false');
 +  });
 +
 +  test('compares exactly the three decisions chosen from three independent session sidebars', async () => {
 +    const user = userEvent.setup();
 +    renderComparison(['left', 'right', 'third']);
-+    const third = within(screen.getByRole('region', { name: 'Session 3' }));
++    const third = within(screen.getByRole('region', { name: 'third' }));
 +    await third.findByText('tr-third-1 output');
 +    expect(third.getByText('LLM One')).toBeInTheDocument();
 +    expect(third.getByRole('link', { name: 'third' })).toHaveAttribute('href', '/experiments/1/chat-sessions/third');
 +    await user.click(
-+      await within(screen.getByRole('navigation', { name: 'Left decisions' })).findByRole('button', {
++      await within(screen.getByRole('navigation', { name: 'left decisions' })).findByRole('button', {
 +        name: 'left trace 2',
 +      }),
 +    );
 +    await user.click(
-+      within(screen.getByRole('navigation', { name: 'Right decisions' })).getByRole('button', {
++      within(screen.getByRole('navigation', { name: 'right decisions' })).getByRole('button', {
 +        name: 'right trace 3',
 +      }),
 +    );
 +    await user.click(
-+      within(third.getByRole('navigation', { name: 'Session 3 decisions' })).getByRole('button', {
++      within(third.getByRole('navigation', { name: 'third decisions' })).getByRole('button', {
 +        name: 'third trace 1',
 +      }),
 +    );
@@ -3984,31 +3994,22 @@
 +    expect(drawer.queryByText('tr-left-1')).not.toBeInTheDocument();
 +  });
 +
-+  test('keeps four sessions available and allows clearing a decision to meet the native three-trace limit', async () => {
++  test('keeps four sessions available and reports the native three-trace comparison limit', async () => {
 +    const user = userEvent.setup();
 +    renderComparison(['left', 'right', 'third', 'fourth']);
 +    for (const [label, traceName] of [
-+      ['Left decisions', 'left trace 1'],
-+      ['Right decisions', 'right trace 1'],
-+      ['Session 3 decisions', 'third trace 1'],
-+      ['Session 4 decisions', 'fourth trace 1'],
++      ['left decisions', 'left trace 1'],
++      ['right decisions', 'right trace 1'],
++      ['third decisions', 'third trace 1'],
++      ['fourth decisions', 'fourth trace 1'],
 +    ]) {
 +      await user.click(
 +        await within(await screen.findByRole('navigation', { name: label })).findByRole('button', { name: traceName }),
 +      );
 +    }
-+    expect(screen.getByRole('region', { name: 'Session 4' })).toBeInTheDocument();
-+    expect(
-+      screen.getByText('4 decisions selected. Clear a selection to compare at most three decisions.'),
-+    ).toBeInTheDocument();
++    expect(screen.getByRole('region', { name: 'fourth' })).toBeInTheDocument();
++    expect(screen.getByText('4 decisions selected. At most three decisions can be compared.')).toBeInTheDocument();
 +    expect(screen.getByRole('button', { name: 'Compare selected decisions' })).toBeDisabled();
-+    await user.click(
-+      within(screen.getByRole('region', { name: 'Session 4' })).getByRole('button', {
-+        name: 'Clear selected decision',
-+      }),
-+    );
-+    expect(screen.getByText('3 decisions selected')).toBeInTheDocument();
-+    expect(screen.getByRole('button', { name: 'Compare selected decisions' })).toBeEnabled();
 +  });
 +
 +  test('reports a failed full-trace fetch instead of displaying a shortened sequence', async () => {
@@ -4017,7 +4018,7 @@
 +      return trace(traceInfo as ModelTraceInfoV3);
 +    });
 +    renderComparison();
-+    const left = within(screen.getByRole('region', { name: 'Left session' }));
++    const left = within(screen.getByRole('region', { name: 'left' }));
 +    expect(await left.findByRole('alert')).toHaveTextContent(
 +      'Could not load the complete session. Decision trace unavailable',
 +    );
@@ -4055,7 +4056,7 @@
 +      traces: [(options?.body as { filter: string }).filter.includes("'left'") ? scored : info('right', 1)],
 +    }));
 +    renderComparison();
-+    expect(await screen.findByLabelText('Left recorded scores')).toHaveTextContent('TA3 alignment score: 0.4');
++    expect(await screen.findByLabelText('left recorded scores')).toHaveTextContent('TA3 alignment score: 0.4');
 +  });
 +
 +  test('reports a later session-page error without displaying the first page as a complete episode', async () => {
@@ -4068,7 +4069,7 @@
 +      return { traces: [info('right', 1)] };
 +    });
 +    renderComparison();
-+    const left = within(screen.getByRole('region', { name: 'Left session' }));
++    const left = within(screen.getByRole('region', { name: 'left' }));
 +    expect(await left.findByRole('alert')).toHaveTextContent(
 +      'Could not load the complete session. Later session page unavailable',
 +    );
@@ -4077,8 +4078,8 @@
 +});
 --- /dev/null
 +++ b/mlflow/server/js/src/experiment-tracking/pages/experiment-chat-sessions/single-chat-view/ExperimentChatSessionComparison.tsx
-@@ -0,0 +1,382 @@
-+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+@@ -0,0 +1,337 @@
++import { useCallback, useEffect, useMemo, useState } from 'react';
 +import { Button, Drawer, Typography, useDesignSystemTheme } from '@databricks/design-system';
 +import { createTraceLocationForExperiment, useSearchMlflowTraces } from '@databricks/web-shared/genai-traces-table';
 +import type { FeedbackAssessment, ModelTrace, ModelTraceInfoV3 } from '@databricks/web-shared/model-trace-explorer';
@@ -4091,8 +4092,7 @@
 +import Routes from '../../../routes';
 +import { SELECTED_TRACE_ID_QUERY_PARAM } from '../../../constants';
 +import { getChatSessionsFilter } from '../utils';
-+import { ExperimentSingleChatConversation } from './ExperimentSingleChatConversation';
-+import { ExperimentSingleChatSessionSidebar } from './ExperimentSingleChatSessionSidebar';
++import { ExperimentChatSessionViewer, orderSessionTraces } from './ExperimentChatSessionViewer';
 +
 +type SessionChoice = { experimentId: string; sessionId: string; trace: ModelTrace };
 +
@@ -4100,16 +4100,6 @@
 +  pathname: Routes.getExperimentPageTracesTabRoute(experimentId),
 +  search: `?${new URLSearchParams({ [SELECTED_TRACE_ID_QUERY_PARAM]: traceId })}`,
 +});
-+
-+const orderSessionTraces = (traces: ModelTraceInfoV3[]) => {
-+  const hasSteps = traces.every((trace) => /^[1-9]\d*$/.test(trace.tags?.['step'] ?? ''));
-+  return [...traces].sort(
-+    (left, right) =>
-+      (hasSteps ? Number(left.tags['step']) - Number(right.tags['step']) : 0) ||
-+      left.request_time.localeCompare(right.request_time) ||
-+      left.trace_id.localeCompare(right.trace_id),
-+  );
-+};
 +
 +const sessionScores = (traces: ModelTraceInfoV3[], sessionId: string) => {
 +  const latest = new Map<string, FeedbackAssessment>();
@@ -4152,9 +4142,6 @@
 +  onSelect: (position: number, choice: SessionChoice | undefined) => void;
 +}) => {
 +  const { theme } = useDesignSystemTheme();
-+  const side = position === 0 ? 'Left' : position === 1 ? 'Right' : `Session ${position + 1}`;
-+  const sessionLabel = position < 2 ? `${side} session` : side;
-+  const chatRefs = useRef<{ [traceId: string]: HTMLDivElement }>({});
 +  const navigate = useNavigate();
 +  const locations = useMemo(() => [createTraceLocationForExperiment(experimentId)], [experimentId]);
 +  const filters = useMemo(() => getChatSessionsFilter({ sessionId }), [sessionId]);
@@ -4213,18 +4200,13 @@
 +  };
 +  const selectTurn = (index: number) => {
 +    onSelect(position, { experimentId, sessionId, trace: traces[index] });
-+    const card = chatRefs.current[infos[index].trace_id];
-+    const scroller = card?.parentElement;
-+    if (scroller) {
-+      scroller.scrollTop += card.getBoundingClientRect().top - scroller.getBoundingClientRect().top;
-+    }
 +  };
 +  const openTrace = (trace: ModelTrace) =>
 +    navigate(traceRoute(experimentId, (trace.info as ModelTraceInfoV3).trace_id));
 +
 +  return (
 +    <section
-+      aria-label={sessionLabel}
++      aria-label={sessionId}
 +      css={{
 +        display: 'flex',
 +        flexDirection: 'column',
@@ -4244,9 +4226,6 @@
 +          borderBottom: `1px solid ${theme.colors.border}`,
 +        }}
 +      >
-+        <Typography.Title level={3} withoutMargins>
-+          {sessionLabel}
-+        </Typography.Title>
 +        <Link
 +          componentId="mlflow.session-comparison.open-session"
 +          to={Routes.getExperimentPageTabSingleChatSessionRoute(experimentId, sessionId)}
@@ -4295,7 +4274,7 @@
 +                Open run {runId}
 +              </Link>
 +            ))}
-+            <div aria-label={`${side} recorded scores`}>
++            <div aria-label={`${sessionId} recorded scores`}>
 +              <Typography.Text bold>Recorded session scores</Typography.Text>
 +              {scores.length ? (
 +                scores.map((score) => (
@@ -4316,44 +4295,25 @@
 +              )}
 +            </div>
 +            {selectedIndex >= 0 && (
-+              <div css={{ display: 'flex', alignItems: 'center', gap: theme.spacing.sm }}>
-+                <Link
-+                  componentId="mlflow.session-comparison.open-trace"
-+                  to={traceRoute(experimentId, infos[selectedIndex].trace_id)}
-+                >
-+                  Open selected trace {infos[selectedIndex].trace_id}
-+                </Link>
-+                <Button
-+                  componentId="mlflow.session-comparison.clear-decision"
-+                  onClick={() => onSelect(position, undefined)}
-+                >
-+                  Clear selected decision
-+                </Button>
-+              </div>
++              <Link
++                componentId="mlflow.session-comparison.open-trace"
++                to={traceRoute(experimentId, infos[selectedIndex].trace_id)}
++              >
++                Open selected trace {infos[selectedIndex].trace_id}
++              </Link>
 +            )}
 +          </>
 +        )}
 +      </div>
 +      {complete && infos.length > 0 && (
-+        <div css={{ display: 'flex', flex: 1, minHeight: 0, minWidth: 0 }}>
-+          <nav aria-label={`${side} decisions`} css={{ display: 'flex', minHeight: 0, width: 260, flexShrink: 0 }}>
-+            <ExperimentSingleChatSessionSidebar
-+              traces={traces}
-+              selectedTurnIndex={selectedIndex < 0 ? null : selectedIndex}
-+              setSelectedTurnIndex={() => {}}
-+              setSelectedTrace={openTrace}
-+              chatRefs={chatRefs}
-+              onSelectTurn={selectTurn}
-+            />
-+          </nav>
-+          <ExperimentSingleChatConversation
-+            traces={traces}
-+            chatRefs={chatRefs}
-+            selectedTurnIndex={selectedIndex < 0 ? null : selectedIndex}
-+            setSelectedTrace={openTrace}
-+            getAssessmentTitle={(name) => name}
-+          />
-+        </div>
++        <ExperimentChatSessionViewer
++          sessionId={sessionId}
++          traces={traces}
++          selectedTurnIndex={selectedIndex < 0 ? null : selectedIndex}
++          onSelectTurn={selectTurn}
++          onOpenTrace={openTrace}
++          getAssessmentTitle={(name) => name}
++        />
 +      )}
 +    </section>
 +  );
@@ -4402,14 +4362,10 @@
 +        css={{ display: 'flex', flexDirection: 'column', flex: 1, minWidth: 0, minHeight: 0, gap: theme.spacing.sm }}
 +      >
 +        <div css={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: theme.spacing.sm }}>
-+          <Typography.Text>
-+            Each session keeps its own decision sequence. Choose decisions from two or three sessions to compare their
-+            traces.
-+          </Typography.Text>
 +          <div role="status">
 +            <Typography.Text>
 +              {selectedTraces.length} decisions selected
-+              {selectedTraces.length > 3 ? '. Clear a selection to compare at most three decisions.' : ''}
++              {selectedTraces.length > 3 ? '. At most three decisions can be compared.' : ''}
 +            </Typography.Text>
 +          </div>
 +          <Button
@@ -4460,27 +4416,206 @@
 +    </ModelTraceExplorerPreferencesProvider>
 +  );
 +};
+--- /dev/null
++++ b/mlflow/server/js/src/experiment-tracking/pages/experiment-chat-sessions/single-chat-view/ExperimentChatSessionViewer.tsx
+@@ -0,0 +1,83 @@
++import { useCallback, useEffect, useRef, useState } from 'react';
++import { getModelTraceId, type ModelTrace, type ModelTraceInfoV3 } from '@databricks/web-shared/model-trace-explorer';
++import { ExperimentSingleChatConversation } from './ExperimentSingleChatConversation';
++import { ExperimentSingleChatSessionSidebar } from './ExperimentSingleChatSessionSidebar';
++
++export const orderSessionTraces = (traces: ModelTraceInfoV3[]) => {
++  const hasSteps = traces.every((trace) => /^[1-9]\d*$/.test(trace.tags?.['step'] ?? ''));
++  return [...traces].sort(
++    (left, right) =>
++      (hasSteps ? Number(left.tags['step']) - Number(right.tags['step']) : 0) ||
++      left.request_time.localeCompare(right.request_time) ||
++      left.trace_id.localeCompare(right.trace_id),
++  );
++};
++
++export const ExperimentChatSessionViewer = ({
++  sessionId,
++  traces,
++  selectedTurnIndex,
++  onSelectTurn,
++  onOpenTrace,
++  getAssessmentTitle,
++}: {
++  sessionId: string;
++  traces: ModelTrace[];
++  selectedTurnIndex: number | null;
++  onSelectTurn: (turnIndex: number) => void;
++  onOpenTrace: (trace: ModelTrace) => void;
++  getAssessmentTitle: (assessmentName: string) => string;
++}) => {
++  const chatRefs = useRef<{ [traceId: string]: HTMLDivElement }>({});
++  const [hoveredTurnIndex, setHoveredTurnIndex] = useState<number | null>(null);
++  const activeTurnIndex = hoveredTurnIndex ?? selectedTurnIndex;
++  const selectedTraceId =
++    selectedTurnIndex !== null && traces[selectedTurnIndex] ? getModelTraceId(traces[selectedTurnIndex]) : undefined;
++  const locallySelectedTraceId = useRef<string>();
++  const scrollToTrace = useCallback((traceId: string) => {
++    const card = chatRefs.current[traceId];
++    const scroller = card?.parentElement;
++    if (scroller) {
++      scroller.scrollTop += card.getBoundingClientRect().top - scroller.getBoundingClientRect().top;
++    }
++  }, []);
++  useEffect(() => {
++    // Local interactions own scrolling; controlled selections from deep links scroll into view.
++    if (selectedTraceId && selectedTraceId !== locallySelectedTraceId.current) scrollToTrace(selectedTraceId);
++    locallySelectedTraceId.current = undefined;
++  }, [selectedTraceId, scrollToTrace]);
++  const selectTurn = (index: number) => {
++    locallySelectedTraceId.current = getModelTraceId(traces[index]);
++    onSelectTurn(index);
++    setHoveredTurnIndex(index);
++  };
++
++  return (
++    <div css={{ display: 'flex', flex: 1, minHeight: 0, minWidth: 0 }} onMouseLeave={() => setHoveredTurnIndex(null)}>
++      <nav aria-label={`${sessionId} decisions`} css={{ display: 'flex', minHeight: 0, width: 260, flexShrink: 0 }}>
++        <ExperimentSingleChatSessionSidebar
++          traces={traces}
++          activeTurnIndex={activeTurnIndex}
++          selectedTurnIndex={selectedTurnIndex}
++          onActivateTurn={setHoveredTurnIndex}
++          onSelectTurn={(index) => {
++            selectTurn(index);
++            scrollToTrace(getModelTraceId(traces[index]));
++          }}
++        />
++      </nav>
++      <ExperimentSingleChatConversation
++        traces={traces}
++        chatRefs={chatRefs}
++        selection={{
++          activeTurnIndex,
++          selectedTurnIndex,
++          onActivateTurn: setHoveredTurnIndex,
++          onSelectTurn: selectTurn,
++        }}
++        setSelectedTrace={onOpenTrace}
++        getAssessmentTitle={getAssessmentTitle}
++      />
++    </div>
++  );
++};
 --- a/mlflow/server/js/src/experiment-tracking/pages/experiment-chat-sessions/single-chat-view/ExperimentSingleChatConversation.tsx
 +++ b/mlflow/server/js/src/experiment-tracking/pages/experiment-chat-sessions/single-chat-view/ExperimentSingleChatConversation.tsx
-@@ -80,11 +80,13 @@
+@@ -16,23 +16,32 @@
+ import { FormattedMessage } from '@databricks/i18n';
+ import type { MutableRefObject } from 'react';
+ import { ExperimentSingleChatIcon } from './ExperimentSingleChatIcon';
+-import { noop } from 'lodash';
++
++type ConversationProps = {
++  traces: ModelTrace[];
++  setSelectedTrace?: (trace: ModelTrace) => void;
++  chatRefs?: MutableRefObject<{ [traceId: string]: HTMLDivElement }>;
++  getAssessmentTitle: (assessmentName: string) => string;
++} & (
++  | {
++      selection: {
++        activeTurnIndex: number | null;
++        selectedTurnIndex: number | null;
++        onActivateTurn: (turnIndex: number) => void;
++        onSelectTurn: (turnIndex: number) => void;
++      };
++      readOnly?: never;
++    }
++  | { readOnly: true; selection?: never }
++);
+ 
+ export const ExperimentSingleChatConversation = ({
+   traces,
+-  selectedTurnIndex,
+-  setSelectedTurnIndex = noop,
++  selection,
+   setSelectedTrace,
+   chatRefs,
+   getAssessmentTitle,
+-}: {
+-  traces: ModelTrace[];
+-  selectedTurnIndex: number | null;
+-  setSelectedTurnIndex?: (turnIndex: number | null) => void;
+-  setSelectedTrace?: (trace: ModelTrace) => void;
+-  chatRefs?: MutableRefObject<{ [traceId: string]: HTMLDivElement }>;
+-  getAssessmentTitle: (assessmentName: string) => string;
+-}) => {
++}: ConversationProps) => {
+   const { theme } = useDesignSystemTheme();
+ 
+   if (!traces) {
+@@ -54,11 +63,22 @@
+       }}
+     >
+       {traces.map((trace, index) => {
+-        const isActive = selectedTurnIndex === index;
++        const isActive = selection?.activeTurnIndex === index;
+         const traceId = getModelTraceId(trace);
++        const traceName = (!Array.isArray(trace.info.tags) && trace.info.tags?.['mlflow.traceName']) || (
++          <FormattedMessage
++            defaultMessage="Turn {turnNumber}"
++            description="Label for a single turn within an experiment chat session"
++            values={{ turnNumber: index + 1 }}
++          />
++        );
+ 
+         return (
+           <div
++            role="group"
++            aria-label={
++              (!Array.isArray(trace.info.tags) && trace.info.tags?.['mlflow.traceName']) || `Turn ${index + 1}`
++            }
+             ref={(el) => {
+               if (el && chatRefs) {
+                 chatRefs.current[traceId] = el;
+@@ -75,17 +95,35 @@
+               padding: theme.spacing.md,
+               borderRadius: theme.borders.borderRadiusMd,
+             }}
+-            onMouseEnter={() => setSelectedTurnIndex(index)}
++            onMouseEnter={() => selection?.onActivateTurn(index)}
++            // The title button provides keyboard selection; other embedded controls keep their own actions.
++            // eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions
++            onClick={(event) => {
++              if (
++                event.target instanceof Element &&
++                event.target.closest(
++                  'button, a, input, textarea, select, summary, [role="button"], [role="link"], [role="checkbox"], [contenteditable="true"]',
++                )
++              ) {
++                return;
++              }
++              selection?.onSelectTurn(index);
++            }}
+           >
              <div css={{ display: 'flex', alignItems: 'center', gap: theme.spacing.sm }}>
                <ExperimentSingleChatIcon />
-               <Typography.Text bold>
+-              <Typography.Text bold>
 -                <FormattedMessage
 -                  defaultMessage="Turn {turnNumber}"
 -                  description="Label for a single turn within an experiment chat session"
 -                  values={{ turnNumber: index + 1 }}
 -                />
-+                {(!Array.isArray(trace.info.tags) && trace.info.tags?.['mlflow.traceName']) || (
-+                  <FormattedMessage
-+                    defaultMessage="Turn {turnNumber}"
-+                    description="Label for a single turn within an experiment chat session"
-+                    values={{ turnNumber: index + 1 }}
-+                  />
-+                )}
-               </Typography.Text>
+-              </Typography.Text>
++              {selection ? (
++                <Button
++                  componentId="mlflow.experiment.chat-session.select-turn"
++                  type="tertiary"
++                  aria-pressed={selection.selectedTurnIndex === index}
++                  onClick={() => selection.onSelectTurn(index)}
++                >
++                  <Typography.Text bold>{traceName}</Typography.Text>
++                </Button>
++              ) : (
++                <Typography.Text bold>{traceName}</Typography.Text>
++              )}
                <div css={{ flex: 1 }} />
                <Button
+                 componentId="mlflow.experiment.chat-session.view-trace"
 --- a/mlflow/server/js/src/experiment-tracking/pages/experiment-chat-sessions/single-chat-view/ExperimentSingleChatSessionPage.test.tsx
 +++ b/mlflow/server/js/src/experiment-tracking/pages/experiment-chat-sessions/single-chat-view/ExperimentSingleChatSessionPage.test.tsx
 @@ -6,6 +6,13 @@
@@ -4549,7 +4684,7 @@
    test('mounts ExperimentCustomViewProvider with the current experiment ID when custom trace view is enabled', async () => {
 --- a/mlflow/server/js/src/experiment-tracking/pages/experiment-chat-sessions/single-chat-view/ExperimentSingleChatSessionPage.tsx
 +++ b/mlflow/server/js/src/experiment-tracking/pages/experiment-chat-sessions/single-chat-view/ExperimentSingleChatSessionPage.tsx
-@@ -10,7 +10,7 @@
+@@ -10,10 +10,10 @@
    useSearchMlflowTraces,
  } from '@databricks/web-shared/genai-traces-table';
  
@@ -4557,17 +4692,34 @@
 +import { Link, useParams, useLocation } from '@mlflow/mlflow/src/common/utils/RoutingUtils';
  import invariant from 'invariant';
  import { useGetExperimentQuery } from '../../../hooks/useExperimentQuery';
- import React, { useCallback, useMemo, useRef, useState, useEffect } from 'react';
-@@ -41,7 +41,7 @@
-   ExperimentSingleChatConversation,
-   ExperimentSingleChatConversationSkeleton,
- } from './ExperimentSingleChatConversation';
+-import React, { useCallback, useMemo, useRef, useState, useEffect } from 'react';
++import React, { useCallback, useMemo, useState, useEffect } from 'react';
+ import { ExperimentSingleChatSessionScoreResults } from './ExperimentSingleChatSessionScoreResults';
+ import { TracesV3Toolbar } from '../../../components/experiment-page/components/traces-v3/TracesV3Toolbar';
+ import type { ModelTrace, ModelTraceInfoV3 } from '@databricks/web-shared/model-trace-explorer';
+@@ -31,17 +31,12 @@
+   shouldEnableModelTraceExplorerCustomTraceView,
+   shouldUseTracesV4API,
+ } from '@databricks/web-shared/model-trace-explorer';
+-import {
+-  ExperimentSingleChatSessionSidebar,
+-  ExperimentSingleChatSessionSidebarSkeleton,
+-} from './ExperimentSingleChatSessionSidebar';
++import { ExperimentSingleChatSessionSidebarSkeleton } from './ExperimentSingleChatSessionSidebar';
+ import { getTrace as getTraceV3 } from '@mlflow/mlflow/src/experiment-tracking/utils/TraceUtils';
+ import { getChatSessionsFilter } from '../utils';
+-import {
+-  ExperimentSingleChatConversation,
+-  ExperimentSingleChatConversationSkeleton,
+-} from './ExperimentSingleChatConversation';
 -import { GenericSkeleton, useDesignSystemTheme } from '@databricks/design-system';
++import { ExperimentSingleChatConversationSkeleton } from './ExperimentSingleChatConversation';
++import { ExperimentChatSessionViewer, orderSessionTraces } from './ExperimentChatSessionViewer';
 +import { GenericSkeleton, Typography, useDesignSystemTheme } from '@databricks/design-system';
  import { SELECTED_TRACE_ID_QUERY_PARAM } from '../../../constants';
  import { useExperimentSingleChatMetrics } from './useExperimentSingleChatMetrics';
  import { ExperimentSingleChatSessionMetrics } from './ExperimentSingleChatSessionMetrics';
-@@ -51,6 +51,9 @@
+@@ -51,6 +46,9 @@
  import { first } from 'lodash';
  import { useRunScorerInTracesViewConfiguration } from '../../experiment-scorers/hooks/useRunScorerInTracesViewConfiguration';
  import { useOptionalCustomViewDefinition } from '@databricks/web-shared/model-trace-explorer/custom-view/CustomViewDefinitionContext';
@@ -4577,7 +4729,7 @@
  
  // Custom View pulls in @a2ui (ESM-only) transitively via ExperimentCustomViewProvider.
  // Lazy-load it so the chat-session route only pulls @a2ui into the graph when enabled.
-@@ -97,7 +100,7 @@
+@@ -97,16 +95,20 @@
    );
  };
  
@@ -4586,7 +4738,56 @@
    const { theme } = useDesignSystemTheme();
    const { experimentId, sessionId } = useParams();
    const location = useLocation();
-@@ -172,10 +175,16 @@
+   const [selectedTurnIndex, setSelectedTurnIndex] = useState<number | null>(null);
+   const [selectedTrace, setSelectedTrace] = useState<ModelTrace | null>(null);
+-  const chatRefs = useRef<{ [traceId: string]: HTMLDivElement }>({});
+ 
+   invariant(experimentId, 'Experiment ID must be defined');
+   invariant(sessionId, 'Session ID must be defined');
++
++  useEffect(() => {
++    setSelectedTurnIndex(null);
++    setSelectedTrace(null);
++  }, [experimentId, sessionId]);
+ 
+   useRegisterAssistantContext('sessionId', sessionId);
+   useRegisterAssistantContext('traceId', selectedTrace ? getModelTraceId(selectedTrace) : null);
+@@ -136,11 +138,11 @@
+     locations: traceSearchLocations,
+     filters,
+     disabled: false,
++    limit: Infinity,
++    enablePagination: false,
+   });
+ 
+-  const sortedTraceInfos = useMemo(() => {
+-    return traceInfos?.sort((a, b) => new Date(a.request_time).getTime() - new Date(b.request_time).getTime());
+-  }, [traceInfos]);
++  const sortedTraceInfos = useMemo(() => (traceInfos ? orderSessionTraces(traceInfos) : undefined), [traceInfos]);
+ 
+   const chatSessionMetrics = useExperimentSingleChatMetrics({ traceInfos: sortedTraceInfos });
+ 
+@@ -151,16 +153,15 @@
+     isLoading: isLoadingTraceDatas,
+     invalidateSingleTraceQuery,
+   } = useGetTraces(getTrace, sortedTraceInfos);
++  const viewedTraceIndex = selectedTrace
++    ? (traces?.findIndex((trace) => getModelTraceId(trace) === getModelTraceId(selectedTrace)) ?? -1)
++    : -1;
+ 
+   useEffect(() => {
+     if (selectedTraceIdFromUrl && traces && traces.length > 0 && !isLoadingTraceDatas) {
+       const traceIndex = traces.findIndex((trace) => getModelTraceId(trace) === selectedTraceIdFromUrl);
+       if (traceIndex !== -1) {
+         setSelectedTurnIndex(traceIndex);
+-        const traceRef = chatRefs.current[selectedTraceIdFromUrl];
+-        if (traceRef) {
+-          traceRef.scrollIntoView({ behavior: 'smooth', block: 'center' });
+-        }
+       }
+     }
+   }, [selectedTraceIdFromUrl, traces, isLoadingTraceDatas]);
+@@ -172,10 +173,16 @@
        invalidateTraceQuery={invalidateSingleTraceQuery}
      >
        <div css={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
@@ -4603,7 +4804,73 @@
            css={
              shouldEnableAssessmentsInSessions()
                ? {
-@@ -277,6 +286,34 @@
+@@ -195,19 +202,13 @@
+           </div>
+         ) : (
+           <div css={{ display: 'flex', flex: 1, minHeight: 0 }}>
+-            <ExperimentSingleChatSessionSidebar
++            <ExperimentChatSessionViewer
++              key={`${experimentId}:${sessionId}`}
++              sessionId={sessionId}
+               traces={traces ?? []}
+               selectedTurnIndex={selectedTurnIndex}
+-              setSelectedTurnIndex={setSelectedTurnIndex}
+-              setSelectedTrace={setSelectedTrace}
+-              chatRefs={chatRefs}
+-            />
+-            <ExperimentSingleChatConversation
+-              traces={traces ?? []}
+-              selectedTurnIndex={selectedTurnIndex}
+-              setSelectedTurnIndex={setSelectedTurnIndex}
+-              setSelectedTrace={setSelectedTrace}
+-              chatRefs={chatRefs}
++              onSelectTurn={setSelectedTurnIndex}
++              onOpenTrace={setSelectedTrace}
+               getAssessmentTitle={getAssessmentTitle}
+             />
+             {shouldEnableAssessmentsInSessions() && (
+@@ -225,32 +226,24 @@
+             )}
+           </div>
+         )}
+-        {selectedTrace !== null && selectedTurnIndex !== null && (
++        {selectedTrace !== null && viewedTraceIndex >= 0 && (
+           <ModelTraceExplorerDrawer
+             handleClose={() => setSelectedTrace(null)}
+             selectPreviousEval={() => {
+-              if (selectedTurnIndex > 0 && traces) {
+-                const prevIndex = selectedTurnIndex - 1;
+-                setSelectedTurnIndex(prevIndex);
+-                setSelectedTrace(traces[prevIndex]);
++              if (viewedTraceIndex > 0 && traces) {
++                setSelectedTrace(traces[viewedTraceIndex - 1]);
+               }
+             }}
+             selectNextEval={() => {
+-              if (traces && selectedTurnIndex < traces.length - 1) {
+-                const nextIndex = selectedTurnIndex + 1;
+-                setSelectedTurnIndex(nextIndex);
+-                setSelectedTrace(traces[nextIndex]);
++              if (traces && viewedTraceIndex < traces.length - 1) {
++                setSelectedTrace(traces[viewedTraceIndex + 1]);
+               }
+             }}
+-            isPreviousAvailable={selectedTurnIndex > 0}
+-            isNextAvailable={traces !== undefined && selectedTurnIndex < traces.length - 1}
++            isPreviousAvailable={viewedTraceIndex > 0}
++            isNextAvailable={traces !== undefined && viewedTraceIndex < traces.length - 1}
+             renderModalTitle={() => getModelTraceId(selectedTrace)}
+             experimentId={experimentId}
+-            traceInfo={
+-              sortedTraceInfos?.[selectedTurnIndex] && isV3ModelTraceInfo(sortedTraceInfos[selectedTurnIndex])
+-                ? (sortedTraceInfos[selectedTurnIndex] as ModelTraceInfoV3)
+-                : undefined
+-            }
++            traceInfo={isV3ModelTraceInfo(selectedTrace.info) ? (selectedTrace.info as ModelTraceInfoV3) : undefined}
+           >
+             <div
+               css={{
+@@ -277,6 +270,34 @@
    );
  };
  
@@ -4640,30 +4907,50 @@
    ExperimentSingleChatSessionPageImpl,
 --- a/mlflow/server/js/src/experiment-tracking/pages/experiment-chat-sessions/single-chat-view/ExperimentSingleChatSessionSidebar.tsx
 +++ b/mlflow/server/js/src/experiment-tracking/pages/experiment-chat-sessions/single-chat-view/ExperimentSingleChatSessionSidebar.tsx
-@@ -1,5 +1,5 @@
+@@ -1,34 +1,22 @@
 -import { ChainIcon, TitleSkeleton, Typography, useDesignSystemTheme } from '@databricks/design-system';
 -import { getModelTraceId, type ModelTrace, type ModelTraceInfoV3 } from '@databricks/web-shared/model-trace-explorer';
+-import type { MutableRefObject } from 'react';
+-import { useCallback } from 'react';
 +import { TitleSkeleton, Typography, useDesignSystemTheme } from '@databricks/design-system';
 +import { getModelTraceId, type ModelTrace } from '@databricks/web-shared/model-trace-explorer';
- import type { MutableRefObject } from 'react';
- import { useCallback } from 'react';
  import { ExperimentSingleChatIcon } from './ExperimentSingleChatIcon';
-@@ -11,12 +11,14 @@
-   setSelectedTurnIndex,
-   setSelectedTrace,
-   chatRefs,
+ import { FormattedMessage } from 'react-intl';
+ 
+ export const ExperimentSingleChatSessionSidebar = ({
+   traces,
++  activeTurnIndex,
+   selectedTurnIndex,
+-  setSelectedTurnIndex,
+-  setSelectedTrace,
+-  chatRefs,
++  onActivateTurn,
 +  onSelectTurn,
  }: {
    traces: ModelTrace[];
++  activeTurnIndex: number | null;
    selectedTurnIndex: number | null;
-   setSelectedTurnIndex: (turnIndex: number | null) => void;
-   setSelectedTrace: (trace: ModelTrace) => void;
-   chatRefs: MutableRefObject<{ [traceId: string]: HTMLDivElement }>;
-+  onSelectTurn?: (turnIndex: number) => void;
+-  setSelectedTurnIndex: (turnIndex: number | null) => void;
+-  setSelectedTrace: (trace: ModelTrace) => void;
+-  chatRefs: MutableRefObject<{ [traceId: string]: HTMLDivElement }>;
++  onActivateTurn: (turnIndex: number) => void;
++  onSelectTurn: (turnIndex: number) => void;
  }) => {
    const { theme } = useDesignSystemTheme();
+-
+-  const scrollToTrace = useCallback(
+-    (trace: ModelTrace) => {
+-      const traceId = getModelTraceId(trace);
+-      if (chatRefs.current[traceId]) {
+-        chatRefs.current[traceId].scrollIntoView({ behavior: 'smooth' });
+-      }
+-    },
+-    [chatRefs],
+-  );
  
-@@ -38,7 +40,8 @@
+   if (!traces) {
+     return null;
+@@ -38,7 +26,8 @@
      <div
        css={{
          minHeight: 0,
@@ -4673,29 +4960,31 @@
          borderRight: `1px solid ${theme.colors.border}`,
          overflow: 'auto',
          paddingTop: theme.spacing.sm,
-@@ -48,6 +51,9 @@
+@@ -48,26 +37,37 @@
        {traces.map((trace, index) => (
          <div
            key={getModelTraceId(trace)}
 +          role="button"
 +          tabIndex={0}
-+          aria-pressed={onSelectTurn ? selectedTurnIndex === index : undefined}
++          aria-pressed={selectedTurnIndex === index}
            css={{
              display: 'flex',
              alignItems: 'center',
-@@ -57,17 +63,26 @@
+             gap: theme.spacing.sm,
+-            backgroundColor: selectedTurnIndex === index ? theme.colors.actionDefaultBackgroundHover : undefined,
++            backgroundColor: activeTurnIndex === index ? theme.colors.actionDefaultBackgroundHover : undefined,
+             padding: theme.spacing.xs,
              borderRadius: theme.borders.borderRadiusSm,
              cursor: 'pointer',
            }}
 -          onMouseEnter={() => setSelectedTurnIndex(index)}
 -          onClick={() => scrollToTrace(trace)}
-+          onMouseEnter={() => !onSelectTurn && setSelectedTurnIndex(index)}
-+          onClick={() => (onSelectTurn ? onSelectTurn(index) : scrollToTrace(trace))}
++          onMouseEnter={() => onActivateTurn(index)}
++          onClick={() => onSelectTurn(index)}
 +          onKeyDown={(event) => {
 +            if (event.key === 'Enter' || event.key === ' ') {
 +              event.preventDefault();
-+              if (onSelectTurn) onSelectTurn(index);
-+              else scrollToTrace(trace);
++              onSelectTurn(index);
 +            }
 +          }}
          >
@@ -4718,7 +5007,7 @@
            </Typography.Text>
          </div>
        ))}
-@@ -83,7 +98,8 @@
+@@ -83,7 +83,8 @@
          display: 'flex',
          flexDirection: 'column',
          minHeight: 0,
@@ -4783,6 +5072,17 @@
      };
  
      return baseConfig;
+--- a/mlflow/server/js/src/experiment-tracking/pages/experiment-scorers/SampleScorerOutputPanelRenderer.tsx
++++ b/mlflow/server/js/src/experiment-tracking/pages/experiment-scorers/SampleScorerOutputPanelRenderer.tsx
+@@ -125,7 +125,7 @@
+           <div css={{ flex: 1 }}>
+             <ExperimentSingleChatConversation
+               traces={currentSessionTraces}
+-              selectedTurnIndex={null}
++              readOnly
+               getAssessmentTitle={(assessmentName) => assessmentName}
+             />
+           </div>
 --- /dev/null
 +++ b/mlflow/server/js/src/experiment-tracking/pages/open-world-results/OpenWorldResultsCharts.test.tsx
 @@ -0,0 +1,405 @@
@@ -5063,7 +5363,7 @@
 +    await userEvent.click(screen.getByRole('button', { name: '1 missing score' }));
 +    expect(onSelectEpisodes).toHaveBeenLastCalledWith([missing]);
 +  });
-+  test('keeps100 runs in one scroll region and combines only exact duplicate scores', async () => {
++  test('keeps all 100 runs available and combines only exact duplicate scores', async () => {
 +    const episodes = Array.from({ length: 100 }, (_, run) =>
 +      Array.from({ length: 24 }, (_, index) => ({
 +        ...episode(`run-${run}-episode-${index}`, 0.5),
@@ -5193,8 +5493,8 @@
 +});
 --- /dev/null
 +++ b/mlflow/server/js/src/experiment-tracking/pages/open-world-results/OpenWorldResultsCharts.tsx
-@@ -0,0 +1,486 @@
-+/* eslint-disable jsx-a11y/no-noninteractive-tabindex -- The named plot scroller is a keyboard entry point. */
+@@ -0,0 +1,480 @@
++/* eslint-disable jsx-a11y/no-noninteractive-tabindex -- The named horizontal plot scroller is a keyboard entry point. */
 +import { useEffect, useState, type KeyboardEvent } from 'react';
 +import { Global } from '@emotion/react';
 +import { Button, Tooltip, Typography, useDesignSystemTheme } from '@databricks/design-system';
@@ -5320,12 +5620,9 @@
 +        aria-label="Episode score plots"
 +        tabIndex={0}
 +        css={{
-+          maxHeight: 'min(65vh, 640px)',
-+          overflow: 'auto',
++          overflowX: 'auto',
 +          border: `1px solid ${theme.colors.border}`,
 +          borderRadius: 8,
-+          scrollbarGutter: 'stable',
-+          scrollPaddingTop: 45,
 +          '&:focus-visible': { outline: `2px solid ${theme.colors.primary}`, outlineOffset: 2 },
 +        }}
 +      >
@@ -5336,9 +5633,6 @@
 +              gridTemplateColumns: 'minmax(180px, 260px) minmax(420px, 1fr)',
 +              padding: '4px 12px',
 +              gap: 12,
-+              position: 'sticky',
-+              top: 0,
-+              zIndex: 2,
 +              background: theme.colors.backgroundPrimary,
 +              borderBottom: `1px solid ${theme.colors.border}`,
 +              alignItems: 'center',
@@ -5681,61 +5975,8 @@
 +  );
 +};
 --- /dev/null
-+++ b/mlflow/server/js/src/experiment-tracking/pages/open-world-results/OpenWorldResultsHelp.tsx
-@@ -0,0 +1,50 @@
-+import type { ReactNode } from 'react';
-+import { InfoIcon, Popover, Typography, useDesignSystemTheme } from '@databricks/design-system';
-+
-+type HelpProps = { title: string; componentId: string; children: ReactNode };
-+
-+export const OpenWorldResultsHelp = ({ title, componentId, children }: HelpProps) => {
-+  const { theme } = useDesignSystemTheme();
-+  return (
-+    <Popover.Root componentId={componentId}>
-+      <Popover.Trigger
-+        aria-label={`About ${title}`}
-+        css={{
-+          display: 'inline-flex',
-+          alignItems: 'center',
-+          justifyContent: 'center',
-+          width: 24,
-+          height: 24,
-+          padding: 0,
-+          border: 0,
-+          borderRadius: 4,
-+          background: 'transparent',
-+          color: theme.colors.textSecondary,
-+          cursor: 'pointer',
-+          flexShrink: 0,
-+          '&:hover': { backgroundColor: theme.colors.actionTertiaryBackgroundHover },
-+          '&:focus-visible': { outline: `2px solid ${theme.colors.actionPrimaryBackgroundDefault}` },
-+        }}
-+      >
-+        <InfoIcon />
-+      </Popover.Trigger>
-+      <Popover.Content align="start" css={{ maxWidth: 380 }}>
-+        <Typography.Paragraph withoutMargins>{children}</Typography.Paragraph>
-+        <Popover.Arrow />
-+      </Popover.Content>
-+    </Popover.Root>
-+  );
-+};
-+
-+type SectionTitleProps = { title: string; help: ReactNode; componentId: string };
-+
-+export const OpenWorldResultsSectionTitle = ({ title, help, componentId }: SectionTitleProps) => (
-+  <div css={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-+    <Typography.Title level={3} css={{ margin: '0 !important', fontSize: 16 }}>
-+      {title}
-+    </Typography.Title>
-+    <OpenWorldResultsHelp title={title} componentId={componentId}>
-+      {help}
-+    </OpenWorldResultsHelp>
-+  </div>
-+);
---- /dev/null
 +++ b/mlflow/server/js/src/experiment-tracking/pages/open-world-results/OpenWorldResultsPage.test.tsx
-@@ -0,0 +1,727 @@
+@@ -0,0 +1,756 @@
 +import { useState } from 'react';
 +import { it, expect, jest, beforeEach, afterEach } from '@jest/globals';
 +import userEvent, { PointerEventsCheckLevel } from '@testing-library/user-event';
@@ -6017,10 +6258,8 @@
 +  expect(screen.queryByRole('button', { name: 'Case matrix' })).not.toBeInTheDocument();
 +  fireEvent.click(screen.getByRole('button', { name: 'Missing scores: 1' }));
 +  expect(scrollIntoView).toHaveBeenCalledTimes(1);
-+  fireEvent.click(screen.getByRole('button', { name: 'Back to results' }));
-+  expect(scrollIntoView).toHaveBeenCalledTimes(2);
 +  fireEvent.click(screen.getByRole('button', { name: 'Missing scores: 1' }));
-+  expect(scrollIntoView).toHaveBeenCalledTimes(3);
++  expect(scrollIntoView).toHaveBeenCalledTimes(2);
 +  const table = await sessionTable();
 +  expect(within(table).getByRole('link', { name: 'missing' })).toBeInTheDocument();
 +  expect(within(table).queryByRole('link', { name: 'zero' })).not.toBeInTheDocument();
@@ -6048,7 +6287,7 @@
 +  expect(screen.getByRole('menuitemcheckbox', { name: 'llm' })).toBeChecked();
 +});
 +
-+it('moves keyboard focus for explicit drilldown and return without focusing restored contributors', async () => {
++it('moves keyboard focus for explicit drilldown without focusing restored contributors', async () => {
 +  const user = userEvent.setup({ pointerEventsCheck: PointerEventsCheckLevel.Never });
 +  renderMatrix([episode('a', 0.5)], '/?resultsEpisodes=%5B%22a%22%5D');
 +  const contributors = screen.getByRole('region', { name: 'Sessions' });
@@ -6057,9 +6296,6 @@
 +  row.focus();
 +  await user.keyboard('{Enter}');
 +  expect(contributors).toHaveFocus();
-+  screen.getByRole('button', { name: 'Back to results' }).focus();
-+  await user.keyboard('{Enter}');
-+  expect(screen.getByRole('region', { name: 'Dashboard scope' })).toHaveFocus();
 +  row.focus();
 +  await user.keyboard('{Enter}');
 +  expect(contributors).toHaveFocus();
@@ -6165,7 +6401,7 @@
 +  'keeps an empty or stale episode selection empty until cleared: %s',
 +  async (selection) => {
 +    renderMatrix([episode('a', 0.2)], `/?resultsEpisodes=${encodeURIComponent(selection)}`);
-+    const toggle = screen.getByRole('button', { name: 'Sessions (episodes)', exact: true });
++    const toggle = screen.getByRole('button', { name: 'Sessions (episodes)' });
 +    if (toggle.getAttribute('aria-expanded') === 'false') fireEvent.click(toggle);
 +    const sessions = within(screen.getByRole('region', { name: 'Sessions' }));
 +    expect(screen.getByRole('heading', { name: 'Sessions (episodes)' })).toBeInTheDocument();
@@ -6239,7 +6475,7 @@
 +it('clears checked sessions when the mounted dashboard changes experiments', async () => {
 +  const episodes = [episode('a', 0.2), episode('b', 0.4)];
 +  const view = renderMatrix(episodes);
-+  fireEvent.click(screen.getByRole('button', { name: 'Sessions (episodes)', exact: true }));
++  fireEvent.click(screen.getByRole('button', { name: 'Sessions (episodes)' }));
 +  const sessions = within(screen.getByRole('region', { name: 'Sessions' }));
 +  fireEvent.click(await sessions.findByRole('checkbox', { name: 'Select session a' }));
 +  fireEvent.click(sessions.getByRole('checkbox', { name: 'Select session b' }));
@@ -6388,10 +6624,17 @@
 +    'href',
 +    '/experiments/123/evaluation-runs?workflowType=genai&workspace=open-world',
 +  );
-+  const scores = screen.getByRole('button', { name: 'Episode scores', exact: true });
-+  const matrix = screen.getByRole('button', { name: 'Scenario/target matrix', exact: true });
-+  const sessions = screen.getByRole('button', { name: 'Sessions (episodes)', exact: true });
-+  for (const section of [scores, matrix]) expect(section).toHaveAttribute('aria-expanded', 'true');
++  const overview = screen.getByRole('button', { name: 'Results overview' });
++  const scores = screen.getByRole('button', { name: 'Episode scores' });
++  const matrix = screen.getByRole('button', { name: 'Scenario/target matrix' });
++  const sessions = screen.getByRole('button', { name: 'Sessions (episodes)' });
++  for (const section of [overview, scores, matrix]) {
++    expect(section).toHaveAttribute('aria-expanded', 'true');
++    expect(within(section).getByText('Collapse')).toBeInTheDocument();
++  }
++  await user.click(overview);
++  expect(overview).toHaveAttribute('aria-expanded', 'false');
++  expect(within(overview).getByText('Expand')).toBeInTheDocument();
 +  expect(sessions).toHaveAttribute('aria-expanded', 'false');
 +  await user.click(scores);
 +  expect(scores).toHaveAttribute('aria-expanded', 'false');
@@ -6416,8 +6659,8 @@
 +  expect(within(matrix).getByRole('button', { name: /^Inspect configuration/ })).toHaveAccessibleName(
 +    new RegExp(runName),
 +  );
-+  await user.click(within(matrix).getByRole('button', { name: `Details for run 1: ${runName}` }));
-+  const details = within(screen.getByRole('heading', { name: 'Run 1 details' }).parentElement as HTMLElement);
++  await user.click(within(matrix).getByRole('button', { name: `Details for ${runName}` }));
++  const details = within(screen.getByRole('heading', { name: 'ADM A details' }).parentElement as HTMLElement);
 +  expect(details.getByText(runName, { exact: true })).toBeInTheDocument();
 +  expect(details.getByText(sourceVersion, { exact: true })).toBeInTheDocument();
 +  expect(details.getByText('full-run-identifier', { exact: true })).toBeInTheDocument();
@@ -6440,15 +6683,24 @@
 +    <QueryClientProvider client={client}>
 +      <DesignSystemProvider>
 +        <MemoryRouter initialEntries={['/']}>
-+          <Link to={scopeURL('invocation-a')}>Open run A sessions</Link>
-+          <Link to={scopeURL('invocation-a') + '&workspace=other'}>Change workspace</Link>
-+          <Link to={scopeURL('invocation-b')}>Open run B sessions</Link>
++          <Link componentId="mlflow.open-world.results.test-open-run-a" to={scopeURL('invocation-a')}>
++            Open run A sessions
++          </Link>
++          <Link
++            componentId="mlflow.open-world.results.test-change-workspace"
++            to={scopeURL('invocation-a') + '&workspace=other'}
++          >
++            Change workspace
++          </Link>
++          <Link componentId="mlflow.open-world.results.test-open-run-b" to={scopeURL('invocation-b')}>
++            Open run B sessions
++          </Link>
 +          <OpenWorldResultsDashboard experimentId="123" episodes={episodes} />
 +        </MemoryRouter>
 +      </DesignSystemProvider>
 +    </QueryClientProvider>,
 +  );
-+  const toggle = screen.getByRole('button', { name: 'Sessions (episodes)', exact: true });
++  const toggle = screen.getByRole('button', { name: 'Sessions (episodes)' });
 +  expect(toggle).toHaveAttribute('aria-expanded', 'false');
 +  await user.click(screen.getByRole('link', { name: 'Open run A sessions' }));
 +  expect(toggle).toHaveAttribute('aria-expanded', 'true');
@@ -6463,21 +6715,30 @@
 +  expect(toggle).toHaveAttribute('aria-expanded', 'true');
 +  expect(within(await sessionTable()).getByRole('link', { name: 'b' })).toBeInTheDocument();
 +});
++
++it('keeps section help separate from collapse and reveals descriptions only on demand', async () => {
++  const user = userEvent.setup({ pointerEventsCheck: PointerEventsCheckLevel.Never });
++  renderMatrix([episode('a', 0.5)]);
++  for (const title of ['Results overview', 'Episode scores', 'Scenario/target matrix', 'Sessions (episodes)']) {
++    const toggle = screen.getByRole('button', { name: title });
++    const expanded = toggle.getAttribute('aria-expanded');
++    const help = screen.getByRole('button', { name: `About ${title}` });
++    expect(help.parentElement?.closest('button, [role="button"]')).toBeNull();
++    await user.click(help);
++    expect(toggle).toHaveAttribute('aria-expanded', expanded);
++    await user.keyboard('{Escape}');
++    help.focus();
++    await user.keyboard('{Enter}');
++    expect(toggle).toHaveAttribute('aria-expanded', expanded);
++    await user.keyboard('{Escape}');
++  }
++});
 --- /dev/null
 +++ b/mlflow/server/js/src/experiment-tracking/pages/open-world-results/OpenWorldResultsPage.tsx
-@@ -0,0 +1,810 @@
-+/* eslint-disable jsx-a11y/no-noninteractive-tabindex -- Named scroll regions are keyboard entry points to bounded results. */
+@@ -0,0 +1,777 @@
++/* eslint-disable jsx-a11y/no-noninteractive-tabindex -- The named matrix scroller is a keyboard entry point. */
 +import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-+import {
-+  Accordion,
-+  Alert,
-+  Button,
-+  InfoIcon,
-+  Popover,
-+  Tooltip,
-+  Typography,
-+  useDesignSystemTheme,
-+} from '@databricks/design-system';
++import { Alert, Button, InfoIcon, Popover, Tooltip, Typography, useDesignSystemTheme } from '@databricks/design-system';
 +import { type TraceFilterModel } from '@databricks/web-shared/traces-table';
 +import { Link, useParams, useSearchParams } from '../../../common/utils/RoutingUtils';
 +import Routes from '../../routes';
@@ -6492,7 +6753,7 @@
 +} from './openWorldResultsData';
 +import { useOpenWorldEpisodes } from './useOpenWorldEpisodes';
 +import { EPISODE_SCORES_HELP, OpenWorldResultsCharts } from './OpenWorldResultsCharts';
-+import { OpenWorldResultsSectionTitle } from './OpenWorldResultsHelp';
++import { OpenWorldResultsSection } from './OpenWorldResultsSection';
 +import { OpenWorldResultsSessions, useOpenWorldResultsTablePreferences } from './OpenWorldResultsSessions';
 +import { useTracesV4FilterFields } from '../../components/experiment-page/components/traces-v4/components/TracesV4ColumnFilters';
 +import { useSessionSelection } from '../../components/experiment-page/components/traces-v4/hooks/useSessionSelection';
@@ -6528,7 +6789,6 @@
 +    .replace(/^.*-OW_/, '')
 +    .replaceAll('_', ' ');
 +const shortTarget = (value: string) => (value ? value.split('-').slice(-2).join(' ') : 'Unavailable');
-+const shortAdm = (value: string) => recorded(value).replaceAll('_', ' ');
 +
 +const selectionScope = (cell?: string) =>
 +  cell?.startsWith('row:') ? 'row' : cell?.startsWith('column:') ? 'column' : cell ? 'cell' : 'episodes';
@@ -6563,7 +6823,7 @@
 +  const [params, setParams] = useSearchParams();
 +  const sessionScope = serializedSessionScope(params);
 +  const [expandedSections, setExpandedSections] = useState<string[]>(() =>
-+    sessionScope !== '[]' ? ['scores', 'matrix', 'sessions'] : ['scores', 'matrix'],
++    sessionScope !== '[]' ? ['overview', 'scores', 'matrix', 'sessions'] : ['overview', 'scores', 'matrix'],
 +  );
 +  const previousSessionScope = useRef(sessionScope);
 +  useEffect(() => {
@@ -6574,7 +6834,6 @@
 +    }
 +  }, [sessionScope]);
 +  const selectedCell = params.get('resultsCell') || undefined;
-+  const topRef = useRef<HTMLElement>(null);
 +  const contributorsRef = useRef<HTMLElement>(null);
 +  const pendingContributorFocus = useRef(false);
 +  const tablePreferences = useOpenWorldResultsTablePreferences();
@@ -6707,7 +6966,7 @@
 +    fontWeight: 400,
 +    borderRight: `1px solid ${theme.colors.border}`,
 +  };
-+  const columnHeaderStyle = { ...thStyle, position: 'sticky' as const, top: 0, zIndex: 3, fontWeight: 500 };
++  const columnHeaderStyle = { ...thStyle, fontWeight: 500 };
 +  const tdStyle = {
 +    padding: '2px 4px',
 +    borderBottom: `1px solid ${theme.colors.border}`,
@@ -6757,483 +7016,461 @@
 +    },
 +  };
 +  return (
-+    <div css={{ display: 'flex', flexDirection: 'column', gap: 16, padding: 16, overflow: 'auto', minWidth: 0 }}>
-+      <section
-+        ref={topRef}
-+        tabIndex={-1}
-+        aria-label="Dashboard scope"
-+        css={{
-+          display: 'flex',
-+          flexDirection: 'column',
-+          gap: 12,
-+          padding: 16,
-+          border: `1px solid ${theme.colors.border}`,
-+          borderRadius: 8,
-+          backgroundColor: theme.colors.backgroundSecondary,
-+        }}
++    <div
++      css={{
++        display: 'flex',
++        flexDirection: 'column',
++        gap: 16,
++        padding: 16,
++        overflow: 'auto',
++        flex: 1,
++        minHeight: 0,
++        minWidth: 0,
++      }}
++    >
++      <OpenWorldResultsSection
++        title="Results overview"
++        componentId="mlflow.open-world.results.overview"
++        help="Scored pairs use the scenario and evaluated target reported by TA3. Requested targets remain separate; unscored episodes appear under requested-target rows."
++        expanded={expandedSections.includes('overview')}
++        onToggle={() =>
++          setExpandedSections((sections) =>
++            sections.includes('overview')
++              ? sections.filter((section) => section !== 'overview')
++              : [...sections, 'overview'],
++          )
++        }
 +      >
-+        <div
-+          css={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap' }}
++        <section
++          aria-label="Dashboard scope"
++          css={{
++            display: 'flex',
++            flexDirection: 'column',
++            gap: 12,
++            padding: 16,
++            border: `1px solid ${theme.colors.border}`,
++            borderRadius: 8,
++            backgroundColor: theme.colors.backgroundSecondary,
++          }}
 +        >
-+          <OpenWorldResultsSectionTitle
-+            title="Results overview"
-+            componentId="mlflow.open-world.results.help"
-+            help="Scored pairs use the scenario and evaluated target reported by TA3. Requested targets remain separate; unscored episodes appear under requested-target rows."
-+          />
-+        </div>
-+        <div css={{ display: 'flex', alignItems: 'baseline', gap: 24, flexWrap: 'wrap' }}>
-+          <Link
-+            componentId="mlflow.open-world.results.runs"
-+            aria-label={`Runs: ${runCount} (evaluation runs)`}
-+            to={`${Routes.getExperimentPageTabRoute(experimentId, ExperimentPageTabName.EvaluationRuns)}?${buildWorkflowTypeQueryString(WorkflowType.GENAI, clearSessionScope(params))}`}
-+            css={{ fontSize: 14 }}
-+          >
-+            <strong css={{ fontSize: 20 }}>{runCount}</strong> {runCount === 1 ? 'run' : 'runs'}
-+          </Link>
-+          <Typography.Text aria-label={`Scenario/evaluated target pairs: ${knownCaseCount}`} css={{ fontSize: 14 }}>
-+            <strong css={{ fontSize: 20 }}>{knownCaseCount}</strong> scenario/evaluated target{' '}
-+            {knownCaseCount === 1 ? 'pair' : 'pairs'}
-+          </Typography.Text>
-+          <Typography.Text aria-label={`Episodes: ${episodes.length}`} css={{ fontSize: 14 }}>
-+            <strong css={{ fontSize: 20 }}>{episodes.length}</strong> {episodes.length === 1 ? 'episode' : 'episodes'}
-+          </Typography.Text>
-+        </div>
-+      </section>
-+      {episodes.some((episode) => episode.metadataConflicts.length > 0) && (
-+        <Alert
-+          componentId="mlflow.open-world.results.conflicts"
-+          type="warning"
-+          message={`${episodes.filter((episode) => episode.metadataConflicts.length > 0).length} episodes have conflicting metadata.`}
-+          description={
-+            <Button
-+              componentId="mlflow.open-world.results.inspect-conflicts"
-+              onClick={() => selectEpisodes(episodes.filter((episode) => episode.metadataConflicts.length > 0))}
++          <div css={{ display: 'flex', alignItems: 'baseline', gap: 24, flexWrap: 'wrap' }}>
++            <Link
++              componentId="mlflow.open-world.results.runs"
++              aria-label={`Runs: ${runCount} (evaluation runs)`}
++              to={`${Routes.getExperimentPageTabRoute(experimentId, ExperimentPageTabName.EvaluationRuns)}?${buildWorkflowTypeQueryString(WorkflowType.GENAI, clearSessionScope(params))}`}
++              css={{ fontSize: 14 }}
 +            >
-+              Inspect metadata conflicts
-+            </Button>
-+          }
-+        />
-+      )}
-+      {episodes.some((episode) => episode.score === undefined || episode.targetMismatch) && (
-+        <div css={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-+          {[
-+            { label: 'Missing scores', members: episodes.filter((episode) => episode.score === undefined) },
-+            { label: 'Target mismatches', members: episodes.filter((episode) => episode.targetMismatch) },
-+          ]
-+            .filter(({ members }) => members.length > 0)
-+            .map(({ label, members }) => (
++              <strong css={{ fontSize: 20 }}>{runCount}</strong> {runCount === 1 ? 'run' : 'runs'}
++            </Link>
++            <Typography.Text aria-label={`Scenario/evaluated target pairs: ${knownCaseCount}`} css={{ fontSize: 14 }}>
++              <strong css={{ fontSize: 20 }}>{knownCaseCount}</strong> scenario/evaluated target{' '}
++              {knownCaseCount === 1 ? 'pair' : 'pairs'}
++            </Typography.Text>
++            <Typography.Text aria-label={`Episodes: ${episodes.length}`} css={{ fontSize: 14 }}>
++              <strong css={{ fontSize: 20 }}>{episodes.length}</strong> {episodes.length === 1 ? 'episode' : 'episodes'}
++            </Typography.Text>
++          </div>
++        </section>
++        {episodes.some((episode) => episode.metadataConflicts.length > 0) && (
++          <Alert
++            componentId="mlflow.open-world.results.conflicts"
++            type="warning"
++            message={`${episodes.filter((episode) => episode.metadataConflicts.length > 0).length} episodes have conflicting metadata.`}
++            description={
 +              <Button
-+                key={label}
-+                componentId="mlflow.open-world.results.review-signal"
-+                aria-label={`${label}: ${members.length}`}
-+                onClick={() => selectEpisodes(members)}
++                componentId="mlflow.open-world.results.inspect-conflicts"
++                onClick={() => selectEpisodes(episodes.filter((episode) => episode.metadataConflicts.length > 0))}
 +              >
-+                {label}: {members.length}
++                Inspect metadata conflicts
 +              </Button>
-+            ))}
-+        </div>
-+      )}
-+      <Accordion
-+        componentId="mlflow.open-world.results.sections"
-+        displayMode="multiple"
-+        activeKey={expandedSections}
-+        onChange={(keys) => setExpandedSections(typeof keys === 'string' ? [keys] : keys)}
-+        alignContentToEdge
-+      >
-+        {episodes.length > 0 && (
-+          <Accordion.Panel
-+            key="scores"
-+            header={
-+              <Typography.Title level={3} withoutMargins css={{ fontSize: 16 }}>
-+                Episode scores
-+              </Typography.Title>
 +            }
-+          >
-+            <Typography.Paragraph color="secondary" css={{ marginBottom: 8, fontSize: 12 }}>
-+              {EPISODE_SCORES_HELP}
-+            </Typography.Paragraph>
-+            <OpenWorldResultsCharts episodes={episodes} onSelectEpisodes={selectEpisodes} />
-+          </Accordion.Panel>
++          />
 +        )}
-+        <Accordion.Panel
-+          key="matrix"
-+          header={
-+            <Typography.Title level={3} withoutMargins css={{ fontSize: 16 }}>
-+              Scenario/target matrix
-+            </Typography.Title>
-+          }
-+        >
-+          {episodes.length === 0 ? (
-+            <Typography.Text>No episode results yet.</Typography.Text>
-+          ) : (
-+            <section
-+              aria-label="Scenario/target matrix"
-+              css={{ display: 'flex', flexDirection: 'column', gap: 12, minWidth: 0, flexShrink: 0 }}
-+            >
-+              <Typography.Text color="secondary" css={{ fontSize: 12 }}>
-+                Select a score, case, or run to inspect its sessions. Scored cases use evaluated targets; unscored rows
-+                retain requested targets.
-+              </Typography.Text>
-+              <div
-+                role="region"
-+                aria-label="Scenario and target score matrix"
-+                tabIndex={0}
-+                css={{
-+                  overflow: 'auto',
-+                  scrollPaddingTop: 50,
-+                  scrollPaddingLeft: 200,
-+                  maxHeight: 450,
-+                  width: '100%',
-+                  maxWidth: '100%',
-+                  minWidth: 0,
-+                  border: `1px solid ${theme.colors.border}`,
-+                  borderRadius: 4,
-+                }}
-+              >
-+                <table
-+                  aria-label="Open World results matrix"
-+                  css={{
-+                    borderCollapse: 'separate',
-+                    borderSpacing: 0,
-+                    width: '100%',
-+                    minWidth: 200 + columns.length * 100,
-+                    tableLayout: 'fixed',
-+                  }}
++        {episodes.some((episode) => episode.score === undefined || episode.targetMismatch) && (
++          <div css={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
++            {[
++              { label: 'Missing scores', members: episodes.filter((episode) => episode.score === undefined) },
++              { label: 'Target mismatches', members: episodes.filter((episode) => episode.targetMismatch) },
++            ]
++              .filter(({ members }) => members.length > 0)
++              .map(({ label, members }) => (
++                <Button
++                  key={label}
++                  componentId="mlflow.open-world.results.review-signal"
++                  aria-label={`${label}: ${members.length}`}
++                  onClick={() => selectEpisodes(members)}
 +                >
-+                  <colgroup>
-+                    <col style={{ width: 200 }} />
-+                    {columns.map(([key]) => (
-+                      <col key={key} />
-+                    ))}
-+                  </colgroup>
-+                  <thead>
-+                    <tr>
-+                      <th
-+                        style={{
-+                          ...columnHeaderStyle,
-+                          left: 0,
-+                          zIndex: 4,
-+                          borderRight: `1px solid ${theme.colors.border}`,
-+                        }}
-+                      >
-+                        Scenario / Evaluated target
-+                      </th>
-+                      {columns.map(([key, episode], index) => (
-+                        <th key={key} style={columnHeaderStyle}>
-+                          <div css={{ display: 'flex', alignItems: 'flex-start', gap: 2, minWidth: 0 }}>
-+                            <Button
-+                              componentId="mlflow.open-world.results.matrix-column"
-+                              css={[headerButtonCss, { '&&': { flex: '1 1 0', width: 'auto' } }]}
-+                              aria-label={`Inspect configuration ${configurationLabel(episode)}`}
-+                              aria-pressed={selectedCell === `column:${key}`}
-+                              onClick={() => setSelectedCell(`column:${key}`)}
-+                            >
-+                              <span
-+                                css={{
-+                                  display: 'flex',
-+                                  flexDirection: 'column',
-+                                  width: '100%',
-+                                  maxWidth: '100%',
-+                                  minWidth: 0,
-+                                  overflow: 'hidden',
-+                                  gap: 2,
-+                                  lineHeight: '14px',
-+                                }}
-+                              >
-+                                <strong css={{ fontSize: 12 }}>Run {index + 1}</strong>
-+                                <span
-+                                  css={{
-+                                    display: 'block',
-+                                    width: '100%',
-+                                    overflow: 'hidden',
-+                                    textOverflow: 'ellipsis',
-+                                    whiteSpace: 'nowrap',
-+                                    fontSize: 11,
-+                                  }}
-+                                >
-+                                  {shortAdm(episode.adm)}
-+                                </span>
-+                                {episode.alignmentMode === 'unaligned' && (
-+                                  <span css={{ fontSize: 10, color: theme.colors.textSecondary }}>Unaligned</span>
-+                                )}
-+                              </span>
-+                            </Button>
-+                            <Popover.Root componentId="mlflow.open-world.results.matrix-run-details">
-+                              <Popover.Trigger asChild>
-+                                <Button
-+                                  componentId="mlflow.open-world.results.matrix-run-details-trigger"
-+                                  size="small"
-+                                  type="tertiary"
-+                                  icon={<InfoIcon />}
-+                                  aria-label={`Details for run ${index + 1}: ${recorded(episode.runName)}`}
-+                                  css={{ flexShrink: 0 }}
-+                                />
-+                              </Popover.Trigger>
-+                              <Popover.Content align="start" css={{ maxWidth: 480, overflowWrap: 'anywhere' }}>
-+                                <Typography.Title level={4} withoutMargins>
-+                                  Run {index + 1} details
-+                                </Typography.Title>
-+                                <dl
-+                                  css={{
-+                                    display: 'grid',
-+                                    gridTemplateColumns: 'max-content minmax(0, 1fr)',
-+                                    gap: '4px 12px',
-+                                    margin: '8px 0',
-+                                  }}
-+                                >
-+                                  {[
-+                                    ['ADM', episode.adm],
-+                                    ['Model', episode.model],
-+                                    ['Run', episode.runName],
-+                                    ['Run ID', episode.runId],
-+                                    ['Alignment mode', episode.alignmentMode],
-+                                    ['Driver', episode.driver],
-+                                    ['Source family', episode.sourceFamily],
-+                                    ['Source revision', episode.sourceVersion],
-+                                    ['Scoring version', episode.scoringVersion],
-+                                  ].map(([label, value]) => (
-+                                    <div key={label} css={{ display: 'contents' }}>
-+                                      <dt>{label}</dt>
-+                                      <dd css={{ margin: 0 }}>{recorded(value || '')}</dd>
-+                                    </div>
-+                                  ))}
-+                                </dl>
-+                                {episode.runId && (
-+                                  <Link
-+                                    componentId="mlflow.open-world.results.open-run"
-+                                    to={Routes.getRunPageRoute(experimentId, episode.runId)}
-+                                  >
-+                                    Open run
-+                                  </Link>
-+                                )}
-+                                <Popover.Arrow />
-+                              </Popover.Content>
-+                            </Popover.Root>
-+                          </div>
-+                        </th>
-+                      ))}
-+                    </tr>
-+                  </thead>
-+                  <tbody>
-+                    {rows.map(([row, episode]) => (
-+                      <tr key={row}>
-+                        <th scope="row" style={rowHeaderStyle}>
-+                          <Tooltip
-+                            componentId="mlflow.open-world.results.matrix-case-details"
-+                            maxWidth={420}
-+                            content={
-+                              <div css={{ overflowWrap: 'anywhere' }}>
-+                                <strong>Scenario</strong>
-+                                <div>{recorded(episode.scenario)}</div>
-+                                <strong>{caseTargetLabel(episode)}</strong>
-+                                <div>{caseTargetValue(episode)}</div>
-+                              </div>
-+                            }
-+                          >
-+                            <Button
-+                              componentId="mlflow.open-world.results.matrix-row"
-+                              css={headerButtonCss}
-+                              aria-label={`Inspect scenario ${recorded(episode.scenario)} / ${caseTargetLabel(episode).toLowerCase()} ${caseTargetValue(episode)}`}
-+                              aria-pressed={selectedCell === `row:${row}`}
-+                              onClick={() => setSelectedCell(`row:${row}`)}
-+                            >
-+                              <span
-+                                css={{
-+                                  display: 'block',
-+                                  width: '100%',
-+                                  maxWidth: '100%',
-+                                  minWidth: 0,
-+                                  fontSize: 12,
-+                                  lineHeight: '14px',
-+                                }}
-+                              >
-+                                <span
-+                                  css={{
-+                                    display: 'block',
-+                                    maxWidth: '100%',
-+                                    overflow: 'hidden',
-+                                    textOverflow: 'ellipsis',
-+                                    whiteSpace: 'nowrap',
-+                                  }}
-+                                >
-+                                  {shortScenario(episode.scenario)}
-+                                </span>
-+                                <span
-+                                  css={{
-+                                    color: theme.colors.textSecondary,
-+                                    display: 'block',
-+                                    maxWidth: '100%',
-+                                    overflow: 'hidden',
-+                                    textOverflow: 'ellipsis',
-+                                    whiteSpace: 'nowrap',
-+                                  }}
-+                                >
-+                                  {episode.score === undefined ? 'Requested: ' : ''}
-+                                  {episode.score === undefined
-+                                    ? caseTargetValue(episode)
-+                                    : shortTarget(episode.evaluatedTarget)}
-+                                </span>
-+                              </span>
-+                            </Button>
-+                          </Tooltip>
-+                        </th>
-+                        {columns.map(([column]) => {
-+                          const key = JSON.stringify([row, column]);
-+                          const entries = cells.get(key);
-+                          const summary = entries ? aggregateEpisodes(entries) : undefined;
-+                          return (
-+                            <td key={column} style={tdStyle}>
-+                              {summary ? (
-+                                <Tooltip
-+                                  componentId="mlflow.open-world.results.matrix-score-details"
-+                                  maxWidth={420}
-+                                  content={
-+                                    <div css={{ overflowWrap: 'anywhere' }}>
-+                                      <div>{recorded(episode.scenario)}</div>
-+                                      <div>
-+                                        {caseTargetLabel(episode)}: {caseTargetValue(episode)}
-+                                      </div>
-+                                      <div>
-+                                        {summary.scored}/{summary.total} episodes scored
-+                                      </div>
-+                                      {summary.mismatches > 0 && <div>{summary.mismatches} target mismatches</div>}
-+                                      {entries?.some((entry) => entry.metadataConflicts.length > 0) && (
-+                                        <div>Recorded metadata conflict</div>
-+                                      )}
-+                                    </div>
-+                                  }
-+                                >
-+                                  <Button
-+                                    componentId="mlflow.open-world.results.cell"
-+                                    type="tertiary"
-+                                    css={scoreButtonCss}
-+                                    aria-label={`${recorded(episode.scenario)} / ${caseTargetLabel(episode).toLowerCase()} ${caseTargetValue(episode)}: ${scoreLabel(summary.mean)}, ${summary.scored}/${summary.total} scored${summary.mismatches ? `, ${summary.mismatches} target mismatches` : ''}${entries?.some((entry) => entry.metadataConflicts.length > 0) ? ', recorded metadata conflict' : ''}`}
-+                                    aria-pressed={selectedCell === key}
-+                                    onClick={() => setSelectedCell(key)}
-+                                  >
-+                                    <span css={{ display: 'inline-flex', alignItems: 'center', gap: 3 }}>
-+                                      {scoreLabel(summary.mean)}
-+                                      {summary.missing > 0 ? (
-+                                        <span css={{ fontSize: 10 }}>
-+                                          {summary.scored}/{summary.total}
-+                                        </span>
-+                                      ) : summary.total > 1 ? (
-+                                        <span css={{ fontSize: 10 }}>×{summary.total}</span>
-+                                      ) : null}
-+                                      {(summary.mismatches > 0 ||
-+                                        entries?.some((entry) => entry.metadataConflicts.length > 0)) && (
-+                                        <span aria-hidden="true" css={{ fontSize: 10 }}>
-+                                          !
-+                                        </span>
-+                                      )}
-+                                    </span>
-+                                  </Button>
-+                                </Tooltip>
-+                              ) : (
-+                                'No episodes'
-+                              )}
-+                            </td>
-+                          );
-+                        })}
-+                      </tr>
-+                    ))}
-+                  </tbody>
-+                </table>
-+              </div>
-+            </section>
-+          )}
-+        </Accordion.Panel>
-+        <Accordion.Panel
-+          key="sessions"
-+          header={
-+            <Typography.Title level={3} withoutMargins css={{ fontSize: 16 }}>
-+              Sessions (episodes)
-+            </Typography.Title>
++                  {label}: {members.length}
++                </Button>
++              ))}
++          </div>
++        )}
++      </OpenWorldResultsSection>
++      {episodes.length > 0 && (
++        <OpenWorldResultsSection
++          title="Episode scores"
++          componentId="mlflow.open-world.results.scores"
++          help={EPISODE_SCORES_HELP}
++          expanded={expandedSections.includes('scores')}
++          onToggle={() =>
++            setExpandedSections((sections) =>
++              sections.includes('scores')
++                ? sections.filter((section) => section !== 'scores')
++                : [...sections, 'scores'],
++            )
 +          }
 +        >
-+          <section
-+            ref={contributorsRef}
++          <OpenWorldResultsCharts episodes={episodes} onSelectEpisodes={selectEpisodes} />
++        </OpenWorldResultsSection>
++      )}
++      <OpenWorldResultsSection
++        title="Scenario/target matrix"
++        componentId="mlflow.open-world.results.matrix"
++        help="Select a score, case, or run to inspect its sessions. Scored cases use evaluated targets; unscored rows retain requested targets."
++        expanded={expandedSections.includes('matrix')}
++        onToggle={() =>
++          setExpandedSections((sections) =>
++            sections.includes('matrix') ? sections.filter((section) => section !== 'matrix') : [...sections, 'matrix'],
++          )
++        }
++      >
++        {episodes.length === 0 ? (
++          <Typography.Text>No episode results yet.</Typography.Text>
++        ) : (
++          <div
++            role="region"
++            aria-label="Scenario and target score matrix"
 +            tabIndex={0}
-+            aria-label="Sessions"
 +            css={{
-+              display: 'flex',
-+              flexDirection: 'column',
-+              gap: 12,
-+              minHeight: 0,
-+              maxHeight: 'min(70vh, 640px)',
-+              overflow: 'auto',
-+              overscrollBehavior: 'contain',
-+              padding: 2,
++              overflowX: 'auto',
++              overflowY: 'hidden',
++              scrollPaddingLeft: 200,
++              width: '100%',
++              maxWidth: '100%',
++              minWidth: 0,
++              border: `1px solid ${theme.colors.border}`,
++              borderRadius: 4,
 +            }}
 +          >
-+            <Button
-+              componentId="mlflow.open-world.results.back-to-summary"
-+              css={{ alignSelf: 'flex-start' }}
-+              onClick={() => {
-+                topRef.current?.scrollIntoView({ block: 'start' });
-+                topRef.current?.focus({ preventScroll: true });
++            <table
++              aria-label="Open World results matrix"
++              css={{
++                borderCollapse: 'separate',
++                borderSpacing: 0,
++                width: '100%',
++                minWidth: 200 + columns.length * 240,
++                tableLayout: 'fixed',
 +              }}
 +            >
-+              Back to results
-+            </Button>
-+            <Typography.Text color="secondary" css={{ fontSize: 12 }}>
-+              Charts and matrix selections filter this table. Adjust its column filters or open a session to inspect
-+              decisions.
-+            </Typography.Text>
-+            {exactSelection && (
-+              <div css={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-+                <Typography.Text>{selectedMembers?.length || 0} individually selected sessions</Typography.Text>
-+                <Button
-+                  componentId="mlflow.open-world.results.clear-exact-sessions"
-+                  onClick={() => updateSessionFilters(sessionFilters)}
-+                >
-+                  Remove session selection
-+                </Button>
-+              </div>
-+            )}
-+            {contributors.some((episode) => episode.targetMismatch) && (
-+              <Alert
-+                componentId="mlflow.open-world.results.target-mismatch"
-+                type="warning"
-+                message="Requested and evaluated targets do not match"
-+                description="These targets should agree. Inspect the affected sessions for a run, scoring, or import problem."
-+              />
-+            )}
-+            {contributors.some((episode) => episode.metadataConflicts.length > 0) && (
-+              <Alert
-+                componentId="mlflow.open-world.results.session-metadata-conflict"
-+                type="warning"
-+                message="Some sessions have inconsistent recorded metadata"
-+                description={`Conflicting fields: ${unique(contributors.flatMap((episode) => episode.metadataConflicts)).join(', ')}. Open the affected sessions to inspect their records.`}
-+              />
-+            )}
-+            {filterError && (
++              <colgroup>
++                <col style={{ width: 200 }} />
++                {columns.map(([key]) => (
++                  <col key={key} />
++                ))}
++              </colgroup>
++              <thead>
++                <tr>
++                  <th
++                    style={{
++                      ...columnHeaderStyle,
++                      position: 'sticky',
++                      left: 0,
++                      zIndex: 3,
++                      borderRight: `1px solid ${theme.colors.border}`,
++                    }}
++                  >
++                    Scenario / Evaluated target
++                  </th>
++                  {columns.map(([key, episode]) => (
++                    <th key={key} style={columnHeaderStyle}>
++                      <div css={{ display: 'flex', alignItems: 'flex-start', gap: 2, minWidth: 0 }}>
++                        <Button
++                          componentId="mlflow.open-world.results.matrix-column"
++                          css={[headerButtonCss, { '&&': { flex: '1 1 0', width: 'auto' } }]}
++                          aria-label={`Inspect configuration ${configurationLabel(episode)}`}
++                          aria-pressed={selectedCell === `column:${key}`}
++                          onClick={() => setSelectedCell(`column:${key}`)}
++                        >
++                          <span
++                            css={{
++                              display: 'flex',
++                              flexDirection: 'column',
++                              width: '100%',
++                              maxWidth: '100%',
++                              minWidth: 0,
++                              overflowWrap: 'anywhere',
++                              gap: 2,
++                              lineHeight: '14px',
++                            }}
++                          >
++                            <strong css={{ fontSize: 12 }}>{recorded(episode.adm).replaceAll('_', ' ')}</strong>
++                            {episode.alignmentMode === 'unaligned' && (
++                              <span css={{ fontSize: 10, color: theme.colors.textSecondary }}>Unaligned</span>
++                            )}
++                          </span>
++                        </Button>
++                        <Popover.Root componentId="mlflow.open-world.results.matrix-run-details">
++                          <Popover.Trigger asChild>
++                            <Button
++                              componentId="mlflow.open-world.results.matrix-run-details-trigger"
++                              size="small"
++                              type="tertiary"
++                              icon={<InfoIcon />}
++                              aria-label={`Details for ${recorded(episode.runName)}`}
++                              css={{ flexShrink: 0 }}
++                            />
++                          </Popover.Trigger>
++                          <Popover.Content align="start" css={{ maxWidth: 480, overflowWrap: 'anywhere' }}>
++                            <Typography.Title level={4} withoutMargins>
++                              {recorded(episode.adm)} details
++                            </Typography.Title>
++                            <dl
++                              css={{
++                                display: 'grid',
++                                gridTemplateColumns: 'max-content minmax(0, 1fr)',
++                                gap: '4px 12px',
++                                margin: '8px 0',
++                              }}
++                            >
++                              {[
++                                ['ADM', episode.adm],
++                                ['Model', episode.model],
++                                ['Run', episode.runName],
++                                ['Run ID', episode.runId],
++                                ['Alignment mode', episode.alignmentMode],
++                                ['Driver', episode.driver],
++                                ['Source family', episode.sourceFamily],
++                                ['Source revision', episode.sourceVersion],
++                                ['Scoring version', episode.scoringVersion],
++                              ].map(([label, value]) => (
++                                <div key={label} css={{ display: 'contents' }}>
++                                  <dt>{label}</dt>
++                                  <dd css={{ margin: 0 }}>{recorded(value || '')}</dd>
++                                </div>
++                              ))}
++                            </dl>
++                            {episode.runId && (
++                              <Link
++                                componentId="mlflow.open-world.results.open-run"
++                                to={Routes.getRunPageRoute(experimentId, episode.runId)}
++                              >
++                                Open run
++                              </Link>
++                            )}
++                            <Popover.Arrow />
++                          </Popover.Content>
++                        </Popover.Root>
++                      </div>
++                    </th>
++                  ))}
++                </tr>
++              </thead>
++              <tbody>
++                {rows.map(([row, episode]) => (
++                  <tr key={row}>
++                    <th scope="row" style={rowHeaderStyle}>
++                      <Tooltip
++                        componentId="mlflow.open-world.results.matrix-case-details"
++                        maxWidth={420}
++                        content={
++                          <div css={{ overflowWrap: 'anywhere' }}>
++                            <strong>Scenario</strong>
++                            <div>{recorded(episode.scenario)}</div>
++                            <strong>{caseTargetLabel(episode)}</strong>
++                            <div>{caseTargetValue(episode)}</div>
++                          </div>
++                        }
++                      >
++                        <Button
++                          componentId="mlflow.open-world.results.matrix-row"
++                          css={headerButtonCss}
++                          aria-label={`Inspect scenario ${recorded(episode.scenario)} / ${caseTargetLabel(episode).toLowerCase()} ${caseTargetValue(episode)}`}
++                          aria-pressed={selectedCell === `row:${row}`}
++                          onClick={() => setSelectedCell(`row:${row}`)}
++                        >
++                          <span
++                            css={{
++                              display: 'block',
++                              width: '100%',
++                              maxWidth: '100%',
++                              minWidth: 0,
++                              fontSize: 12,
++                              lineHeight: '14px',
++                            }}
++                          >
++                            <span
++                              css={{
++                                display: 'block',
++                                maxWidth: '100%',
++                                overflow: 'hidden',
++                                textOverflow: 'ellipsis',
++                                whiteSpace: 'nowrap',
++                              }}
++                            >
++                              {shortScenario(episode.scenario)}
++                            </span>
++                            <span
++                              css={{
++                                color: theme.colors.textSecondary,
++                                display: 'block',
++                                maxWidth: '100%',
++                                overflow: 'hidden',
++                                textOverflow: 'ellipsis',
++                                whiteSpace: 'nowrap',
++                              }}
++                            >
++                              {episode.score === undefined ? 'Requested: ' : ''}
++                              {episode.score === undefined
++                                ? caseTargetValue(episode)
++                                : shortTarget(episode.evaluatedTarget)}
++                            </span>
++                          </span>
++                        </Button>
++                      </Tooltip>
++                    </th>
++                    {columns.map(([column]) => {
++                      const key = JSON.stringify([row, column]);
++                      const entries = cells.get(key);
++                      const summary = entries ? aggregateEpisodes(entries) : undefined;
++                      return (
++                        <td key={column} style={tdStyle}>
++                          {summary ? (
++                            <Tooltip
++                              componentId="mlflow.open-world.results.matrix-score-details"
++                              maxWidth={420}
++                              content={
++                                <div css={{ overflowWrap: 'anywhere' }}>
++                                  <div>{recorded(episode.scenario)}</div>
++                                  <div>
++                                    {caseTargetLabel(episode)}: {caseTargetValue(episode)}
++                                  </div>
++                                  <div>
++                                    {summary.scored}/{summary.total} episodes scored
++                                  </div>
++                                  {summary.mismatches > 0 && <div>{summary.mismatches} target mismatches</div>}
++                                  {entries?.some((entry) => entry.metadataConflicts.length > 0) && (
++                                    <div>Recorded metadata conflict</div>
++                                  )}
++                                </div>
++                              }
++                            >
++                              <Button
++                                componentId="mlflow.open-world.results.cell"
++                                type="tertiary"
++                                css={scoreButtonCss}
++                                aria-label={`${recorded(episode.scenario)} / ${caseTargetLabel(episode).toLowerCase()} ${caseTargetValue(episode)}: ${scoreLabel(summary.mean)}, ${summary.scored}/${summary.total} scored${summary.mismatches ? `, ${summary.mismatches} target mismatches` : ''}${entries?.some((entry) => entry.metadataConflicts.length > 0) ? ', recorded metadata conflict' : ''}`}
++                                aria-pressed={selectedCell === key}
++                                onClick={() => setSelectedCell(key)}
++                              >
++                                <span css={{ display: 'inline-flex', alignItems: 'center', gap: 3 }}>
++                                  {scoreLabel(summary.mean)}
++                                  {summary.missing > 0 ? (
++                                    <span css={{ fontSize: 10 }}>
++                                      {summary.scored}/{summary.total}
++                                    </span>
++                                  ) : summary.total > 1 ? (
++                                    <span css={{ fontSize: 10 }}>×{summary.total}</span>
++                                  ) : null}
++                                  {(summary.mismatches > 0 ||
++                                    entries?.some((entry) => entry.metadataConflicts.length > 0)) && (
++                                    <span aria-hidden="true" css={{ fontSize: 10 }}>
++                                      !
++                                    </span>
++                                  )}
++                                </span>
++                              </Button>
++                            </Tooltip>
++                          ) : (
++                            'No episodes'
++                          )}
++                        </td>
++                      );
++                    })}
++                  </tr>
++                ))}
++              </tbody>
++            </table>
++          </div>
++        )}
++      </OpenWorldResultsSection>
++      <OpenWorldResultsSection
++        title="Sessions (episodes)"
++        componentId="mlflow.open-world.results.sessions"
++        help="Charts and matrix selections filter this table. Adjust its column filters or open a session to inspect decisions."
++        expanded={expandedSections.includes('sessions')}
++        onToggle={() =>
++          setExpandedSections((sections) =>
++            sections.includes('sessions')
++              ? sections.filter((section) => section !== 'sessions')
++              : [...sections, 'sessions'],
++          )
++        }
++      >
++        <section
++          ref={contributorsRef}
++          tabIndex={0}
++          aria-label="Sessions"
++          css={{
++            display: 'flex',
++            flexDirection: 'column',
++            gap: 12,
++            minHeight: 0,
++            padding: 2,
++          }}
++        >
++          {exactSelection && (
++            <div css={{ display: 'flex', gap: 8, alignItems: 'center' }}>
++              <Typography.Text>{selectedMembers?.length || 0} individually selected sessions</Typography.Text>
 +              <Button
-+                componentId="mlflow.open-world.results.clear-invalid-filters"
-+                css={{ alignSelf: 'flex-start' }}
-+                onClick={() => updateSessionFilters([])}
++                componentId="mlflow.open-world.results.clear-exact-sessions"
++                onClick={() => updateSessionFilters(sessionFilters)}
 +              >
-+                Clear session filters
++                Remove session selection
 +              </Button>
-+            )}
-+            <OpenWorldResultsSessions
-+              experimentId={experimentId}
-+              populationVersion={populationVersion}
-+              preferences={tablePreferences}
-+              episodes={contributors}
-+              suggestions={filterSuggestions}
-+              selection={sessionSelection}
-+              filters={sessionFilters}
-+              onFiltersChange={updateSessionFilters}
-+              onClearFilters={() => setParams(clearSessionScope(params), { replace: true })}
-+              isLoading={sessionQuery.isLoading}
-+              isRefreshing={sessionQuery.isRefreshing}
-+              error={filterError || sessionQuery.error}
-+              onRetry={() => sessionQuery.refetch()}
++            </div>
++          )}
++          {contributors.some((episode) => episode.targetMismatch) && (
++            <Alert
++              componentId="mlflow.open-world.results.target-mismatch"
++              type="warning"
++              message="Requested and evaluated targets do not match"
++              description="These targets should agree. Inspect the affected sessions for a run, scoring, or import problem."
 +            />
-+          </section>
-+        </Accordion.Panel>
-+      </Accordion>
++          )}
++          {contributors.some((episode) => episode.metadataConflicts.length > 0) && (
++            <Alert
++              componentId="mlflow.open-world.results.session-metadata-conflict"
++              type="warning"
++              message="Some sessions have inconsistent recorded metadata"
++              description={`Conflicting fields: ${unique(contributors.flatMap((episode) => episode.metadataConflicts)).join(', ')}. Open the affected sessions to inspect their records.`}
++            />
++          )}
++          {filterError && (
++            <Button
++              componentId="mlflow.open-world.results.clear-invalid-filters"
++              css={{ alignSelf: 'flex-start' }}
++              onClick={() => updateSessionFilters([])}
++            >
++              Clear session filters
++            </Button>
++          )}
++          <OpenWorldResultsSessions
++            experimentId={experimentId}
++            populationVersion={populationVersion}
++            preferences={tablePreferences}
++            episodes={contributors}
++            suggestions={filterSuggestions}
++            selection={sessionSelection}
++            filters={sessionFilters}
++            onFiltersChange={updateSessionFilters}
++            onClearFilters={() => setParams(clearSessionScope(params), { replace: true })}
++            isLoading={sessionQuery.isLoading}
++            isRefreshing={sessionQuery.isRefreshing}
++            error={filterError || sessionQuery.error}
++            onRetry={() => sessionQuery.refetch()}
++          />
++        </section>
++      </OpenWorldResultsSection>
 +    </div>
 +  );
 +};
@@ -7276,6 +7513,68 @@
 +};
 +
 +export default OpenWorldResultsPage;
+--- /dev/null
++++ b/mlflow/server/js/src/experiment-tracking/pages/open-world-results/OpenWorldResultsSection.tsx
+@@ -0,0 +1,59 @@
++import { useEffect, useState, type ReactNode } from 'react';
++import { Button, ChevronDownIcon, ChevronRightIcon, InfoIcon, Popover, Typography } from '@databricks/design-system';
++
++type SectionProps = {
++  title: string;
++  componentId: string;
++  help: ReactNode;
++  expanded: boolean;
++  onToggle: () => void;
++  children: ReactNode;
++};
++
++export const OpenWorldResultsSection = ({ title, componentId, help, expanded, onToggle, children }: SectionProps) => {
++  const [hasOpened, setHasOpened] = useState(expanded);
++  useEffect(() => {
++    if (expanded) setHasOpened(true);
++  }, [expanded]);
++  const contentId = `${componentId}.content`;
++  const titleId = `${componentId}.title`;
++  return (
++    <section aria-labelledby={titleId} css={{ minWidth: 0, flexShrink: 0 }}>
++      <div css={{ display: 'flex', alignItems: 'center', gap: 4 }}>
++        <Typography.Title id={titleId} level={3} withoutMargins css={{ fontSize: 16 }}>
++          {title}
++        </Typography.Title>
++        <Popover.Root componentId={`${componentId}.help`}>
++          <Popover.Trigger asChild>
++            <Button
++              componentId={`${componentId}.help-trigger`}
++              type="tertiary"
++              size="small"
++              icon={<InfoIcon />}
++              aria-label={`About ${title}`}
++            />
++          </Popover.Trigger>
++          <Popover.Content align="start" css={{ maxWidth: 380 }}>
++            <Typography.Paragraph withoutMargins>{help}</Typography.Paragraph>
++          </Popover.Content>
++        </Popover.Root>
++        <Button
++          componentId={`${componentId}.toggle`}
++          type="tertiary"
++          size="small"
++          aria-label={title}
++          aria-expanded={expanded}
++          aria-controls={contentId}
++          icon={expanded ? <ChevronDownIcon /> : <ChevronRightIcon />}
++          onClick={onToggle}
++          css={{ marginLeft: 'auto' }}
++        >
++          <span aria-hidden="true">{expanded ? 'Collapse' : 'Expand'}</span>
++        </Button>
++      </div>
++      <div id={contentId} hidden={!expanded} css={{ paddingTop: 8 }}>
++        {(expanded || hasOpened) && children}
++      </div>
++    </section>
++  );
++};
 --- /dev/null
 +++ b/mlflow/server/js/src/experiment-tracking/pages/open-world-results/OpenWorldResultsSessions.tsx
 @@ -0,0 +1,274 @@

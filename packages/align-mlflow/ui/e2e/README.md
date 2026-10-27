@@ -20,8 +20,11 @@ its directory when running `npm test`.
 
 The normal example contains eight runs and 192 episodes, including unaligned
 baselines and one requested/evaluated target mismatch. A 100-run example checks
-scroll containment and full metadata access without relying on pixel snapshots.
+natural expanded height, keyboard collapsing, horizontal scroll containment, and full metadata access without relying on pixel snapshots.
 Unexpected API requests fail the test so new server dependencies remain explicit.
+
+A three-session example includes tied and backward timestamps to check consistent
+decision ordering and explicit selection in individual and comparison views.
 
 The UI workflow builds the maintained patch, installs Chromium, and runs this
 suite. Playwright reports and failure traces are saved as workflow artifacts.

@@ -1,11 +1,21 @@
 import { test as base, expect } from "@playwright/test";
-import { createPopulation, installApiFixtures } from "./fixtures.mjs";
+import {
+  createPopulation,
+  createDecisionPopulation,
+  installApiFixtures,
+} from "./fixtures.mjs";
 
 export const test = base.extend({
   runCount: [8, { option: true }],
   duplicateScores: [false, { option: true }],
-  population: async ({ page, runCount, duplicateScores }, use) => {
-    const population = createPopulation(runCount, { duplicateScores });
+  decisionHistory: [false, { option: true }],
+  population: async (
+    { page, runCount, duplicateScores, decisionHistory },
+    use,
+  ) => {
+    const population = decisionHistory
+      ? createDecisionPopulation(runCount)
+      : createPopulation(runCount, { duplicateScores });
     const unexpected = await installApiFixtures(page, population);
     const errors = [];
     page.on("pageerror", (error) => errors.push(error.message));
@@ -22,7 +32,10 @@ export const test = base.extend({
 export const openResults = async (page, population) => {
   await page.goto("/#/experiments/1/open-world-results");
   await expect(
-    page.getByLabel(`Episodes: ${population.traces.length}`, { exact: true }),
+    page.getByLabel(
+      `Episodes: ${population.traces.filter((trace) => trace.tags.step === "1").length}`,
+      { exact: true },
+    ),
   ).toBeVisible();
 };
 

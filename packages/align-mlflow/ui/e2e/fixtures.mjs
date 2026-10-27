@@ -166,6 +166,88 @@ export const createPopulation = (
   };
 };
 
+export const createDecisionPopulation = (runCount = 8) => {
+  const population = createPopulation(runCount);
+  const examples = population.traces.slice(0, 3);
+  const traceDetails = {};
+  const histories = examples.flatMap((example, sessionIndex) =>
+    [1, 2, 3].map((step) => {
+      const traceId = `tr-example-history-${sessionIndex + 1}-${step}`;
+      const requestTime = new Date(
+        epoch + [3000, 1000, 1000][step - 1],
+      ).toISOString();
+      const trace = {
+        ...example,
+        trace_id: traceId,
+        request_time: requestTime,
+        tags: {
+          ...example.tags,
+          step: String(step),
+          "mlflow.traceName": `Decision ${step}`,
+          "mlflow.trace.spansLocation": "TRACKING_STORE",
+        },
+        assessments:
+          step === 1
+            ? example.assessments.map((assessment) => ({
+                ...assessment,
+                trace_id: traceId,
+              }))
+            : [],
+      };
+      const session = trace.trace_metadata["mlflow.trace.session"];
+      const attributes = {
+        "mlflow.spanType": "UNKNOWN",
+        "mlflow.spanInputs": {
+          source: {
+            observation: `Input ${session} decision ${step}`,
+            evidence: Array.from(
+              { length: 20 },
+              (_, index) => `Observed example fact ${index + 1}`,
+            ),
+          },
+          details: `Additional input ${step}`,
+        },
+        "mlflow.spanOutputs": {
+          source: {
+            decision: `Output ${session} decision ${step}`,
+            marker: `visible-${sessionIndex + 1}-${step}`,
+          },
+          details: `Additional output ${step}`,
+        },
+      };
+      const start = BigInt(Date.parse(requestTime)) * 1_000_000n;
+      traceDetails[traceId] = {
+        trace_info: trace,
+        spans: [
+          {
+            trace_id: traceId,
+            span_id: (sessionIndex * 3 + step).toString(16).padStart(16, "0"),
+            parent_span_id: null,
+            name: `Decision ${step}`,
+            kind: "SPAN_KIND_INTERNAL",
+            start_time_unix_nano: String(start),
+            end_time_unix_nano: String(start + 100_000_000n),
+            status: { code: "STATUS_CODE_OK" },
+            attributes: Object.entries(attributes).map(([key, value]) => ({
+              key,
+              value: { string_value: JSON.stringify(value) },
+            })),
+          },
+        ],
+      };
+      return trace;
+    }),
+  );
+  return {
+    ...population,
+    traces: [...histories, ...population.traces.slice(3)],
+    traceDetails,
+    decisionSessions: examples.map(
+      (example) => example.trace_metadata["mlflow.trace.session"],
+    ),
+  };
+};
+
 const filterRows = (rows, filter, readField) => {
   if (!filter?.trim()) return rows;
   const token =
@@ -331,6 +413,23 @@ export const installApiFixtures = async (page, population) => {
           ? { next_page_token: String(offset + limit) }
           : {}),
       };
+    } else if (name.endsWith("/traces/get")) {
+      const trace = population.traceDetails?.[body.trace_id];
+      if (!trace)
+        throw new Error("No detailed trace fixture for " + body.trace_id);
+      json = { trace };
+    } else if (/\/3\.0\/mlflow\/traces\/[^/]+$/.test(name)) {
+      const trace =
+        population.traceDetails?.[decodeURIComponent(name.split("/").at(-1))];
+      if (!trace) throw new Error("No trace info fixture for " + name);
+      json = { trace: { trace_info: trace.trace_info } };
+    } else if (name.endsWith("/get-trace-artifact")) {
+      const trace = population.traceDetails?.[body.request_id];
+      if (!trace)
+        throw new Error("No trace artifact fixture for " + body.request_id);
+      json = { spans: trace.spans };
+    } else if (name.endsWith("/datasets/search")) {
+      json = { datasets: [] };
     } else if (name.endsWith("/runs/search")) {
       const offset = Number(body.page_token || 0);
       const limit = Number(body.max_results || 50);

@@ -102,7 +102,7 @@ test.describe("counted episode markers", () => {
   }
 });
 
-test("keeps sticky axis and case headers clear of focused scroll targets", async ({
+test("keeps focused plot and matrix targets visible in the main page", async ({
   page,
   population,
 }) => {
@@ -116,26 +116,12 @@ test("keeps sticky axis and case headers clear of focused scroll targets", async
     .last()
     .getByRole("button", { name: /^Episode score / })
     .last();
-  await plots.focus();
-  await page.keyboard.press("End");
   await point.focus();
   await point.scrollIntoViewIfNeeded();
   await point.hover();
   await expect(point).toBeFocused();
-  const axis = plots.getByRole("img", {
-    name: "Alignment score axis",
-    exact: true,
-  });
-  await expect(axis).toBeInViewport();
-  const axisBounds = await axis.boundingBox();
-  const pointBounds = await point.boundingBox();
-  expect(pointBounds.y).toBeGreaterThanOrEqual(
-    axisBounds.y + axisBounds.height,
-  );
-  expect(await plots.evaluate((element) => element.scrollTop)).toBeGreaterThan(
-    0,
-  );
-
+  await expect(point).toBeInViewport();
+  expect(await plots.evaluate((element) => element.scrollTop)).toBe(0);
   const matrix = page.getByRole("region", {
     name: "Scenario and target score matrix",
     exact: true,
@@ -146,32 +132,21 @@ test("keeps sticky axis and case headers clear of focused scroll targets", async
   });
   const lastRow = table.getByRole("row").last();
   const score = lastRow.getByRole("cell").last().getByRole("button");
-  await matrix.focus();
-  await page.keyboard.press("End");
   await score.focus();
   await score.scrollIntoViewIfNeeded();
   await score.hover();
   await expect(score).toBeFocused();
-  const header = table
-    .getByRole("row")
-    .first()
-    .getByRole("columnheader")
-    .last();
+  await expect(score).toBeInViewport();
   const caseHeader = lastRow.getByRole("rowheader");
-  await expect(header).toBeInViewport();
   await expect(caseHeader).toBeInViewport();
-  const headerBounds = await header.boundingBox();
   const caseBounds = await caseHeader.boundingBox();
   const scoreBounds = await score.boundingBox();
-  expect(scoreBounds.y).toBeGreaterThanOrEqual(
-    headerBounds.y + headerBounds.height,
-  );
   expect(scoreBounds.x).toBeGreaterThanOrEqual(caseBounds.x + caseBounds.width);
   const offsets = await matrix.evaluate((element) => ({
     top: element.scrollTop,
     left: element.scrollLeft,
   }));
-  expect(offsets.top).toBeGreaterThan(0);
+  expect(offsets.top).toBe(0);
   expect(offsets.left).toBeGreaterThan(0);
 });
 

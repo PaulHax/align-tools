@@ -91,7 +91,7 @@ test("keeps run identity lines stacked within the compact plot row", async ({
   }
 });
 
-test("keeps matrix run and case labels inside their columns", async ({
+test("shows complete ADM names inside wide matrix columns without ordinal labels", async ({
   page,
   population,
 }) => {
@@ -106,12 +106,25 @@ test("keeps matrix run and case labels inside their columns", async ({
     const inspect = header.getByRole("button", {
       name: /^Inspect configuration /,
     });
-    const details = header.getByRole("button", { name: /^Details for run / });
+    const details = header.getByRole("button", { name: /^Details for / });
     const [cellBounds, inspectBounds, detailBounds] = await Promise.all([
       header.boundingBox(),
       inspect.boundingBox(),
       details.boundingBox(),
     ]);
+    expect(cellBounds.width).toBeGreaterThanOrEqual(239);
+    const detailsLabel = await details.getAttribute("aria-label");
+    const configuration = population.configurations.find(
+      (item) => `Details for ${item.name}` === detailsLabel,
+    );
+    expect(configuration).toBeTruthy();
+    const adm = inspect.getByText(configuration.adm, { exact: true });
+    await expect(adm).toBeVisible();
+    const textBounds = await adm.evaluate((element) => ({
+      textWidth: element.scrollWidth,
+      width: element.clientWidth,
+    }));
+    expect(textBounds.textWidth).toBeLessThanOrEqual(textBounds.width + 1);
     expect(inspectBounds.x).toBeGreaterThanOrEqual(cellBounds.x);
     expect(inspectBounds.x + inspectBounds.width).toBeLessThanOrEqual(
       detailBounds.x + 1,
@@ -129,12 +142,62 @@ test("keeps matrix run and case labels inside their columns", async ({
         inspectBounds.x + inspectBounds.width + 1,
       );
   }
+  await expect(table.getByText(/^Run \d+$/, { exact: true })).toHaveCount(0);
   for (const header of await table.getByRole("rowheader").all()) {
     const bounds = await header.boundingBox();
     const labelBounds = await header.getByRole("button").boundingBox();
     expect(labelBounds.x + labelBounds.width).toBeLessThanOrEqual(
       bounds.x + bounds.width + 1,
     );
+  }
+});
+
+test("keeps section explanations in independent header help popovers", async ({
+  page,
+  population,
+}) => {
+  await openResults(page, population);
+  const explanations = [
+    [
+      "Results overview",
+      /Scored pairs use the scenario and evaluated target reported by TA3\./,
+    ],
+    ["Episode scores", /Dots show recorded episode scores;/],
+    [
+      "Scenario/target matrix",
+      /Select a score, case, or run to inspect its sessions\./,
+    ],
+    ["Sessions (episodes)", /Charts and matrix selections filter this table\./],
+  ];
+  for (const [name, content] of explanations) {
+    const header = sectionButton(page, name);
+    const expanded = name === "Sessions (episodes)" ? "false" : "true";
+    const explanation = page.getByText(content);
+    await expect(explanation).not.toBeVisible();
+    const help = page.getByRole("button", {
+      name: `About ${name}`,
+      exact: true,
+    });
+    await help.focus();
+    await expect(header).toHaveAttribute("aria-expanded", expanded);
+    const [headerBounds, helpBounds] = await Promise.all([
+      header.boundingBox(),
+      help.boundingBox(),
+    ]);
+    expect(helpBounds.y).toBeGreaterThanOrEqual(headerBounds.y - 1);
+    expect(helpBounds.y + helpBounds.height).toBeLessThanOrEqual(
+      headerBounds.y + headerBounds.height + 1,
+    );
+    await page.keyboard.press("Enter");
+    await expect(explanation).toBeVisible();
+    await expect(header).toHaveAttribute("aria-expanded", expanded);
+    await page.keyboard.press("Escape");
+    await expect(explanation).not.toBeVisible();
+    await help.click();
+    await expect(explanation).toBeVisible();
+    await expect(header).toHaveAttribute("aria-expanded", expanded);
+    await page.keyboard.press("Escape");
+    await expect(explanation).not.toBeVisible();
   }
 });
 
@@ -176,11 +239,17 @@ test("collapses native sections and restores sessions when inspecting a matrix s
   population,
 }) => {
   await openResults(page, population);
-  for (const name of ["Episode scores", "Scenario/target matrix"]) {
+  for (const name of [
+    "Results overview",
+    "Episode scores",
+    "Scenario/target matrix",
+  ]) {
     const button = sectionButton(page, name);
     await expect(button).toHaveAttribute("aria-expanded", "true");
+    await expect(button.getByText("Collapse", { exact: true })).toBeVisible();
     await button.click();
     await expect(button).toHaveAttribute("aria-expanded", "false");
+    await expect(button.getByText("Expand", { exact: true })).toBeVisible();
     await button.click();
     await expect(button).toHaveAttribute("aria-expanded", "true");
   }
@@ -188,6 +257,11 @@ test("collapses native sections and restores sessions when inspecting a matrix s
     "aria-expanded",
     "false",
   );
+  await expect(
+    sectionButton(page, "Sessions (episodes)").getByText("Expand", {
+      exact: true,
+    }),
+  ).toBeVisible();
   const matrix = page.getByRole("table", {
     name: "Open World results matrix",
     exact: true,
@@ -211,6 +285,9 @@ test("collapses native sections and restores sessions when inspecting a matrix s
   await sectionButton(page, "Sessions (episodes)").click();
   await row.getByRole("cell").first().getByRole("button").click();
   await expectSessions(page, [population.traces[0]]);
+  await expect(
+    page.getByRole("button", { name: "Back to results", exact: true }),
+  ).toHaveCount(0);
 });
 
 test("opens a new session scope on the same mounted page and preserves manual collapse", async ({
@@ -244,7 +321,7 @@ test("opens a new session scope on the same mounted page and preserves manual co
   await expectSessions(page, population.traces.slice(24, 48));
 });
 
-test("keeps matrix rows compact and exposes full run metadata on demand", async ({
+test("expands the complete matrix naturally and exposes full run metadata on demand", async ({
   page,
   population,
 }) => {
@@ -263,8 +340,10 @@ test("keeps matrix rows compact and exposes full run metadata on demand", async 
     scrollHeight: element.scrollHeight,
     clientHeight: element.clientHeight,
   }));
-  expect(dimensions.height).toBeLessThanOrEqual(451);
-  expect(dimensions.scrollHeight).toBeGreaterThan(dimensions.clientHeight);
+  expect(dimensions.height).toBeGreaterThan(700);
+  expect(dimensions.scrollHeight).toBeLessThanOrEqual(
+    dimensions.clientHeight + 1,
+  );
   const rowHeights = await table
     .getByRole("row")
     .evaluateAll((rows) =>
@@ -282,19 +361,27 @@ test("keeps matrix rows compact and exposes full run metadata on demand", async 
     path: test.info().outputPath("eight-runs-full-page.png"),
     fullPage: true,
   });
-  await region.scrollIntoViewIfNeeded();
+  await page
+    .getByRole("heading", { name: "Scenario/target matrix", exact: true })
+    .evaluate((element) =>
+      element.scrollIntoView({
+        block: "start",
+        inline: "nearest",
+        behavior: "instant",
+      }),
+    );
   await page.screenshot({
     path: test.info().outputPath("eight-runs-matrix.png"),
   });
   const configuration = population.configurations[0];
   await page
     .getByRole("button", {
-      name: `Details for run 1: ${configuration.name}`,
+      name: `Details for ${configuration.name}`,
       exact: true,
     })
     .click();
   const details = page
-    .getByRole("heading", { name: "Run 1 details", exact: true })
+    .getByRole("heading", { name: `${configuration.adm} details`, exact: true })
     .locator("xpath=..");
   for (const value of [
     configuration.name,
@@ -312,7 +399,7 @@ test("keeps matrix rows compact and exposes full run metadata on demand", async 
   ).toHaveAttribute("href", new RegExp("/runs/" + configuration.id));
 });
 
-test("bounds the hydrated native sessions table and retains its filters", async ({
+test("expands the hydrated native sessions table without nested vertical scrolling", async ({
   page,
   population,
 }) => {
@@ -320,18 +407,24 @@ test("bounds the hydrated native sessions table and retains its filters", async 
   await sectionButton(page, "Sessions (episodes)").click();
   const sessions = await expectSessions(page, population.traces);
   const bounds = await sessions.boundingBox();
-  expect(bounds.height).toBeLessThanOrEqual(641);
-  const scrollPanes = await sessions.evaluate((element) =>
+  expect(bounds.height).toBeGreaterThan(1000);
+  const verticalScrollers = await sessions.evaluate((element) =>
     [element, ...element.querySelectorAll("*")]
       .filter(
         (candidate) =>
           /auto|scroll/.test(getComputedStyle(candidate).overflowY) &&
-          candidate.scrollHeight > candidate.clientHeight,
+          candidate.scrollHeight > candidate.clientHeight + 1,
       )
-      .map((candidate) => candidate.getBoundingClientRect().height),
+      .map((candidate) => ({
+        tag: candidate.tagName,
+        height: candidate.clientHeight,
+        contentHeight: candidate.scrollHeight,
+      })),
   );
-  expect(scrollPanes.length).toBeGreaterThan(0);
-  expect(Math.max(...scrollPanes)).toBeLessThanOrEqual(641);
+  expect(verticalScrollers).toEqual([]);
+  await expect(
+    page.getByRole("button", { name: "Back to results", exact: true }),
+  ).toHaveCount(0);
   await sessions.getByRole("button", { name: "Filters", exact: true }).click();
   await expect(
     page.getByRole("button", { name: "Add filter", exact: true }),
@@ -393,7 +486,7 @@ test("deduplicates matching targets while retaining mismatched and unaligned evi
 test.describe("large comparison", () => {
   test.use({ runCount: 100 });
 
-  test("contains both axes of the matrix and compact plots without widening the document", async ({
+  test("expands in the main page and collapses large sections with the keyboard", async ({
     page,
     population,
   }) => {
@@ -415,27 +508,18 @@ test.describe("large comparison", () => {
     await expect(
       table.getByRole("row").first().getByRole("columnheader"),
     ).toHaveCount(101);
-    const bounds = await matrix.evaluate((element) => ({
+    const matrixBounds = await matrix.evaluate((element) => ({
       height: element.getBoundingClientRect().height,
       width: element.clientWidth,
       scrollWidth: element.scrollWidth,
       scrollHeight: element.scrollHeight,
       clientHeight: element.clientHeight,
     }));
-    expect(bounds.height).toBeLessThanOrEqual(451);
-    expect(bounds.scrollWidth).toBeGreaterThan(bounds.width);
-    expect(bounds.scrollHeight).toBeGreaterThan(bounds.clientHeight);
-    const documentBounds = await page.evaluate(() => ({
-      width: document.documentElement.clientWidth,
-      scrollWidth: document.documentElement.scrollWidth,
-      height: window.innerHeight,
-      scrollHeight: document.documentElement.scrollHeight,
-    }));
-    expect(documentBounds.scrollWidth).toBeLessThanOrEqual(
-      documentBounds.width + 1,
-    );
-    expect(documentBounds.scrollHeight).toBeLessThanOrEqual(
-      documentBounds.height * 2,
+    expect(matrixBounds.height).toBeGreaterThan(700);
+    expect(matrixBounds.scrollWidth).toBeGreaterThanOrEqual(24200);
+    expect(matrixBounds.scrollWidth).toBeGreaterThan(matrixBounds.width);
+    expect(matrixBounds.scrollHeight).toBeLessThanOrEqual(
+      matrixBounds.clientHeight + 1,
     );
     const plots = page.getByRole("region", {
       name: "Episode score plots",
@@ -449,8 +533,34 @@ test.describe("large comparison", () => {
       scrollHeight: element.scrollHeight,
       clientHeight: element.clientHeight,
     }));
-    expect(plotBounds.height).toBeLessThanOrEqual(641);
-    expect(plotBounds.scrollHeight).toBeGreaterThan(plotBounds.clientHeight);
+    expect(plotBounds.height).toBeGreaterThan(5000);
+    expect(plotBounds.scrollHeight).toBeLessThanOrEqual(
+      plotBounds.clientHeight + 1,
+    );
+    const documentBounds = await page.evaluate(() => ({
+      width: document.documentElement.clientWidth,
+      scrollWidth: document.documentElement.scrollWidth,
+    }));
+    expect(documentBounds.scrollWidth).toBeLessThanOrEqual(
+      documentBounds.width + 1,
+    );
+    const flowHeight = (button) =>
+      button.evaluate((element) => {
+        for (
+          let parent = element.parentElement;
+          parent;
+          parent = parent.parentElement
+        ) {
+          if (/auto|scroll/.test(getComputedStyle(parent).overflowY))
+            return parent.scrollHeight;
+        }
+        return document.documentElement.scrollHeight;
+      });
+    const expandedHeight = await flowHeight(
+      sectionButton(page, "Episode scores"),
+    );
+    expect(expandedHeight).toBeGreaterThan(5000);
+    await sectionButton(page, "Results overview").scrollIntoViewIfNeeded();
     await page.screenshot({
       path: test.info().outputPath("hundred-runs-viewport.png"),
     });
@@ -458,9 +568,61 @@ test.describe("large comparison", () => {
       path: test.info().outputPath("hundred-runs-full-page.png"),
       fullPage: true,
     });
-    await matrix.scrollIntoViewIfNeeded();
+    await page
+      .getByRole("heading", { name: "Scenario/target matrix", exact: true })
+      .evaluate((element) =>
+        element.scrollIntoView({
+          block: "start",
+          inline: "nearest",
+          behavior: "instant",
+        }),
+      );
     await page.screenshot({
       path: test.info().outputPath("hundred-runs-matrix.png"),
     });
+    for (const [name, key] of [
+      ["Episode scores", "Space"],
+      ["Scenario/target matrix", "Enter"],
+      ["Results overview", "Space"],
+    ]) {
+      const button = sectionButton(page, name);
+      await button.focus();
+      await expect(button).toBeInViewport();
+      await page.keyboard.press(key);
+      await expect(button).toHaveAttribute("aria-expanded", "false");
+      await expect(button.getByText("Expand", { exact: true })).toBeVisible();
+      const regionName =
+        name === "Episode scores"
+          ? "Episode score plots"
+          : name === "Scenario/target matrix"
+            ? "Scenario and target score matrix"
+            : "Dashboard scope";
+      await expect(
+        page.getByRole("region", {
+          name: regionName,
+          exact: true,
+          includeHidden: true,
+        }),
+      ).not.toBeVisible();
+    }
+    const collapsedHeight = await flowHeight(
+      sectionButton(page, "Episode scores"),
+    );
+    expect(collapsedHeight).toBeLessThan(expandedHeight / 3);
+    for (const name of [
+      "Results overview",
+      "Episode scores",
+      "Scenario/target matrix",
+      "Sessions (episodes)",
+    ]) {
+      await expect(sectionButton(page, name)).toBeInViewport();
+    }
+    await sectionButton(page, "Scenario/target matrix").focus();
+    await page.keyboard.press("Enter");
+    await expect(sectionButton(page, "Scenario/target matrix")).toHaveAttribute(
+      "aria-expanded",
+      "true",
+    );
+    await expect(table.getByRole("row")).toHaveCount(25);
   });
 });
