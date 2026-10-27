@@ -21,13 +21,15 @@ See [server setup](SERVER.md#quick-start).
 Open **Open World results** in the experiment's Evaluation navigation.
 **Results overview** shows run, scenario/target pair, and episode counts.
 Missing scores, target mismatches, and metadata conflicts link to affected
-sessions. **Runs** opens the experiment's **Model training** runs table.
+sessions. **Runs** opens the experiment's **Evaluation runs** table, including
+recorded final score metrics. Use its columns and comparisons to inspect runs.
 
-**Performance by run** separates recorded configurations by run, ADM, model,
-driver, and provenance. **Open run** shows full run details; the **scored episodes**
-count opens the contributing sessions. The mean gives each scored scenario and
-evaluated target pair equal weight, averaging repeated scored episodes within
-each pair first.
+**Episode scores**, **Scenario/target matrix**, and **Sessions (episodes)** have
+collapsible headers. Plots and tables scroll within bounded sections. Sessions
+start collapsed and open when a chart, matrix, or review link selects episodes.
+
+The plot mean gives each scored scenario and evaluated target pair equal weight,
+averaging repeated scored episodes within each pair first.
 The evaluated target comes from the recorded TA3 assessment; requested action
 targets are retained separately. Configurations explicitly recorded as unaligned
 are labelled **Unaligned**. An absent requested target alone does not establish
@@ -38,18 +40,23 @@ Missing scores are excluded, never treated as zero. This differs from the
 importer's [episode-weighted run mean](INGESTION.md#run-summary-scores) when
 repetition counts differ. Check coverage and source revisions before comparing runs.
 
-**Episode scores** shows a clickable dot for each scored episode and a diamond
-for the mean. Hover or focus a point for its score and metadata. The axis is fixed
+**Episode scores** shows clickable score markers and a diamond for the mean.
+Episodes with exactly equal scores share a counted marker; selecting it opens
+all contributing episodes. Nearby distinct scores remain separate. Hover or focus
+a marker for its score and metadata. The axis is fixed
 from 0 to 1; out-of-range scores appear at the nearest boundary, with their raw
-values in tooltips and summaries. Tooltips show evaluated and requested targets
-separately. Missing scores remain accessible through the overview and session
-table.
+values in tooltips and summaries. Tooltips show a matching evaluated and requested
+target once, with separate requested context for mismatched, unaligned, or missing
+targets. Missing scores remain accessible through the overview and session table.
 
 The **Scenario/target matrix** shows scores by configuration, scenario, and
 **Evaluated target**. Scored episodes use the target reported by TA3, including
 unaligned configurations that were scored against that target. Unscored episodes
 appear in separate rows labelled **Requested target**; they are not assigned an
-inferred evaluated target.
+inferred evaluated target. Compact row and column labels keep the matrix dense;
+hover or focus a case for its full IDs, or use a run's information button for
+its configuration, provenance, and run details link. Headers and case labels stay
+visible while scrolling.
 Repeated episodes show a count; incomplete results show scored/total counts.
 Missing scores and absent episodes are distinct. Select a row for that case
 across runs, a column for that configuration, or a cell for its contributing
