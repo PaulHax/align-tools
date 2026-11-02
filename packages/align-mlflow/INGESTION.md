@@ -52,6 +52,56 @@ Available raw logs are saved automatically as downloadable run artifacts. Watch 
 
 If saved timing cannot be recovered, imports warn and new actions resume after the last confirmed trace with unknown durations. Existing traces keep their timestamps.
 
+## Decision process evidence
+
+New imports expose `evidence.process` on each decision root alongside the original
+source JSON. The versioned representation contains named phases, recorded
+activities, bounded payload previews, exact source references, and capture gaps.
+Process structure does not require component timing or wall-clock timestamps.
+
+The importer consumes existing producer formats:
+
+| Source | Process evidence |
+| --- | --- |
+| Pipeline components | Component metadata, attributed prompts and responses, cache status, and recorded selection data |
+| LangGraph | Observation, proposal attempts, validation feedback, and captured proposal prompts |
+| Legacy LangChain and tool variants | Saved decision metadata and matched agent/toolkit log sections |
+| Correlated decision/reviewer logs | Model and tool exchanges, review stages, failed attempts, and verified environment outcomes |
+
+Legacy action logs are associated only after their action objects match the saved
+records. Correlated logs also require matching occurrence and call identities plus
+a verified execution. Uncertain or incomplete matches remain unassigned. A
+proposal does not establish that an action executed, and proposal-attempt counts
+do not establish model-call counts.
+
+Payload previews are bounded. Full source files are retained once as immutable
+artifacts; log references include line and byte ranges when exact offsets are
+available. The viewer loads selected ranges on demand. Unknown metadata is
+preserved, and an uncaptured request or result cannot be reconstructed by parsing.
+
+### Refresh existing decision evidence
+
+For an existing local MLflow 3.17.2 SQLite store, back up the database and stop
+other importers before refreshing:
+
+```bash
+uv run --no-sync align-mlflow refresh-cards \
+  --tracking-uri sqlite:////absolute/path/to/mlflow.db \
+  --experiment 'Open World Phase 2' \
+  --source /path/to/original/runs \
+  --dry-run
+```
+
+Remove `--dry-run` to apply the refresh. `--source` accepts one run or a parent
+directory. Its original records must match the confirmed import before any log
+evidence is attached. Trace identities, timing, child spans, and assessments are
+retained. Repeating the command skips current payloads.
+
+Without `--source`, the command uses preserved JSON and available saved excerpts.
+Supply the original runs to enrich missing log detail and exact byte references.
+Producer logging helpers or a shared event format are optional future work; this
+refresh consumes the files that existing ADMs already write.
+
 ## Server and experiment
 
 - **`MLFLOW_TRACKING_URI`:** server URL. Database writes and artifact uploads go through HTTP. Existing `file://` artifact locations still require filesystem access until migrated.

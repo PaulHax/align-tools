@@ -105,6 +105,32 @@ In **Traces**, use **Views** to save filters and column layouts for the experime
 saved view restores its filters and columns. Views are optional personal layouts;
 setup and ingestion do not create them, and saving one needs no server restart.
 
+## Inspect a decision
+
+Session pages show the recorded environment changes and selected action first.
+Expand **Decision process** to inspect the ADM's recorded phases, then expand an
+activity for its inputs, outputs, and source references. Selecting a phase beneath
+the chosen decision in the sidebar opens the same inline detail. It does not
+change the decision selected for comparison.
+
+Reviewer summaries distinguish the proposal, reviewer recommendation, computed
+suggestion, and final action. Influence, confidence, estimated improvement, swap
+threshold, and whether guidance was followed appear when recorded. Missing
+payloads and uncertain log associations remain explicit. Cache hits are separate
+from fresh model invocations.
+
+**Recorded environment state** exposes the original decision JSON. Process
+payloads use their exact recorded JSON fields or source-log ranges. **Load full
+payload** reads a selected log range on demand; **Open source artifact** provides
+the complete captured log. Large payloads above the inline limit remain available
+through their source artifact.
+
+The chevron at the assessment panel's outer edge collapses and expands **Session
+assessments**. The same control remains in place while collapsed. Decision
+selection, panel width, and unsaved notes are retained.
+
+Older imports can gain process evidence with the [card refresh command](INGESTION.md#refresh-existing-decision-evidence).
+
 ## Compare sessions and decisions
 
 In the grouped **Traces** table or **Sessions (episodes)**, check sessions and

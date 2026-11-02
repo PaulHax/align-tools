@@ -4418,11 +4418,14 @@
 +};
 --- /dev/null
 +++ b/mlflow/server/js/src/experiment-tracking/pages/experiment-chat-sessions/single-chat-view/ExperimentChatSessionViewer.tsx
-@@ -0,0 +1,83 @@
-+import { useCallback, useEffect, useRef, useState } from 'react';
+@@ -0,0 +1,131 @@
++import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
++import { Button, Typography, useDesignSystemTheme } from '@databricks/design-system';
 +import { getModelTraceId, type ModelTrace, type ModelTraceInfoV3 } from '@databricks/web-shared/model-trace-explorer';
 +import { ExperimentSingleChatConversation } from './ExperimentSingleChatConversation';
 +import { ExperimentSingleChatSessionSidebar } from './ExperimentSingleChatSessionSidebar';
++import { getOpenWorldDecision } from './OpenWorldDecisionProcess';
++import type { DecisionPhaseSelection } from './decisionProcessTypes';
 +
 +export const orderSessionTraces = (traces: ModelTraceInfoV3[]) => {
 +  const hasSteps = traces.every((trace) => /^[1-9]\d*$/.test(trace.tags?.['step'] ?? ''));
@@ -4449,8 +4452,12 @@
 +  onOpenTrace: (trace: ModelTrace) => void;
 +  getAssessmentTitle: (assessmentName: string) => string;
 +}) => {
++  const { theme } = useDesignSystemTheme();
 +  const chatRefs = useRef<{ [traceId: string]: HTMLDivElement }>({});
 +  const [hoveredTurnIndex, setHoveredTurnIndex] = useState<number | null>(null);
++  const [phaseSelection, setPhaseSelection] = useState<DecisionPhaseSelection>();
++  const selectedTrace = selectedTurnIndex !== null ? traces[selectedTurnIndex] : undefined;
++  const selectedProcess = useMemo(() => selectedTrace && getOpenWorldDecision(selectedTrace)?.process, [selectedTrace]);
 +  const activeTurnIndex = hoveredTurnIndex ?? selectedTurnIndex;
 +  const selectedTraceId =
 +    selectedTurnIndex !== null && traces[selectedTurnIndex] ? getModelTraceId(traces[selectedTurnIndex]) : undefined;
@@ -4468,6 +4475,7 @@
 +    locallySelectedTraceId.current = undefined;
 +  }, [selectedTraceId, scrollToTrace]);
 +  const selectTurn = (index: number) => {
++    setPhaseSelection(undefined);
 +    locallySelectedTraceId.current = getModelTraceId(traces[index]);
 +    onSelectTurn(index);
 +    setHoveredTurnIndex(index);
@@ -4485,6 +4493,45 @@
 +            selectTurn(index);
 +            scrollToTrace(getModelTraceId(traces[index]));
 +          }}
++          renderTurnChildren={(trace) =>
++            selectedProcess?.phases.length ? (
++              <div css={{ paddingLeft: theme.spacing.sm, paddingBottom: theme.spacing.sm }}>
++                <Typography.Text color="secondary">Decision process</Typography.Text>
++                {selectedProcess.phases.map((phase) => (
++                  <Button
++                    key={phase.id}
++                    componentId="mlflow.session.open-process-phase"
++                    type="tertiary"
++                    size="small"
++                    aria-label={`Open ${phase.label} phase`}
++                    aria-pressed={
++                      phaseSelection?.traceId === getModelTraceId(trace) && phaseSelection.phaseId === phase.id
++                    }
++                    css={{
++                      display: 'flex',
++                      width: '100%',
++                      height: 'auto',
++                      justifyContent: 'flex-start',
++                      whiteSpace: 'normal',
++                      textAlign: 'left',
++                      overflowWrap: 'anywhere',
++                      marginTop: theme.spacing.xs,
++                      '& > span': { width: '100%' },
++                    }}
++                    onClick={() =>
++                      setPhaseSelection((current) => ({
++                        traceId: getModelTraceId(trace),
++                        phaseId: phase.id,
++                        revision: (current?.revision ?? 0) + 1,
++                      }))
++                    }
++                  >
++                    <span css={{ display: 'block', width: '100%', textAlign: 'left' }}>{phase.label}</span>
++                  </Button>
++                ))}
++              </div>
++            ) : null
++          }
 +        />
 +      </nav>
 +      <ExperimentSingleChatConversation
@@ -4498,23 +4545,38 @@
 +        }}
 +        setSelectedTrace={onOpenTrace}
 +        getAssessmentTitle={getAssessmentTitle}
++        phaseSelection={phaseSelection}
 +      />
 +    </div>
 +  );
 +};
 --- a/mlflow/server/js/src/experiment-tracking/pages/experiment-chat-sessions/single-chat-view/ExperimentSingleChatConversation.tsx
 +++ b/mlflow/server/js/src/experiment-tracking/pages/experiment-chat-sessions/single-chat-view/ExperimentSingleChatConversation.tsx
-@@ -16,23 +16,32 @@
+@@ -4,6 +4,7 @@
+   SingleChatTurnAssessments,
+   shouldEnableAssessmentsInSessions,
+   type ModelTrace,
++  type ModelTraceInfoV3,
+ } from '@databricks/web-shared/model-trace-explorer';
+ import {
+   Button,
+@@ -14,26 +15,40 @@
+   useDesignSystemTheme,
+ } from '@databricks/design-system';
  import { FormattedMessage } from '@databricks/i18n';
- import type { MutableRefObject } from 'react';
+-import type { MutableRefObject } from 'react';
++import { useMemo, type MutableRefObject } from 'react';
  import { ExperimentSingleChatIcon } from './ExperimentSingleChatIcon';
 -import { noop } from 'lodash';
++import { getOpenWorldDecision, OpenWorldDecisionContent } from './OpenWorldDecisionProcess';
++import type { DecisionPhaseSelection } from './decisionProcessTypes';
 +
 +type ConversationProps = {
 +  traces: ModelTrace[];
 +  setSelectedTrace?: (trace: ModelTrace) => void;
 +  chatRefs?: MutableRefObject<{ [traceId: string]: HTMLDivElement }>;
 +  getAssessmentTitle: (assessmentName: string) => string;
++  phaseSelection?: DecisionPhaseSelection;
 +} & (
 +  | {
 +      selection: {
@@ -4544,17 +4606,29 @@
 -  chatRefs?: MutableRefObject<{ [traceId: string]: HTMLDivElement }>;
 -  getAssessmentTitle: (assessmentName: string) => string;
 -}) => {
++  phaseSelection,
 +}: ConversationProps) => {
    const { theme } = useDesignSystemTheme();
++  const openWorldDecisions = useMemo(() => traces.map(getOpenWorldDecision), [traces]);
  
    if (!traces) {
-@@ -54,11 +63,22 @@
+     return null;
+@@ -41,6 +56,7 @@
+ 
+   return (
+     <div
++      data-session-conversation
+       css={{
+         display: 'flex',
+         flexDirection: 'column',
+@@ -54,11 +70,23 @@
        }}
      >
        {traces.map((trace, index) => {
 -        const isActive = selectedTurnIndex === index;
 +        const isActive = selection?.activeTurnIndex === index;
          const traceId = getModelTraceId(trace);
++        const openWorldDecision = openWorldDecisions[index];
 +        const traceName = (!Array.isArray(trace.info.tags) && trace.info.tags?.['mlflow.traceName']) || (
 +          <FormattedMessage
 +            defaultMessage="Turn {turnNumber}"
@@ -4572,8 +4646,12 @@
              ref={(el) => {
                if (el && chatRefs) {
                  chatRefs.current[traceId] = el;
-@@ -75,17 +95,35 @@
-               padding: theme.spacing.md,
+@@ -72,20 +100,38 @@
+               gap: theme.spacing.sm,
+               backgroundColor: isActive ? theme.colors.actionDefaultBackgroundHover : undefined,
+               border: `1px solid ${theme.colors.border}`,
+-              padding: theme.spacing.md,
++              padding: openWorldDecision ? theme.spacing.sm : theme.spacing.md,
                borderRadius: theme.borders.borderRadiusMd,
              }}
 -            onMouseEnter={() => setSelectedTurnIndex(index)}
@@ -4584,7 +4662,7 @@
 +              if (
 +                event.target instanceof Element &&
 +                event.target.closest(
-+                  'button, a, input, textarea, select, summary, [role="button"], [role="link"], [role="checkbox"], [contenteditable="true"]',
++                  'button, a, input, textarea, select, summary, [role="button"], [role="link"], [role="checkbox"], [contenteditable="true"], [data-decision-process]',
 +                )
 +              ) {
 +                return;
@@ -4616,6 +4694,24 @@
                <div css={{ flex: 1 }} />
                <Button
                  componentId="mlflow.experiment.chat-session.view-trace"
+@@ -106,8 +152,15 @@
+                 />
+               </Button>
+             </div>
+-            {/* TODO: add turn-level metrics */}
+-            <SingleChatTurnMessages key={traceId} trace={trace} />
++            {openWorldDecision ? (
++              <OpenWorldDecisionContent
++                decision={openWorldDecision}
++                runId={(trace.info as ModelTraceInfoV3).trace_metadata?.['mlflow.sourceRun']}
++                phaseSelection={phaseSelection?.traceId === traceId ? phaseSelection : undefined}
++              />
++            ) : (
++              <SingleChatTurnMessages key={traceId} trace={trace} />
++            )}
+             {shouldEnableAssessmentsInSessions() && (
+               <SingleChatTurnAssessments trace={trace} getAssessmentTitle={getAssessmentTitle} />
+             )}
 --- a/mlflow/server/js/src/experiment-tracking/pages/experiment-chat-sessions/single-chat-view/ExperimentSingleChatSessionPage.test.tsx
 +++ b/mlflow/server/js/src/experiment-tracking/pages/experiment-chat-sessions/single-chat-view/ExperimentSingleChatSessionPage.test.tsx
 @@ -6,6 +6,13 @@
@@ -4697,7 +4793,7 @@
  import { ExperimentSingleChatSessionScoreResults } from './ExperimentSingleChatSessionScoreResults';
  import { TracesV3Toolbar } from '../../../components/experiment-page/components/traces-v3/TracesV3Toolbar';
  import type { ModelTrace, ModelTraceInfoV3 } from '@databricks/web-shared/model-trace-explorer';
-@@ -31,17 +31,12 @@
+@@ -31,26 +31,24 @@
    shouldEnableModelTraceExplorerCustomTraceView,
    shouldUseTracesV4API,
  } from '@databricks/web-shared/model-trace-explorer';
@@ -4719,8 +4815,11 @@
  import { SELECTED_TRACE_ID_QUERY_PARAM } from '../../../constants';
  import { useExperimentSingleChatMetrics } from './useExperimentSingleChatMetrics';
  import { ExperimentSingleChatSessionMetrics } from './ExperimentSingleChatSessionMetrics';
-@@ -51,6 +46,9 @@
- import { first } from 'lodash';
+ import { useRegisterAssistantContext } from '@mlflow/mlflow/src/assistant';
+ import { ExportTracesToDatasetModal } from '../../experiment-evaluation-datasets/components/ExportTracesToDatasetModal';
+ import { AssistantAwareDrawer } from '@mlflow/mlflow/src/common/components/AssistantAwareDrawer';
+-import { first } from 'lodash';
++import { first, uniqueId } from 'lodash';
  import { useRunScorerInTracesViewConfiguration } from '../../experiment-scorers/hooks/useRunScorerInTracesViewConfiguration';
  import { useOptionalCustomViewDefinition } from '@databricks/web-shared/model-trace-explorer/custom-view/CustomViewDefinitionContext';
 +import { getSessionDisplayName } from '@databricks/web-shared/traces-table';
@@ -4729,7 +4828,7 @@
  
  // Custom View pulls in @a2ui (ESM-only) transitively via ExperimentCustomViewProvider.
  // Lazy-load it so the chat-session route only pulls @a2ui into the graph when enabled.
-@@ -97,16 +95,20 @@
+@@ -97,16 +95,22 @@
    );
  };
  
@@ -4741,6 +4840,8 @@
    const [selectedTurnIndex, setSelectedTurnIndex] = useState<number | null>(null);
    const [selectedTrace, setSelectedTrace] = useState<ModelTrace | null>(null);
 -  const chatRefs = useRef<{ [traceId: string]: HTMLDivElement }>({});
++  const [sessionAssessmentsExpanded, setSessionAssessmentsExpanded] = useState(true);
++  const [sessionAssessmentsId] = useState(() => uniqueId('session-assessments-'));
  
    invariant(experimentId, 'Experiment ID must be defined');
    invariant(sessionId, 'Session ID must be defined');
@@ -4752,7 +4853,7 @@
  
    useRegisterAssistantContext('sessionId', sessionId);
    useRegisterAssistantContext('traceId', selectedTrace ? getModelTraceId(selectedTrace) : null);
-@@ -136,11 +138,11 @@
+@@ -136,11 +140,11 @@
      locations: traceSearchLocations,
      filters,
      disabled: false,
@@ -4767,7 +4868,7 @@
  
    const chatSessionMetrics = useExperimentSingleChatMetrics({ traceInfos: sortedTraceInfos });
  
-@@ -151,16 +153,15 @@
+@@ -151,16 +155,15 @@
      isLoading: isLoadingTraceDatas,
      invalidateSingleTraceQuery,
    } = useGetTraces(getTrace, sortedTraceInfos);
@@ -4787,7 +4888,7 @@
        }
      }
    }, [selectedTraceIdFromUrl, traces, isLoadingTraceDatas]);
-@@ -172,10 +173,16 @@
+@@ -172,10 +175,16 @@
        invalidateTraceQuery={invalidateSingleTraceQuery}
      >
        <div css={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
@@ -4804,7 +4905,7 @@
            css={
              shouldEnableAssessmentsInSessions()
                ? {
-@@ -195,19 +202,13 @@
+@@ -195,23 +204,20 @@
            </div>
          ) : (
            <div css={{ display: 'flex', flex: 1, minHeight: 0 }}>
@@ -4829,7 +4930,14 @@
                getAssessmentTitle={getAssessmentTitle}
              />
              {shouldEnableAssessmentsInSessions() && (
-@@ -225,32 +226,24 @@
+               <ExperimentSingleChatSessionScoreResults
++                id={sessionAssessmentsId}
++                expanded={sessionAssessmentsExpanded}
++                onToggle={() => setSessionAssessmentsExpanded((expanded) => !expanded)}
+                 traces={traces ?? []}
+                 sessionId={sessionId}
+                 onRefreshSession={() => {
+@@ -225,32 +231,24 @@
              )}
            </div>
          )}
@@ -4870,7 +4978,7 @@
            >
              <div
                css={{
-@@ -277,6 +270,34 @@
+@@ -277,6 +275,34 @@
    );
  };
  
@@ -4905,9 +5013,196 @@
  const ExperimentSingleChatSessionPage = withErrorBoundary(
    ErrorUtils.mlflowServices.CHAT_SESSIONS,
    ExperimentSingleChatSessionPageImpl,
+--- a/mlflow/server/js/src/experiment-tracking/pages/experiment-chat-sessions/single-chat-view/ExperimentSingleChatSessionScoreResults.tsx
++++ b/mlflow/server/js/src/experiment-tracking/pages/experiment-chat-sessions/single-chat-view/ExperimentSingleChatSessionScoreResults.tsx
+@@ -1,4 +1,11 @@
+-import { Typography, useDesignSystemTheme } from '@databricks/design-system';
++import {
++  Button,
++  ChevronLeftIcon,
++  ChevronRightIcon,
++  Tooltip,
++  Typography,
++  useDesignSystemTheme,
++} from '@databricks/design-system';
+ import {
+   isSessionLevelAssessment,
+   ModelTraceExplorerUpdateTraceContextProvider,
+@@ -10,7 +17,7 @@
+ } from '@databricks/web-shared/model-trace-explorer';
+ import { first } from 'lodash';
+ import { useEffect, useMemo } from 'react';
+-import { FormattedMessage } from 'react-intl';
++import { FormattedMessage, useIntl } from 'react-intl';
+ import { ResizableBox } from 'react-resizable';
+ import { isEvaluatingTracesInDetailsViewEnabled } from '@databricks/web-shared/model-trace-explorer';
+ import { useRunScorerInTracesViewConfiguration } from '../../experiment-scorers/hooks/useRunScorerInTracesViewConfiguration';
+@@ -22,13 +29,29 @@
+ export const ExperimentSingleChatSessionScoreResults = ({
+   traces,
+   sessionId,
++  id,
++  expanded,
++  onToggle,
+   onRefreshSession,
+ }: {
+   traces: ModelTrace[];
+   sessionId: string;
++  id: string;
++  expanded: boolean;
++  onToggle: () => void;
+   onRefreshSession?: () => void;
+ }) => {
+   const { theme } = useDesignSystemTheme();
++  const intl = useIntl();
++  const toggleLabel = expanded
++    ? intl.formatMessage({
++        defaultMessage: 'Collapse session assessments',
++        description: 'Label for collapsing the session assessment panel',
++      })
++    : intl.formatMessage({
++        defaultMessage: 'Expand session assessments',
++        description: 'Label for expanding the session assessment panel',
++      });
+ 
+   const firstTraceInfoInSession = useMemo(() => {
+     const traceInfo = first(traces)?.info;
+@@ -67,60 +90,88 @@
+   return (
+     <div
+       css={{
++        position: 'relative',
+         display: 'flex',
+         flexDirection: 'column',
++        flexShrink: 0,
+         minHeight: 0,
+-        paddingTop: theme.spacing.sm,
+-        overflow: 'auto',
++        width: expanded ? undefined : theme.spacing.lg + theme.spacing.sm,
++        borderLeft: expanded ? undefined : `1px solid ${theme.colors.border}`,
+       }}
+     >
+-      <ResizableBox
+-        width={initialWidth}
+-        height={undefined}
+-        axis="x"
+-        resizeHandles={['w']}
+-        minConstraints={[initialWidth, 150]}
+-        maxConstraints={[maxWidth, 150]}
+-        handle={
+-          <div
+-            css={{
+-              width: theme.spacing.sm,
+-              left: -(theme.spacing.sm / 2),
+-              height: '100%',
+-              position: 'absolute',
+-              top: 0,
+-              cursor: 'ew-resize',
+-              '&:hover': {
+-                backgroundColor: theme.colors.border,
+-                opacity: 0.5,
+-              },
+-            }}
+-          />
+-        }
++      <Tooltip componentId="mlflow.session.assessments-toggle-tooltip" content={toggleLabel}>
++        <Button
++          componentId="mlflow.session.toggle-assessments"
++          type="tertiary"
++          size="small"
++          icon={expanded ? <ChevronRightIcon /> : <ChevronLeftIcon />}
++          aria-label={toggleLabel}
++          aria-expanded={expanded}
++          aria-controls={id}
++          onClick={onToggle}
++          css={{ position: 'absolute', right: theme.spacing.xs, top: theme.spacing.sm * 2, zIndex: 1 }}
++        />
++      </Tooltip>
++      <div
++        id={id}
++        hidden={!expanded}
+         css={{
+-          position: 'relative',
+-          display: 'flex',
+-          borderLeft: `1px solid ${theme.colors.border}`,
+-          marginLeft: theme.spacing.sm,
+-          paddingLeft: theme.spacing.sm,
++          display: expanded ? 'flex' : 'none',
++          flexDirection: 'column',
+           flex: 1,
++          minHeight: 0,
++          paddingTop: theme.spacing.sm,
++          overflow: 'auto',
+         }}
+       >
+-        {/* Repeat the context from the level above, additionally adding proper trace info and chat session ID */}
+-        <ModelTraceExplorerUpdateTraceContextProvider
+-          {...traceUpdateContext}
+-          modelTraceInfo={firstTraceInfoInSession}
+-          chatSessionId={sessionId}
++        <ResizableBox
++          width={initialWidth}
++          height={undefined}
++          axis="x"
++          resizeHandles={['w']}
++          minConstraints={[initialWidth, 150]}
++          maxConstraints={[maxWidth, 150]}
++          handle={
++            <div
++              css={{
++                width: theme.spacing.sm,
++                left: -(theme.spacing.sm / 2),
++                height: '100%',
++                position: 'absolute',
++                top: 0,
++                cursor: 'ew-resize',
++                '&:hover': {
++                  backgroundColor: theme.colors.border,
++                  opacity: 0.5,
++                },
++              }}
++            />
++          }
++          css={{
++            position: 'relative',
++            display: 'flex',
++            borderLeft: `1px solid ${theme.colors.border}`,
++            marginLeft: theme.spacing.sm,
++            paddingLeft: theme.spacing.sm,
++            flex: 1,
++          }}
+         >
+-          {isEvaluatingTracesInDetailsViewEnabled() ? (
+-            <RunJudgeContextProvider onRefreshSession={onRefreshSession} sessionId={sessionId}>
+-              {assessmentPaneElement}
+-            </RunJudgeContextProvider>
+-          ) : (
+-            assessmentPaneElement
+-          )}
+-        </ModelTraceExplorerUpdateTraceContextProvider>
+-      </ResizableBox>
++          {/* Repeat the context from the level above, additionally adding proper trace info and chat session ID */}
++          <ModelTraceExplorerUpdateTraceContextProvider
++            {...traceUpdateContext}
++            modelTraceInfo={firstTraceInfoInSession}
++            chatSessionId={sessionId}
++          >
++            {isEvaluatingTracesInDetailsViewEnabled() ? (
++              <RunJudgeContextProvider onRefreshSession={onRefreshSession} sessionId={sessionId}>
++                {assessmentPaneElement}
++              </RunJudgeContextProvider>
++            ) : (
++              assessmentPaneElement
++            )}
++          </ModelTraceExplorerUpdateTraceContextProvider>
++        </ResizableBox>
++      </div>
+     </div>
+   );
+ };
 --- a/mlflow/server/js/src/experiment-tracking/pages/experiment-chat-sessions/single-chat-view/ExperimentSingleChatSessionSidebar.tsx
 +++ b/mlflow/server/js/src/experiment-tracking/pages/experiment-chat-sessions/single-chat-view/ExperimentSingleChatSessionSidebar.tsx
-@@ -1,34 +1,22 @@
+@@ -1,34 +1,25 @@
 -import { ChainIcon, TitleSkeleton, Typography, useDesignSystemTheme } from '@databricks/design-system';
 -import { getModelTraceId, type ModelTrace, type ModelTraceInfoV3 } from '@databricks/web-shared/model-trace-explorer';
 -import type { MutableRefObject } from 'react';
@@ -4916,6 +5211,7 @@
 +import { getModelTraceId, type ModelTrace } from '@databricks/web-shared/model-trace-explorer';
  import { ExperimentSingleChatIcon } from './ExperimentSingleChatIcon';
  import { FormattedMessage } from 'react-intl';
++import type { ReactNode } from 'react';
  
  export const ExperimentSingleChatSessionSidebar = ({
    traces,
@@ -4926,6 +5222,7 @@
 -  chatRefs,
 +  onActivateTurn,
 +  onSelectTurn,
++  renderTurnChildren,
  }: {
    traces: ModelTrace[];
 +  activeTurnIndex: number | null;
@@ -4935,6 +5232,7 @@
 -  chatRefs: MutableRefObject<{ [traceId: string]: HTMLDivElement }>;
 +  onActivateTurn: (turnIndex: number) => void;
 +  onSelectTurn: (turnIndex: number) => void;
++  renderTurnChildren?: (trace: ModelTrace, turnIndex: number) => ReactNode;
  }) => {
    const { theme } = useDesignSystemTheme();
 -
@@ -4950,7 +5248,7 @@
  
    if (!traces) {
      return null;
-@@ -38,7 +26,8 @@
+@@ -38,7 +29,8 @@
      <div
        css={{
          minHeight: 0,
@@ -4960,35 +5258,49 @@
          borderRight: `1px solid ${theme.colors.border}`,
          overflow: 'auto',
          paddingTop: theme.spacing.sm,
-@@ -48,26 +37,37 @@
+@@ -46,29 +38,42 @@
+       }}
+     >
        {traces.map((trace, index) => (
-         <div
-           key={getModelTraceId(trace)}
-+          role="button"
-+          tabIndex={0}
-+          aria-pressed={selectedTurnIndex === index}
-           css={{
-             display: 'flex',
-             alignItems: 'center',
-             gap: theme.spacing.sm,
+-        <div
+-          key={getModelTraceId(trace)}
+-          css={{
+-            display: 'flex',
+-            alignItems: 'center',
+-            gap: theme.spacing.sm,
 -            backgroundColor: selectedTurnIndex === index ? theme.colors.actionDefaultBackgroundHover : undefined,
-+            backgroundColor: activeTurnIndex === index ? theme.colors.actionDefaultBackgroundHover : undefined,
-             padding: theme.spacing.xs,
-             borderRadius: theme.borders.borderRadiusSm,
-             cursor: 'pointer',
-           }}
+-            padding: theme.spacing.xs,
+-            borderRadius: theme.borders.borderRadiusSm,
+-            cursor: 'pointer',
+-          }}
 -          onMouseEnter={() => setSelectedTurnIndex(index)}
 -          onClick={() => scrollToTrace(trace)}
-+          onMouseEnter={() => onActivateTurn(index)}
-+          onClick={() => onSelectTurn(index)}
-+          onKeyDown={(event) => {
-+            if (event.key === 'Enter' || event.key === ' ') {
-+              event.preventDefault();
-+              onSelectTurn(index);
-+            }
-+          }}
-         >
-           <ExperimentSingleChatIcon displayLink={index !== traces.length - 1} />
+-        >
+-          <ExperimentSingleChatIcon displayLink={index !== traces.length - 1} />
++        <div key={getModelTraceId(trace)}>
++          <div
++            role="button"
++            tabIndex={0}
++            aria-pressed={selectedTurnIndex === index}
++            css={{
++              display: 'flex',
++              alignItems: 'center',
++              gap: theme.spacing.sm,
++              backgroundColor: activeTurnIndex === index ? theme.colors.actionDefaultBackgroundHover : undefined,
++              padding: theme.spacing.xs,
++              borderRadius: theme.borders.borderRadiusSm,
++              cursor: 'pointer',
++            }}
++            onMouseEnter={() => onActivateTurn(index)}
++            onClick={() => onSelectTurn(index)}
++            onKeyDown={(event) => {
++              if (event.key === 'Enter' || event.key === ' ') {
++                event.preventDefault();
++                onSelectTurn(index);
++              }
++            }}
++          >
++            <ExperimentSingleChatIcon displayLink={index !== traces.length - 1} />
  
 -          <Typography.Text bold>
 -            <FormattedMessage
@@ -4996,18 +5308,22 @@
 -              description="Label for a single turn within an experiment chat session"
 -              values={{ turnNumber: index + 1 }}
 -            />
-+          <Typography.Text bold css={{ overflowWrap: 'anywhere' }}>
-+            {(!Array.isArray(trace.info.tags) && trace.info.tags?.['mlflow.traceName']) || (
-+              <FormattedMessage
-+                defaultMessage="Turn {turnNumber}"
-+                description="Label for a single turn within an experiment chat session"
-+                values={{ turnNumber: index + 1 }}
-+              />
-+            )}
-           </Typography.Text>
+-          </Typography.Text>
++            <Typography.Text bold css={{ overflowWrap: 'anywhere' }}>
++              {(!Array.isArray(trace.info.tags) && trace.info.tags?.['mlflow.traceName']) || (
++                <FormattedMessage
++                  defaultMessage="Turn {turnNumber}"
++                  description="Label for a single turn within an experiment chat session"
++                  values={{ turnNumber: index + 1 }}
++                />
++              )}
++            </Typography.Text>
++          </div>
++          {selectedTurnIndex === index && renderTurnChildren?.(trace, index)}
          </div>
        ))}
-@@ -83,7 +83,8 @@
+     </div>
+@@ -83,7 +88,8 @@
          display: 'flex',
          flexDirection: 'column',
          minHeight: 0,
@@ -5017,6 +5333,612 @@
          borderRight: `1px solid ${theme.colors.border}`,
          gap: theme.spacing.xs,
          paddingTop: theme.spacing.sm,
+--- /dev/null
++++ b/mlflow/server/js/src/experiment-tracking/pages/experiment-chat-sessions/single-chat-view/OpenWorldDecisionProcess.tsx
+@@ -0,0 +1,421 @@
++import { useEffect, useMemo, useRef, useState } from 'react';
++import { Button, Typography, useDesignSystemTheme } from '@databricks/design-system';
++import type { ModelTrace, ModelTraceSpanNode } from '@databricks/web-shared/model-trace-explorer';
++import {
++  parseModelTraceToTree,
++  tryDeserializeAttribute,
++} from '@databricks/web-shared/model-trace-explorer/ModelTraceExplorer.utils';
++import { getSpanAttribute } from '@databricks/web-shared/genai-traces-table/utils/TraceUtils';
++import { ModelTraceExplorerFieldRenderer } from '@databricks/web-shared/model-trace-explorer/field-renderers/ModelTraceExplorerFieldRenderer';
++import { loadRecordedPayload, resolveRecordedPayload, sourceArtifactUrl } from './decisionProcessPayloads';
++import type {
++  DecisionPhaseSelection,
++  DecisionProcess,
++  DecisionProcessActivity,
++  DecisionProcessPayload,
++  DecisionProcessPhase,
++  DecisionProcessSource,
++  OpenWorldDecision,
++} from './decisionProcessTypes';
++
++const asObject = (value: unknown): Record<string, unknown> | undefined =>
++  value !== null && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : undefined;
++
++const optionalString = (value: unknown) => value === undefined || typeof value === 'string';
++const isSource = (value: unknown) => {
++  const source = asObject(value);
++  const pair = (item: unknown) => Array.isArray(item) && item.length === 2 && item.every(Number.isSafeInteger);
++  return (
++    source &&
++    typeof source['file'] === 'string' &&
++    optionalString(source['json_pointer']) &&
++    optionalString(source['artifact_path']) &&
++    optionalString(source['snapshot_sha256']) &&
++    (source['record_index'] === undefined || Number.isSafeInteger(source['record_index'])) &&
++    (source['lines'] === undefined || pair(source['lines'])) &&
++    (source['byte_range'] === undefined || pair(source['byte_range']))
++  );
++};
++const isPayload = (value: unknown) => {
++  const payload = asObject(value);
++  return (
++    payload &&
++    typeof payload['preview'] === 'string' &&
++    typeof payload['truncated'] === 'boolean' &&
++    isSource(payload['source'])
++  );
++};
++const isActivity = (value: unknown) => {
++  const activity = asObject(value);
++  return (
++    activity &&
++    ['id', 'kind', 'label'].every((key) => typeof activity[key] === 'string') &&
++    optionalString(activity['status']) &&
++    (activity['inputs'] === undefined || isPayload(activity['inputs'])) &&
++    (activity['outputs'] === undefined || isPayload(activity['outputs'])) &&
++    (activity['source'] === undefined || isSource(activity['source']))
++  );
++};
++const isPhase = (value: unknown) => {
++  const phase = asObject(value);
++  return (
++    phase &&
++    typeof phase['id'] === 'string' &&
++    typeof phase['label'] === 'string' &&
++    optionalString(phase['summary']) &&
++    Array.isArray(phase['activities']) &&
++    phase['activities'].every(isActivity)
++  );
++};
++const isProcess = (value: unknown): value is DecisionProcess => {
++  const decisionProcess = asObject(value);
++  return Boolean(
++    decisionProcess &&
++    decisionProcess['schema_version'] === 'decision-process-v1' &&
++    typeof decisionProcess['producer'] === 'string' &&
++    Array.isArray(decisionProcess['phases']) &&
++    decisionProcess['phases'].every(isPhase) &&
++    Array.isArray(decisionProcess['gaps']) &&
++    decisionProcess['gaps'].every((gap) => typeof gap === 'string') &&
++    (decisionProcess['review'] === undefined || asObject(decisionProcess['review'])),
++  );
++};
++
++export const getOpenWorldDecision = (trace: ModelTrace): OpenWorldDecision | undefined => {
++  const root = trace.data?.spans ? parseModelTraceToTree(trace) : null;
++  if (!root) return undefined;
++  const inputs = asObject(root.inputs);
++  const outputs = asObject(root.outputs);
++  const decisionProcess = asObject(outputs?.['evidence'])?.['process'];
++  const validProcess = isProcess(decisionProcess);
++  if (decisionProcess !== undefined && !validProcess) return undefined;
++  if (
++    tryDeserializeAttribute(getSpanAttribute(root.attributes, 'align.card_format')) !== 'situation-action-v1' &&
++    !validProcess
++  ) {
++    return undefined;
++  }
++  return {
++    root,
++    process: validProcess ? decisionProcess : undefined,
++    inputSummary: typeof inputs?.['input'] === 'string' ? inputs['input'] : undefined,
++    outputSummary: typeof outputs?.['response'] === 'string' ? outputs['response'] : undefined,
++  };
++};
++
++const fieldData = (value: unknown) => JSON.stringify(value) ?? 'null';
++
++const SourceReference = ({ source, runId }: { source: DecisionProcessSource; runId?: string }) => {
++  const href = sourceArtifactUrl(source, runId);
++  return (
++    <div css={{ fontSize: 12, overflowWrap: 'anywhere' }}>
++      <Typography.Text bold>Source: </Typography.Text>
++      {source.file}
++      {source.lines && `, lines ${source.lines[0]}-${source.lines[1]}`}
++      {source.record_index !== undefined && `, record ${source.record_index}`}
++      {source.json_pointer && <div>{source.json_pointer}</div>}
++      {href && (
++        <div>
++          <a href={href} target="_blank" rel="noreferrer">
++            Open source artifact
++          </a>
++        </div>
++      )}
++    </div>
++  );
++};
++
++const RecordedPayload = ({
++  payload,
++  title,
++  root,
++  runId,
++}: {
++  payload?: DecisionProcessPayload;
++  title: 'Inputs' | 'Outputs';
++  root: ModelTraceSpanNode;
++  runId?: string;
++}) => {
++  const { theme } = useDesignSystemTheme();
++  const [fullPayload, setFullPayload] = useState<string>();
++  const [loading, setLoading] = useState(false);
++  const [error, setError] = useState<string>();
++  const controller = useRef<AbortController>();
++  useEffect(() => () => controller.current?.abort(), []);
++  const resolved = useMemo(() => (payload ? resolveRecordedPayload(payload, root) : undefined), [payload, root]);
++  if (!payload) {
++    return <div>{title === 'Inputs' ? 'Input context was not captured.' : 'Output was not captured.'}</div>;
++  }
++  const isPreview = !resolved?.available && fullPayload === undefined && payload.truncated;
++  const data = resolved?.available ? fieldData(resolved.value) : (fullPayload ?? payload.preview);
++  const isRawLog = payload.source.file === 'raw_align_system.log';
++  const canLoad = isPreview && Boolean(payload.source.byte_range && sourceArtifactUrl(payload.source, runId));
++  const loadFullPayload = async () => {
++    controller.current?.abort();
++    const request = new AbortController();
++    controller.current = request;
++    setLoading(true);
++    setError(undefined);
++    try {
++      const value = await loadRecordedPayload(payload.source, runId, request.signal);
++      if (!request.signal.aborted) setFullPayload(value);
++    } catch (failure) {
++      if (!request.signal.aborted) setError(failure instanceof Error ? failure.message : String(failure));
++    } finally {
++      if (!request.signal.aborted) setLoading(false);
++    }
++  };
++  return (
++    <section aria-label={title} css={{ minWidth: 0, display: 'flex', flexDirection: 'column', gap: theme.spacing.xs }}>
++      <ModelTraceExplorerFieldRenderer
++        title={title}
++        data={isRawLog ? JSON.stringify(data) : data}
++        renderMode={isRawLog ? 'text' : 'default'}
++        maxVisibleMessages={Infinity}
++      />
++      {isPreview && <div>Preview only. The complete payload is available from its recorded source.</div>}
++      {canLoad && (
++        <Button
++          componentId="mlflow.decision-process.load-payload"
++          size="small"
++          onClick={loadFullPayload}
++          disabled={loading}
++        >
++          {loading ? 'Loading payload…' : 'Load full payload'}
++        </Button>
++      )}
++      {error && <div role="alert">Could not load the complete payload. {error}</div>}
++      <SourceReference source={payload.source} runId={runId} />
++    </section>
++  );
++};
++
++const ProcessActivity = ({
++  activity,
++  root,
++  runId,
++}: {
++  activity: DecisionProcessActivity;
++  root: ModelTraceSpanNode;
++  runId?: string;
++}) => {
++  const { theme } = useDesignSystemTheme();
++  const [expanded, setExpanded] = useState(false);
++  return (
++    <details open={expanded} onToggle={(event) => setExpanded(event.currentTarget.open)} css={{ minWidth: 0 }}>
++      <summary css={{ cursor: 'pointer', padding: `${theme.spacing.xs}px 0`, overflowWrap: 'anywhere' }}>
++        <Typography.Text bold>{activity.label}</Typography.Text>
++        <Typography.Text color="secondary">
++          {' '}
++          · {activity.kind.replaceAll('_', ' ')}
++          {activity.status && ` · ${activity.status}`}
++        </Typography.Text>
++      </summary>
++      {expanded && (
++        <div
++          css={{
++            display: 'flex',
++            flexDirection: 'column',
++            minWidth: 0,
++            gap: theme.spacing.sm,
++            padding: theme.spacing.sm,
++            borderLeft: `2px solid ${theme.colors.border}`,
++          }}
++        >
++          <RecordedPayload payload={activity.inputs} title="Inputs" root={root} runId={runId} />
++          <RecordedPayload payload={activity.outputs} title="Outputs" root={root} runId={runId} />
++          {activity.source && <SourceReference source={activity.source} runId={runId} />}
++        </div>
++      )}
++    </details>
++  );
++};
++
++const ProcessPhase = ({
++  phase,
++  root,
++  runId,
++  selected,
++  selectionRevision,
++}: {
++  phase: DecisionProcessPhase;
++  root: ModelTraceSpanNode;
++  runId?: string;
++  selected: boolean;
++  selectionRevision?: number;
++}) => {
++  const { theme } = useDesignSystemTheme();
++  const [expanded, setExpanded] = useState(false);
++  const ref = useRef<HTMLDetailsElement>(null);
++  useEffect(() => {
++    if (!selected) return;
++    setExpanded(true);
++    const frame = requestAnimationFrame(() => {
++      const element = ref.current;
++      const scroller = element?.closest<HTMLElement>('[data-session-conversation]');
++      if (element && scroller) {
++        scroller.scrollTop += element.getBoundingClientRect().top - scroller.getBoundingClientRect().top;
++      }
++    });
++    return () => cancelAnimationFrame(frame);
++  }, [selected, selectionRevision]);
++  return (
++    <details
++      ref={ref}
++      open={expanded}
++      onToggle={(event) => setExpanded(event.currentTarget.open)}
++      css={{ minWidth: 0 }}
++    >
++      <summary css={{ cursor: 'pointer', padding: `${theme.spacing.xs}px 0`, overflowWrap: 'anywhere' }}>
++        <Typography.Text bold>{phase.label}</Typography.Text>
++        <Typography.Text color="secondary">
++          {' '}
++          · {phase.activities.length} {phase.activities.length === 1 ? 'activity' : 'activities'}
++        </Typography.Text>
++      </summary>
++      {expanded && (
++        <div css={{ paddingLeft: theme.spacing.sm, minWidth: 0 }}>
++          {phase.summary && <div css={{ paddingBottom: theme.spacing.xs }}>{phase.summary}</div>}
++          {phase.activities.length ? (
++            phase.activities.map((activity) => (
++              <ProcessActivity key={activity.id} activity={activity} root={root} runId={runId} />
++            ))
++          ) : (
++            <div>No invocation details were captured for this phase.</div>
++          )}
++        </div>
++      )}
++    </details>
++  );
++};
++
++const ReviewSummary = ({ review }: { review: NonNullable<DecisionProcess['review']> }) => {
++  const fields: [string, unknown][] = [
++    ['Proposed action', review.proposal],
++    ['Reviewer recommendation', review.reviewer_recommendation],
++    ['Computed suggestion', review.computed_suggestion],
++    ['Final action', review.final_action],
++    [
++      'Followed guidance',
++      review.followed_guidance === null
++        ? 'Not recorded'
++        : review.followed_guidance === undefined
++          ? undefined
++          : review.followed_guidance
++            ? 'Yes'
++            : 'No',
++    ],
++    ['Review mode', review.review_mode],
++    ['Influence', review.influence],
++    ['Confidence', review.confidence],
++    ['Estimated improvement', review.estimated_improvement],
++    ['Swap threshold', review.swap_threshold],
++    ['Strength', review.strength],
++  ];
++  return (
++    <section aria-label="Reviewer guidance and final selection">
++      <Typography.Title level={4} withoutMargins>
++        Reviewer guidance and final selection
++      </Typography.Title>
++      <dl
++        css={{
++          margin: '8px 0',
++          display: 'grid',
++          gridTemplateColumns: 'minmax(100px, 1fr) minmax(0, 2fr)',
++          gap: '4px 8px',
++          '& dt': { fontWeight: 600 },
++          '& dd': { margin: 0, overflowWrap: 'anywhere', whiteSpace: 'pre-wrap' },
++        }}
++      >
++        {fields
++          .filter(([, value]) => value !== undefined)
++          .map(([label, value]) => (
++            <div key={label} css={{ display: 'contents' }}>
++              <dt>{label}</dt>
++              <dd>{String(value)}</dd>
++            </div>
++          ))}
++      </dl>
++    </section>
++  );
++};
++
++export const OpenWorldDecisionContent = ({
++  decision,
++  runId,
++  phaseSelection,
++}: {
++  decision: OpenWorldDecision;
++  runId?: string;
++  phaseSelection?: DecisionPhaseSelection;
++}) => {
++  const { theme } = useDesignSystemTheme();
++  const [expanded, setExpanded] = useState(false);
++  const [stateExpanded, setStateExpanded] = useState(false);
++  const { root, process: decisionProcess, inputSummary, outputSummary } = decision;
++  useEffect(() => {
++    if (phaseSelection) setExpanded(true);
++  }, [phaseSelection]);
++  const sectionCss = { display: 'flex', flexDirection: 'column' as const, minWidth: 0, gap: theme.spacing.sm };
++  return (
++    <div css={sectionCss}>
++      {inputSummary && (
++        <ModelTraceExplorerFieldRenderer title="Environment" data={fieldData(inputSummary)} renderMode="default" />
++      )}
++      {outputSummary && (
++        <ModelTraceExplorerFieldRenderer title="Selected action" data={fieldData(outputSummary)} renderMode="default" />
++      )}
++      <details open={stateExpanded} onToggle={(event) => setStateExpanded(event.currentTarget.open)}>
++        <summary css={{ cursor: 'pointer' }}>Recorded environment state</summary>
++        {stateExpanded && (
++          <ModelTraceExplorerFieldRenderer
++            title="Recorded state and action"
++            data={fieldData({
++              input: asObject(root.inputs)?.['source'],
++              ...asObject(asObject(root.outputs)?.['source']),
++            })}
++            renderMode="json"
++          />
++        )}
++      </details>
++      {decisionProcess ? (
++        <details
++          data-decision-process
++          open={expanded}
++          onToggle={(event) => setExpanded(event.currentTarget.open)}
++          css={{ borderTop: `1px solid ${theme.colors.border}`, paddingTop: theme.spacing.sm }}
++        >
++          <summary css={{ cursor: 'pointer' }}>Decision process ({decisionProcess.phases.length} phases)</summary>
++          {expanded && (
++            <div css={{ ...sectionCss, paddingTop: theme.spacing.sm }}>
++              <Typography.Text color="secondary">{decisionProcess.producer}</Typography.Text>
++              {decisionProcess.review && <ReviewSummary review={decisionProcess.review} />}
++              {decisionProcess.gaps?.length > 0 && (
++                <section aria-label="Capture gaps">
++                  <Typography.Text bold>Capture gaps</Typography.Text>
++                  <ul css={{ margin: '4px 0', paddingLeft: 20 }}>
++                    {decisionProcess.gaps.map((gap, index) => (
++                      <li key={index}>{gap}</li>
++                    ))}
++                  </ul>
++                </section>
++              )}
++              {decisionProcess.phases.map((phase) => (
++                <ProcessPhase
++                  key={phase.id}
++                  phase={phase}
++                  root={root}
++                  runId={runId}
++                  selected={phaseSelection?.phaseId === phase.id}
++                  selectionRevision={phaseSelection?.revision}
++                />
++              ))}
++            </div>
++          )}
++        </details>
++      ) : (
++        <div>Decision process is not available in this imported trace.</div>
++      )}
++    </div>
++  );
++};
+--- /dev/null
++++ b/mlflow/server/js/src/experiment-tracking/pages/experiment-chat-sessions/single-chat-view/decisionProcessPayloads.ts
+@@ -0,0 +1,109 @@
++import type { ModelTraceSpanNode } from '@databricks/web-shared/model-trace-explorer';
++import { getArtifactLocationUrl } from '@mlflow/mlflow/src/common/utils/ArtifactUtils';
++import { fetchOrFail } from '@mlflow/mlflow/src/common/utils/FetchUtils';
++import type { DecisionProcessPayload, DecisionProcessSource } from './decisionProcessTypes';
++
++const MAX_INLINE_BYTES = 16 * 1024 * 1024;
++const asObject = (value: unknown): Record<string, unknown> | undefined =>
++  value !== null && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : undefined;
++
++const safeArtifactPath = (path: string): boolean => {
++  const safe = (value: string) =>
++    !/^[a-z][a-z\d+.-]*:/i.test(value) &&
++    !value.includes('\\') &&
++    [...value].every((character) => character.charCodeAt(0) >= 32 && character.charCodeAt(0) !== 127) &&
++    value.split('/').every((part) => part !== '' && part !== '.' && part !== '..');
++  try {
++    return safe(path) && safe(decodeURIComponent(path));
++  } catch {
++    return false;
++  }
++};
++
++export const sourceArtifactUrl = (source: DecisionProcessSource, runId?: string): string | undefined =>
++  runId && source.artifact_path && safeArtifactPath(source.artifact_path)
++    ? getArtifactLocationUrl(source.artifact_path, runId)
++    : undefined;
++
++export const resolveRecordedPayload = (
++  payload: DecisionProcessPayload,
++  root: ModelTraceSpanNode,
++): { available: boolean; value?: unknown } => {
++  const pointer = payload.source.json_pointer;
++  if (pointer === undefined || (pointer !== '' && !pointer.startsWith('/'))) return { available: false };
++  const inputs = asObject(root.inputs);
++  const outputs = asObject(root.outputs);
++  const originalOutput = asObject(outputs?.['source']);
++  const evidence = asObject(outputs?.['evidence']);
++  if (
++    payload.source.record_index !== undefined &&
++    evidence?.['record_index'] !== undefined &&
++    payload.source.record_index !== evidence['record_index']
++  ) {
++    return { available: false };
++  }
++  const hasInput = inputs !== undefined && Object.prototype.hasOwnProperty.call(inputs, 'source');
++  if (!hasInput && !originalOutput) return { available: false };
++  let value: unknown = { ...(hasInput ? { input: inputs?.['source'] } : {}), ...originalOutput };
++  const parts = pointer === '' ? [] : pointer.slice(1).split('/');
++  for (const part of parts) {
++    if (/~(?:[^01]|$)/.test(part)) return { available: false };
++    const key = part.replaceAll('~1', '/').replaceAll('~0', '~');
++    if (value === null || typeof value !== 'object' || !Object.prototype.hasOwnProperty.call(value, key)) {
++      return { available: false };
++    }
++    value = (value as Record<string, unknown>)[key];
++  }
++  return { available: true, value };
++};
++
++export const loadRecordedPayload = async (
++  source: DecisionProcessSource,
++  runId?: string,
++  signal?: AbortSignal,
++): Promise<string> => {
++  const url = sourceArtifactUrl(source, runId);
++  const [start, end] = source.byte_range ?? [];
++  if (
++    !url ||
++    typeof start !== 'number' ||
++    typeof end !== 'number' ||
++    !Number.isSafeInteger(start) ||
++    !Number.isSafeInteger(end) ||
++    start < 0 ||
++    end <= start
++  ) {
++    throw new Error('A source artifact and an exact recorded byte range are required.');
++  }
++  const length = end - start;
++  if (length > MAX_INLINE_BYTES) {
++    throw new Error('This payload exceeds the 16 MiB inline limit. Open its source artifact to inspect it.');
++  }
++  const response = await fetchOrFail(url, { signal, headers: { Range: `bytes=${start}-${end - 1}` } });
++  const range = /^bytes (\d+)-(\d+)\/(\d+)$/.exec(response.headers.get('Content-Range') ?? '');
++  const validRange = range && Number(range[1]) === start && Number(range[2]) === end - 1 && Number(range[3]) >= end;
++  if (response.status !== 206 || !validRange) {
++    await response.body?.cancel();
++    throw new Error('The source server did not return the requested byte range. Open the source artifact instead.');
++  }
++  const reader = response.body?.getReader();
++  if (!reader) throw new Error('The source server did not return a readable payload.');
++  const bytes = new Uint8Array(length);
++  let offset = 0;
++  try {
++    let chunk = await reader.read();
++    while (!chunk.done) {
++      if (offset + chunk.value.byteLength > length) {
++        await reader.cancel();
++        throw new Error('The source server returned more bytes than the recorded payload.');
++      }
++      bytes.set(chunk.value, offset);
++      offset += chunk.value.byteLength;
++      chunk = await reader.read();
++    }
++  } finally {
++    reader.releaseLock();
++  }
++  if (offset !== length) throw new Error('The source payload was incomplete.');
++  return new TextDecoder('utf-8', { fatal: true }).decode(bytes);
++};
+--- /dev/null
++++ b/mlflow/server/js/src/experiment-tracking/pages/experiment-chat-sessions/single-chat-view/decisionProcessTypes.ts
+@@ -0,0 +1,67 @@
++import type { ModelTraceSpanNode } from '@databricks/web-shared/model-trace-explorer';
++
++export type DecisionProcessSource = {
++  file: string;
++  record_index?: number;
++  json_pointer?: string;
++  lines?: [number, number];
++  byte_range?: [number, number];
++  snapshot_sha256?: string;
++  artifact_path?: string;
++};
++
++export type DecisionProcessPayload = {
++  preview: string;
++  truncated: boolean;
++  source: DecisionProcessSource;
++};
++
++export type DecisionProcessActivity = {
++  id: string;
++  kind: string;
++  label: string;
++  status?: string;
++  inputs?: DecisionProcessPayload;
++  outputs?: DecisionProcessPayload;
++  source?: DecisionProcessSource;
++};
++
++export type DecisionProcessPhase = {
++  id: string;
++  label: string;
++  summary?: string;
++  activities: DecisionProcessActivity[];
++};
++
++export type DecisionProcess = {
++  schema_version: 'decision-process-v1';
++  producer: string;
++  phases: DecisionProcessPhase[];
++  gaps: string[];
++  review?: {
++    proposal?: string;
++    reviewer_recommendation?: string;
++    computed_suggestion?: string;
++    final_action?: string;
++    followed_guidance?: boolean | null;
++    review_mode?: string;
++    influence?: number;
++    confidence?: number;
++    estimated_improvement?: number;
++    swap_threshold?: number;
++    strength?: number;
++  };
++};
++
++export type OpenWorldDecision = {
++  root: ModelTraceSpanNode;
++  process?: DecisionProcess;
++  inputSummary?: string;
++  outputSummary?: string;
++};
++
++export type DecisionPhaseSelection = {
++  traceId: string;
++  phaseId: string;
++  revision: number;
++};
 --- a/mlflow/server/js/src/experiment-tracking/pages/experiment-page-tabs/side-nav/constants.tsx
 +++ b/mlflow/server/js/src/experiment-tracking/pages/experiment-page-tabs/side-nav/constants.tsx
 @@ -60,6 +60,28 @@

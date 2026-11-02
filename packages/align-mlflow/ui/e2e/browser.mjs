@@ -2,6 +2,7 @@ import { test as base, expect } from "@playwright/test";
 import {
   createPopulation,
   createDecisionPopulation,
+  createProcessDecisionPopulation,
   installApiFixtures,
 } from "./fixtures.mjs";
 
@@ -9,13 +10,16 @@ export const test = base.extend({
   runCount: [8, { option: true }],
   duplicateScores: [false, { option: true }],
   decisionHistory: [false, { option: true }],
+  processEvidence: [false, { option: true }],
   population: async (
-    { page, runCount, duplicateScores, decisionHistory },
+    { page, runCount, duplicateScores, decisionHistory, processEvidence },
     use,
   ) => {
-    const population = decisionHistory
-      ? createDecisionPopulation(runCount)
-      : createPopulation(runCount, { duplicateScores });
+    const population = processEvidence
+      ? createProcessDecisionPopulation(runCount)
+      : decisionHistory
+        ? createDecisionPopulation(runCount)
+        : createPopulation(runCount, { duplicateScores });
     const unexpected = await installApiFixtures(page, population);
     const errors = [];
     page.on("pageerror", (error) => errors.push(error.message));

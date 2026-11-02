@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 const epoch = Date.UTC(2026, 0, 1);
 const methods = [
   "Baseline",
@@ -166,9 +168,12 @@ export const createPopulation = (
   };
 };
 
-export const createDecisionPopulation = (runCount = 8) => {
+export const createDecisionPopulation = (
+  runCount = 8,
+  { sessionCount = 3 } = {},
+) => {
   const population = createPopulation(runCount);
-  const examples = population.traces.slice(0, 3);
+  const examples = population.traces.slice(0, sessionCount);
   const traceDetails = {};
   const histories = examples.flatMap((example, sessionIndex) =>
     [1, 2, 3].map((step) => {
@@ -240,11 +245,365 @@ export const createDecisionPopulation = (runCount = 8) => {
   );
   return {
     ...population,
-    traces: [...histories, ...population.traces.slice(3)],
+    traces: [...histories, ...population.traces.slice(sessionCount)],
     traceDetails,
     decisionSessions: examples.map(
       (example) => example.trace_metadata["mlflow.trace.session"],
     ),
+  };
+};
+
+const urgencyPreview =
+  "[bold]*AGENT SYSTEM PROMPT*[/bold]\n  exact **markers**\nSystem: Estimate urgency from the recorded triage state.\nUser: Patient A has severe bleeding. Candidates: treat A, inspect B.";
+const capturedUrgencyContext = `${urgencyPreview}\nCaptured note: José reports “presión” at the injury site.\nPrevious tool result: Apply direct pressure; reassess bleeding.\nOnly these recorded messages were sent to this model call.`;
+const exampleLogPrefix = Array.from(
+  { length: 9 },
+  (_, index) => `Earlier log entry ${index + 1}: café.\n`,
+).join("");
+const reviewerInput =
+  "System: Review the proposed action against the target.\nProposal: Apply a tourniquet to Patient A.";
+const reviewerOutput =
+  "Recommend assessing Patient B. Confidence: 0.8; estimated improvement: 0.4.";
+const remainingLogLines = Array.from({ length: 20 }, () => "");
+remainingLogLines[0] = '{"treat A": 0.91, "inspect B": 0.44}';
+remainingLogLines[2] = '{"treat A": 0.62, "inspect B": 0.58}';
+remainingLogLines[13] = reviewerInput;
+remainingLogLines[18] = reviewerOutput;
+const exampleLog = Buffer.from(
+  `${exampleLogPrefix}${capturedUrgencyContext}\n${remainingLogLines.join("\n")}\n`,
+  "utf8",
+);
+const exampleSnapshot = createHash("sha256").update(exampleLog).digest("hex");
+const exampleArtifactPath = `evidence/log/${exampleSnapshot}/raw_align_system.log`;
+const contextByteRange = [
+  Buffer.byteLength(exampleLogPrefix, "utf8"),
+  Buffer.byteLength(exampleLogPrefix + capturedUrgencyContext, "utf8"),
+];
+const logSource = (first, last) => ({
+  file: "raw_align_system.log",
+  lines: [first, last],
+  snapshot_sha256: exampleSnapshot,
+  artifact_path: exampleArtifactPath,
+});
+const recordSource = (step, pointer) => ({
+  file: "input_output.json",
+  record_index: step - 1,
+  json_pointer: pointer,
+});
+const processPayload = (preview, source, truncated = false) => ({
+  preview,
+  truncated,
+  source,
+});
+
+const pipelineProcess = (step) => ({
+  schema_version: "decision-process-v1",
+  producer: "example-pipeline",
+  phases: [
+    {
+      id: `tracking-${step}`,
+      label: "State tracking",
+      summary: "Updated the recorded patient observation.",
+      activities: [
+        {
+          id: `observation-${step}`,
+          kind: "context",
+          label: "Update observed patient state",
+          outputs: processPayload(
+            "Patient A: severe bleeding; conscious; tourniquet available.",
+            recordSource(step, "/input/state"),
+          ),
+        },
+      ],
+    },
+    {
+      id: `prediction-${step}`,
+      label: "Predict urgency",
+      summary: "Scored the visible treatment candidates.",
+      activities: [
+        {
+          id: `urgency-${step}`,
+          kind: "model",
+          label: "Predict patient urgency",
+          status: "complete",
+          inputs: processPayload(
+            urgencyPreview,
+            { ...logSource(10, 16), byte_range: contextByteRange },
+            true,
+          ),
+          outputs: processPayload(
+            '{"treat A": 0.91, "inspect B": 0.44}',
+            logSource(17, 17),
+          ),
+          source: logSource(10, 18),
+        },
+        {
+          id: `cache-${step}`,
+          kind: "cache",
+          label: "Reuse candidate merit scores",
+          status: "hit",
+          outputs: processPayload(
+            '{"treat A": 0.62, "inspect B": 0.58}',
+            logSource(19, 19),
+          ),
+        },
+      ],
+    },
+    {
+      id: `selection-${step}`,
+      label: "Select action",
+      activities: [
+        {
+          id: `selection-result-${step}`,
+          kind: "action",
+          label: "Select treatment for Patient A",
+          outputs: processPayload(
+            "Apply a tourniquet to Patient A.",
+            recordSource(step, "/output/action"),
+          ),
+        },
+      ],
+    },
+  ],
+  gaps: ["Cached merit scores do not include a fresh model request."],
+});
+
+const reviewerProcess = (step) => ({
+  schema_version: "decision-process-v1",
+  producer: "example-reviewer",
+  phases: [
+    {
+      id: `proposal-${step}`,
+      label: "Decision proposal",
+      activities: [
+        {
+          id: `propose-${step}`,
+          kind: "model",
+          label: "Propose treatment",
+          outputs: processPayload(
+            "Apply a tourniquet to Patient A.",
+            recordSource(step, "/choice_info/multi_agent/proposal"),
+          ),
+        },
+      ],
+    },
+    {
+      id: `review-${step}`,
+      label: "Review",
+      summary: "Reviewer suggested checking Patient B before treatment.",
+      activities: [
+        {
+          id: `review-call-${step}`,
+          kind: "review",
+          label: "Review proposed treatment",
+          inputs: processPayload(reviewerInput, logSource(30, 31)),
+          outputs: processPayload(reviewerOutput, logSource(36, 36)),
+          source: logSource(30, 36),
+        },
+      ],
+    },
+    {
+      id: `final-${step}`,
+      label: "Final selection",
+      activities: [
+        {
+          id: `final-action-${step}`,
+          kind: "action",
+          label: "Record executed treatment",
+          outputs: processPayload(
+            "Apply a tourniquet to Patient A.",
+            recordSource(step, "/output/action"),
+          ),
+        },
+      ],
+    },
+  ],
+  review: {
+    proposal: "Apply a tourniquet to Patient A.",
+    reviewer_recommendation: "Assess Patient B before treatment.",
+    computed_suggestion: "Switch to assessing Patient B.",
+    final_action: "Apply a tourniquet to Patient A.",
+    followed_guidance: false,
+    review_mode: "advice",
+    influence: 0.5,
+    confidence: 0.8,
+    estimated_improvement: 0.4,
+    swap_threshold: 0.1,
+    strength: 0.16,
+  },
+  gaps: [],
+});
+
+const langGraphProcess = (step) => ({
+  schema_version: "decision-process-v1",
+  producer: "example-langgraph",
+  phases: [
+    {
+      id: `assessment-${step}`,
+      label: "Assessment",
+      activities: [
+        {
+          id: `inspect-${step}`,
+          kind: "tool",
+          label: "Inspect patient",
+          inputs: processPayload(
+            '{"patient_id":"patient-a"}',
+            recordSource(
+              step,
+              "/choice_info/agent/proposal_history/0/tool_calls/0/args",
+            ),
+          ),
+          outputs: processPayload(
+            '{"patient_id":"patient-a","bleeding":"severe"}',
+            recordSource(
+              step,
+              "/choice_info/agent/proposal_history/0/tool_results/0",
+            ),
+            true,
+          ),
+        },
+        {
+          id: `urgency-${step}`,
+          kind: "model",
+          label: "Classify observed urgency",
+          outputs: processPayload(
+            "Immediate treatment is indicated by the observed bleeding.",
+            recordSource(
+              step,
+              "/choice_info/agent/proposal_history/0/response",
+            ),
+          ),
+        },
+      ],
+    },
+    {
+      id: `treatment-${step}`,
+      label: "Treatment",
+      activities: [
+        {
+          id: `treatment-call-${step}`,
+          kind: "tool",
+          label: "Choose available treatment",
+          outputs: processPayload(
+            "Apply a tourniquet to Patient A.",
+            recordSource(step, "/output/action"),
+          ),
+        },
+      ],
+    },
+  ],
+  gaps: ["The model request before urgency classification was not captured."],
+});
+
+const legacyProcess = (step) => ({
+  schema_version: "decision-process-v1",
+  producer: "example-legacy",
+  phases: [
+    {
+      id: `legacy-${step}`,
+      label: "Recorded decision",
+      activities: [
+        {
+          id: `record-${step}`,
+          kind: "recorded",
+          label: "Legacy decision record",
+          outputs: processPayload(
+            "Treat Patient A for severe bleeding.",
+            recordSource(step, "/output/action"),
+          ),
+        },
+      ],
+    },
+  ],
+  gaps: [
+    "Only the final decision record was captured; intermediate ADM activity is unavailable.",
+    "The unassociated log excerpt cannot establish which model call produced this action.",
+  ],
+});
+
+export const createProcessDecisionPopulation = (runCount = 8) => {
+  const population = createDecisionPopulation(runCount, { sessionCount: 4 });
+  const producers = [
+    pipelineProcess,
+    reviewerProcess,
+    langGraphProcess,
+    legacyProcess,
+  ];
+  for (const [sessionIndex, session] of population.decisionSessions.entries()) {
+    for (let step = 1; step <= 3; step++) {
+      const traceId = `tr-example-history-${sessionIndex + 1}-${step}`;
+      const root = population.traceDetails[traceId].spans[0];
+      const process = producers[sessionIndex](step);
+      const rawState = {
+        scenario_id: "example-triage-scenario",
+        characters: [
+          { id: "patient-a", visible: true, bleeding: "severe" },
+          { id: "patient-b", visible: true, bleeding: "unknown" },
+        ],
+        description: `Recorded environment for ${session} decision ${step}`,
+      };
+      const rawAction = {
+        action_type: "APPLY_TREATMENT",
+        character_id: "patient-a",
+        unstructured:
+          sessionIndex === 3
+            ? "Treat Patient A for severe bleeding."
+            : "Apply a tourniquet to Patient A.",
+      };
+      const choiceInfo =
+        sessionIndex === 1
+          ? { multi_agent: { proposal: "Apply a tourniquet to Patient A." } }
+          : sessionIndex === 2
+            ? {
+                agent: {
+                  proposal_history: [
+                    {
+                      tool_calls: [
+                        {
+                          name: "inspect_patient",
+                          args: { patient_id: "patient-a" },
+                        },
+                      ],
+                      tool_results: [
+                        {
+                          patient_id: "patient-a",
+                          bleeding: "severe",
+                          assessment_detail:
+                            "Complete recorded observation: capillary refill is delayed.",
+                        },
+                      ],
+                      response:
+                        "Immediate treatment is indicated by the observed bleeding.",
+                    },
+                  ],
+                },
+              }
+            : {};
+      const attributes = {
+        "mlflow.spanType": "UNKNOWN",
+        "align.card_format": "situation-action-v1",
+        "mlflow.spanInputs": {
+          input: `Patient A has severe bleeding. Patient B is awaiting assessment.\n\nDecision ${step} environment summary.`,
+          source: { state: rawState },
+        },
+        "mlflow.spanOutputs": {
+          response: `**Executed action:** Apply a tourniquet to Patient A.\n\n**Justification:** Control the observed severe bleeding.`,
+          evidence: { record_index: step - 1, process },
+          source: {
+            output: { action: rawAction },
+            choice_info: choiceInfo,
+          },
+        },
+      };
+      root.attributes = Object.entries(attributes).map(([key, value]) => ({
+        key,
+        value: { string_value: JSON.stringify(value) },
+      }));
+    }
+  }
+  return {
+    ...population,
+    sourceArtifacts: { [exampleArtifactPath]: exampleLog },
   };
 };
 
@@ -338,6 +697,39 @@ export const installApiFixtures = async (page, population) => {
     const name = url.pathname;
     if (name === "/version") {
       await route.fulfill({ contentType: "text/plain", body: "3.17.2" });
+      return;
+    }
+    if (name.endsWith("/get-artifact") && population.sourceArtifacts) {
+      const artifact = population.sourceArtifacts[url.searchParams.get("path")];
+      const runId = url.searchParams.get("run_uuid");
+      const range = /^bytes=(\d+)-(\d+)$/.exec(
+        request.headers()["range"] || "",
+      );
+      const start = Number(range?.[1]);
+      const end = Number(range?.[2]);
+      if (
+        !artifact ||
+        !population.runs.some((run) => run.info.run_id === runId) ||
+        !range ||
+        start < 0 ||
+        end < start ||
+        end >= artifact.length
+      ) {
+        unexpected.push(
+          `${request.method()} ${name} with invalid source range`,
+        );
+        await route.fulfill({ status: 416, body: "Invalid source range" });
+        return;
+      }
+      await route.fulfill({
+        status: 206,
+        headers: {
+          "Content-Type": "text/plain; charset=utf-8",
+          "Content-Range": `bytes ${start}-${end}/${artifact.length}`,
+          "Accept-Ranges": "bytes",
+        },
+        body: artifact.subarray(start, end + 1),
+      });
       return;
     }
     if (!/^\/(?:ajax-api|api|graphql)(?:\/|$)/.test(name)) {
