@@ -108,6 +108,9 @@ setup and ingestion do not create them, and saving one needs no server restart.
 ## Inspect a decision
 
 Session pages show the recorded environment changes and selected action first.
+Each situation groups the current patients into **Nearby**, **Not nearby**, and
+**Unknown proximity**. Patient updates focus on clinical and description changes
+instead of repeating proximity changes and unchanged descriptions.
 Expand **Decision process** to inspect the ADM's recorded phases, then expand an
 activity for its inputs, outputs, and source references. Selecting a phase beneath
 the chosen decision in the sidebar opens the same inline detail. It does not
@@ -119,9 +122,12 @@ threshold, and whether guidance was followed appear when recorded. Missing
 payloads and uncertain log associations remain explicit. Cache hits are separate
 from fresh model invocations.
 
-**Recorded environment state** sits with the situation and exposes the original
-input JSON. **Recorded action** exposes the original output beneath the chosen
-action. **Recorded decision metadata** is available inside **Decision process**.
+**Recorded input** sits with the situation and **Recorded output** sits beneath
+the chosen action. Both show two-line code previews with a single **See more**
+control for the complete JSON; **See less** restores the preview.
+**Recorded decision metadata** is available inside **Decision process**.
+Saved records show the fields they contain. Missing request or result notices
+apply to captured model and tool activities, where those fields are expected.
 Process payloads use their exact recorded JSON fields or source-log ranges. **Load full
 payload** reads a selected log range on demand; **Open source artifact** provides
 the complete captured log. Large payloads above the inline limit remain available

@@ -49,6 +49,27 @@ const expectSelection = async (page, scope, session, selected) => {
   }
 };
 
+const expectRawPreview = async (scope, title) => {
+  const recorded = scope.getByRole("region", { name: title, exact: true });
+  await expect(
+    recorded.getByRole("heading", { name: title, exact: true }),
+  ).toBeVisible();
+  await expect(recorded.locator("pre")).toBeVisible();
+  await expect(
+    recorded.locator("pre .react-syntax-highlighter-line-number"),
+  ).toHaveCount(2);
+  await expect(
+    recorded.getByRole("button", { name: "See more", exact: true }),
+  ).toHaveCount(1);
+  await expect(
+    recorded.getByRole("button", { name: "See more", exact: true }),
+  ).toBeVisible();
+  await expect(
+    recorded.getByRole("button", { name: "See less", exact: true }),
+  ).toHaveCount(0);
+  return recorded;
+};
+
 const expectCompactDecision = async (scope, session, phases) => {
   const decision = card(scope);
   await expect(
@@ -72,8 +93,10 @@ const expectCompactDecision = async (scope, session, phases) => {
   await expect(
     action.getByText("Apply a tourniquet to Patient A.", { exact: false }),
   ).toBeVisible();
-  await expect(summary(situation, "Recorded environment state")).toBeVisible();
-  await expect(summary(action, "Recorded action")).toBeVisible();
+  await expect(summary(situation, "Recorded environment state")).toHaveCount(0);
+  await expect(summary(action, "Recorded action")).toHaveCount(0);
+  await expectRawPreview(situation, "Recorded input");
+  await expectRawPreview(action, "Recorded output");
   const [situationBounds, actionBounds] = await Promise.all([
     situation.boundingBox(),
     action.boundingBox(),
@@ -94,11 +117,7 @@ const expectCompactDecision = async (scope, session, phases) => {
   const visibleHeadings = await decision
     .locator("summary:visible")
     .allTextContents();
-  expect(visibleHeadings).toEqual([
-    "Recorded environment state",
-    "Recorded action",
-    `Decision process (${phases} phases)`,
-  ]);
+  expect(visibleHeadings).toEqual([`Decision process (${phases} phases)`]);
   return decision;
 };
 
@@ -149,7 +168,7 @@ const openPipelineCall = async (decision) => {
   await summary(decision, "Reuse candidate merit scores").click();
   await expect(
     decision.getByText("Input context was not captured.", { exact: true }),
-  ).toBeVisible();
+  ).toHaveCount(0);
   await expect(
     decision.getByText(
       "Cached merit scores do not include a fresh model request.",
@@ -173,36 +192,52 @@ test("pipeline evidence expands by phase and call while the environment remains 
     .click();
   await openPipelineCall(decision);
   await expectSelection(page, page, session, 2);
-  await summary(decision, "Recorded environment state").click();
-  const recordedInput = summary(decision, "Recorded environment state").locator(
-    "..",
-  );
-  await expect(
-    recordedInput.getByRole("heading", {
-      name: "Recorded input",
-      exact: true,
-    }),
-  ).toBeVisible();
+  const situation = decision.getByRole("region", {
+    name: "Situation input",
+    exact: true,
+  });
+  const recordedInput = await expectRawPreview(situation, "Recorded input");
+  await expect(recordedInput).not.toContainText("example-triage-scenario");
+  await recordedInput
+    .getByRole("button", { name: "See more", exact: true })
+    .click();
   await expect(recordedInput).toContainText("example-triage-scenario");
   await expect(recordedInput).not.toContainText("APPLY_TREATMENT");
   await expect(recordedInput).not.toContainText("choice_info");
   await expect(recordedInput).not.toContainText("recorded_debug_note");
+  await expectSelection(page, page, session, 2);
+  await expect(
+    recordedInput.getByRole("button", { name: "See less", exact: true }),
+  ).toHaveCount(1);
+  await recordedInput
+    .getByRole("button", { name: "See less", exact: true })
+    .click();
+  await expectRawPreview(situation, "Recorded input");
+  await expect(recordedInput).not.toContainText("example-triage-scenario");
+  await expectSelection(page, page, session, 2);
   const action = decision.getByRole("region", {
     name: "Chosen action",
     exact: true,
   });
-  await summary(action, "Recorded action").click();
-  const recordedAction = summary(action, "Recorded action").locator("..");
-  await expect(
-    recordedAction.getByRole("heading", {
-      name: "Recorded output",
-      exact: true,
-    }),
-  ).toBeVisible();
+  const recordedAction = await expectRawPreview(action, "Recorded output");
+  await expect(recordedAction).not.toContainText("APPLY_TREATMENT");
+  await recordedAction
+    .getByRole("button", { name: "See more", exact: true })
+    .click();
   await expect(recordedAction).toContainText("APPLY_TREATMENT");
   await expect(recordedAction).not.toContainText("example-triage-scenario");
   await expect(recordedAction).not.toContainText("choice_info");
   await expect(recordedAction).not.toContainText("recorded_debug_note");
+  await expectSelection(page, page, session, 2);
+  await expect(
+    recordedAction.getByRole("button", { name: "See less", exact: true }),
+  ).toHaveCount(1);
+  await recordedAction
+    .getByRole("button", { name: "See less", exact: true })
+    .click();
+  await expectRawPreview(action, "Recorded output");
+  await expect(recordedAction).not.toContainText("APPLY_TREATMENT");
+  await expectSelection(page, page, session, 2);
   const process = summary(decision, "Decision process (3 phases)").locator(
     "..",
   );
@@ -375,7 +410,9 @@ test("graph tools expose paired arguments and results without inventing missing 
   ).not.toBeVisible();
   await summary(decision, "Classify observed urgency").click();
   await expect(
-    decision.getByText("Input context was not captured.", { exact: true }),
+    decision.getByText("The request for this model call was not captured.", {
+      exact: true,
+    }),
   ).toBeVisible();
   await expect(
     decision.getByText(
@@ -410,7 +447,7 @@ test("legacy decision evidence keeps incomplete and unassociated logs explicit",
   await summary(decision, "Legacy decision record").click();
   await expect(
     decision.getByText("Input context was not captured.", { exact: true }),
-  ).toBeVisible();
+  ).toHaveCount(0);
   await expect(
     decision.getByText("Treat Patient A for severe bleeding.", {
       exact: false,

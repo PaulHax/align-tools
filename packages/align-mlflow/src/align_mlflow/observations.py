@@ -47,13 +47,36 @@ def _patient_label(patient: dict) -> str:
     return f"{identifier} ({name})" if name and name != identifier else identifier
 
 
+def _proximity_roster(patients: list[dict]) -> str:
+    groups: dict[str, list[str]] = {
+        "Nearby": [],
+        "Not nearby": [],
+        "Unknown proximity": [],
+    }
+    for patient in patients:
+        if patient.get("unseen") is True:
+            continue
+        nearby = patient.get("nearby")
+        group = (
+            "Nearby"
+            if nearby is True
+            else "Not nearby"
+            if nearby is False
+            else "Unknown proximity"
+        )
+        groups[group].append(_patient_label(patient))
+    return " · ".join(
+        f"**{label}:** {', '.join(names)}" for label, names in groups.items() if names
+    )
+
+
 def _patient_snapshot(patient: dict) -> str:
     sections = [f"**{_patient_label(patient)}**"]
     if patient.get("unstructured"):
         sections.append(patient["unstructured"])
     details = [
         f"- {_label(key)}: {_value(patient[key])}"
-        for key in ("nearby", "tag", "vitals")
+        for key in ("tag", "vitals")
         if key in patient and patient[key] is not None and patient[key] != {}
     ]
     if details:
@@ -61,11 +84,30 @@ def _patient_snapshot(patient: dict) -> str:
     return "\n\n".join(sections)
 
 
+def _patient_update_line(patient: dict, details: list[str]) -> str:
+    text = "; ".join(" ".join(detail.splitlines()) for detail in details)
+    return f"- **{_patient_label(patient)}:** {text}"
+
+
+def _patient_update_snapshot(patient: dict) -> str:
+    details = [patient["unstructured"]] if patient.get("unstructured") else []
+    details.extend(
+        f"{_label(key)}: {_value(patient[key])}"
+        for key in ("tag", "vitals")
+        if key in patient and patient[key] is not None and patient[key] != {}
+    )
+    return _patient_update_line(
+        patient, details or ["No description or clinical details recorded."]
+    )
+
+
 def _patient_updates(previous: list[dict], current: list[dict]) -> list[str]:
     old = {patient["id"]: patient for patient in previous}
     new = {patient["id"]: patient for patient in current}
     if len(old) != len(previous) or len(new) != len(current):
-        return [_patient_snapshot(p) for p in current if p.get("unseen") is not True]
+        return [
+            _patient_update_snapshot(p) for p in current if p.get("unseen") is not True
+        ]
     updates = []
     for identifier in dict.fromkeys([*new, *old]):
         before, after = old.get(identifier), new.get(identifier)
@@ -76,25 +118,24 @@ def _patient_updates(previous: list[dict], current: list[dict]) -> list[str]:
                     if after is not None
                     else "Not present in this observation."
                 )
-                updates.append(f"**{_patient_label(before)}**\n\n{status}")
+                updates.append(_patient_update_line(before, [status]))
             continue
         if before is None or before.get("unseen") is True:
-            updates.append(_patient_snapshot(after))
+            updates.append(_patient_update_snapshot(after))
             continue
         details = []
         if after.get("unstructured", _MISSING) != before.get("unstructured", _MISSING):
             details.append(
                 after.get("unstructured") or "Description no longer recorded."
             )
-        ignored = {"id", "unseen", "unstructured"}
+        ignored = {"id", "unseen", "unstructured", "nearby"}
         fields = _changes(
             {k: v for k, v in before.items() if k not in ignored},
             {k: v for k, v in after.items() if k not in ignored},
         )
-        if fields:
-            details.append("\n".join(fields))
+        details.extend(field.removeprefix("- ") for field in fields)
         if details:
-            updates.append(f"**{_patient_label(after)}**\n\n" + "\n\n".join(details))
+            updates.append(_patient_update_line(after, details))
     return updates
 
 
@@ -133,6 +174,9 @@ def input_summary(
     )
     sections = [f"**Situation**\n\n{situation}"]
     patients = state.get("characters", [])
+    proximity = _proximity_roster(patients)
+    if proximity:
+        sections.append(proximity)
     if previous is None:
         visible = [
             _patient_snapshot(p) for p in patients if p.get("unseen") is not True
@@ -146,7 +190,7 @@ def input_summary(
     updates = _patient_updates(prior_state.get("characters", []), patients)
     if updates:
         sections.append(
-            "**Patient updates since previous input**\n\n" + "\n\n".join(updates)
+            "**Patient updates since previous input**\n\n" + "\n".join(updates)
         )
     supplies = _supply_updates(
         prior_state.get("supplies", []), state.get("supplies", [])

@@ -5404,7 +5404,7 @@
          paddingTop: theme.spacing.sm,
 --- /dev/null
 +++ b/mlflow/server/js/src/experiment-tracking/pages/experiment-chat-sessions/single-chat-view/OpenWorldDecisionProcess.tsx
-@@ -0,0 +1,448 @@
+@@ -0,0 +1,464 @@
 +import { useEffect, useMemo, useRef, useState } from 'react';
 +import { Button, Typography, useDesignSystemTheme } from '@databricks/design-system';
 +import type { ModelTrace, ModelTraceSpanNode } from '@databricks/web-shared/model-trace-explorer';
@@ -5414,6 +5414,8 @@
 +} from '@databricks/web-shared/model-trace-explorer/ModelTraceExplorer.utils';
 +import { getSpanAttribute } from '@databricks/web-shared/genai-traces-table/utils/TraceUtils';
 +import { ModelTraceExplorerFieldRenderer } from '@databricks/web-shared/model-trace-explorer/field-renderers/ModelTraceExplorerFieldRenderer';
++import { ModelTraceExplorerCodeSnippet } from '@databricks/web-shared/model-trace-explorer/ModelTraceExplorerCodeSnippet';
++import { CodeSnippetRenderMode } from '@databricks/web-shared/model-trace-explorer/ModelTrace.types';
 +import { loadRecordedPayload, resolveRecordedPayload, sourceArtifactUrl } from './decisionProcessPayloads';
 +import type {
 +  DecisionPhaseSelection,
@@ -5538,7 +5540,7 @@
 +  root,
 +  runId,
 +}: {
-+  payload?: DecisionProcessPayload;
++  payload: DecisionProcessPayload;
 +  title: 'Inputs' | 'Outputs';
 +  root: ModelTraceSpanNode;
 +  runId?: string;
@@ -5549,10 +5551,7 @@
 +  const [error, setError] = useState<string>();
 +  const controller = useRef<AbortController>();
 +  useEffect(() => () => controller.current?.abort(), []);
-+  const resolved = useMemo(() => (payload ? resolveRecordedPayload(payload, root) : undefined), [payload, root]);
-+  if (!payload) {
-+    return <div>{title === 'Inputs' ? 'Input context was not captured.' : 'Output was not captured.'}</div>;
-+  }
++  const resolved = useMemo(() => resolveRecordedPayload(payload, root), [payload, root]);
 +  const isPreview = !resolved?.available && fullPayload === undefined && payload.truncated;
 +  const data = resolved?.available ? fieldData(resolved.value) : (fullPayload ?? payload.preview);
 +  const isRawLog = payload.source.file === 'raw_align_system.log';
@@ -5608,6 +5607,20 @@
 +}) => {
 +  const { theme } = useDesignSystemTheme();
 +  const [expanded, setExpanded] = useState(false);
++  const missingInput =
++    activity.kind === 'model'
++      ? 'The request for this model call was not captured.'
++      : activity.kind === 'tool'
++        ? 'Arguments for this tool call were not captured.'
++        : undefined;
++  const missingOutput =
++    activity.kind === 'model'
++      ? activity.status === 'failed'
++        ? 'No response was recorded for this failed model call.'
++        : 'The response for this model call was not captured.'
++      : activity.kind === 'tool'
++        ? 'The result of this tool call was not captured.'
++        : undefined;
 +  return (
 +    <details open={expanded} onToggle={(event) => setExpanded(event.currentTarget.open)} css={{ minWidth: 0 }}>
 +      <summary css={{ cursor: 'pointer', padding: `${theme.spacing.xs}px 0`, overflowWrap: 'anywhere' }}>
@@ -5629,8 +5642,16 @@
 +            borderLeft: `2px solid ${theme.colors.border}`,
 +          }}
 +        >
-+          <RecordedPayload payload={activity.inputs} title="Inputs" root={root} runId={runId} />
-+          <RecordedPayload payload={activity.outputs} title="Outputs" root={root} runId={runId} />
++          {activity.inputs ? (
++            <RecordedPayload payload={activity.inputs} title="Inputs" root={root} runId={runId} />
++          ) : (
++            missingInput && <div>{missingInput}</div>
++          )}
++          {activity.outputs ? (
++            <RecordedPayload payload={activity.outputs} title="Outputs" root={root} runId={runId} />
++          ) : (
++            missingOutput && <div>{missingOutput}</div>
++          )}
 +          {activity.source && <SourceReference source={activity.source} runId={runId} />}
 +        </div>
 +      )}
@@ -5747,6 +5768,21 @@
 +  );
 +};
 +
++const RecordedSourcePreview = ({ title, value }: { title: string; value: unknown }) => {
++  const data = useMemo(() => JSON.stringify(JSON.stringify(value, null, 2) ?? 'null'), [value]);
++  return (
++    <section aria-label={title}>
++      <ModelTraceExplorerCodeSnippet
++        title={title}
++        data={data}
++        initialRenderMode={CodeSnippetRenderMode.TEXT}
++        previewLines={2}
++        hideRenderModeDropdown
++      />
++    </section>
++  );
++};
++
 +export const OpenWorldDecisionContent = ({
 +  decision,
 +  runId,
@@ -5758,8 +5794,6 @@
 +}) => {
 +  const { theme } = useDesignSystemTheme();
 +  const [expanded, setExpanded] = useState(false);
-+  const [stateExpanded, setStateExpanded] = useState(false);
-+  const [actionExpanded, setActionExpanded] = useState(false);
 +  const [metadataExpanded, setMetadataExpanded] = useState(false);
 +  const { root, process: decisionProcess, inputSummary, outputSummary } = decision;
 +  const outputSource = asObject(asObject(root.outputs)?.['source']);
@@ -5774,31 +5808,13 @@
 +        {inputSummary && (
 +          <ModelTraceExplorerFieldRenderer title="" data={fieldData(inputSummary)} renderMode="default" />
 +        )}
-+        <details open={stateExpanded} onToggle={(event) => setStateExpanded(event.currentTarget.open)}>
-+          <summary css={{ cursor: 'pointer' }}>Recorded environment state</summary>
-+          {stateExpanded && (
-+            <ModelTraceExplorerFieldRenderer
-+              title="Recorded input"
-+              data={fieldData(asObject(root.inputs)?.['source'])}
-+              renderMode="json"
-+            />
-+          )}
-+        </details>
++        <RecordedSourcePreview title="Recorded input" value={asObject(root.inputs)?.['source']} />
 +      </section>
 +      <section aria-label="Chosen action" css={sectionCss}>
 +        {outputSummary && (
 +          <ModelTraceExplorerFieldRenderer title="" data={fieldData(outputSummary)} renderMode="default" />
 +        )}
-+        <details open={actionExpanded} onToggle={(event) => setActionExpanded(event.currentTarget.open)}>
-+          <summary css={{ cursor: 'pointer' }}>Recorded action</summary>
-+          {actionExpanded && (
-+            <ModelTraceExplorerFieldRenderer
-+              title="Recorded output"
-+              data={fieldData(outputSource?.['output'])}
-+              renderMode="json"
-+            />
-+          )}
-+        </details>
++        <RecordedSourcePreview title="Recorded output" value={outputSource?.['output']} />
 +      </section>
 +      <details
 +        data-decision-process
@@ -10908,6 +10924,85 @@
      });
  
      // Add individual trace rows only if session is expanded and not comparing
+--- a/mlflow/server/js/src/shared/web-shared/model-trace-explorer/ModelTraceExplorerCodeSnippet.tsx
++++ b/mlflow/server/js/src/shared/web-shared/model-trace-explorer/ModelTraceExplorerCodeSnippet.tsx
+@@ -46,6 +46,7 @@
+   containsActiveMatch = false,
+   initialRenderMode,
+   initialExpanded,
++  previewLines,
+   hideRenderModeDropdown = false,
+ }: {
+   title: string;
+@@ -59,6 +60,8 @@
+   containsActiveMatch?: boolean;
+   initialRenderMode?: CodeSnippetRenderMode;
+   initialExpanded?: boolean;
++  /** Maximum text lines shown before expanding the snippet. */
++  previewLines?: number;
+   /** When true, the per-snippet render mode dropdown is hidden (e.g. for aggregated table view). */
+   hideRenderModeDropdown?: boolean;
+ }) {
+@@ -170,6 +173,7 @@
+             containsActiveMatch={containsActiveMatch}
+             renderMode={renderMode}
+             initialExpanded={initialExpanded}
++            previewLines={previewLines}
+           />
+         </div>
+       </div>
+--- a/mlflow/server/js/src/shared/web-shared/model-trace-explorer/ModelTraceExplorerCodeSnippetBody.tsx
++++ b/mlflow/server/js/src/shared/web-shared/model-trace-explorer/ModelTraceExplorerCodeSnippetBody.tsx
+@@ -26,6 +26,7 @@
+   containsActiveMatch = false,
+   renderMode = CodeSnippetRenderMode.JSON,
+   initialExpanded = false,
++  previewLines = MAX_LINES_FOR_PREVIEW,
+ }: {
+   data: string;
+   searchFilter?: string;
+@@ -33,6 +34,7 @@
+   containsActiveMatch?: boolean;
+   renderMode?: CodeSnippetRenderMode;
+   initialExpanded?: boolean;
++  previewLines?: number;
+ }) {
+   const containsMatches = Boolean(searchFilter) && !isNil(activeMatch) && data.toLowerCase().includes(searchFilter);
+   const { theme } = useDesignSystemTheme();
+@@ -55,19 +57,17 @@
+   }, [data, renderMode]);
+ 
+   const expandable =
+-    isContentLong ||
+-    dataToTruncate.split('\n').length > MAX_LINES_FOR_PREVIEW ||
+-    dataToTruncate.length > MAX_CHARS_FOR_PREVIEW;
+-
+-  // Truncate after first 3 lines if not expanded
++    isContentLong || dataToTruncate.split('\n').length > previewLines || dataToTruncate.length > MAX_CHARS_FOR_PREVIEW;
++
++  // Show only the configured preview lines while collapsed.
+   const displayedData = useMemo(() => {
+     if (expandable && !expanded) {
+-      const split = dataToTruncate.split('\n').slice(0, MAX_LINES_FOR_PREVIEW).join('\n');
++      const split = dataToTruncate.split('\n').slice(0, previewLines).join('\n');
+       return split.length > MAX_CHARS_FOR_PREVIEW ? split.slice(0, MAX_CHARS_FOR_PREVIEW) : split;
+     }
+ 
+     return dataToTruncate;
+-  }, [dataToTruncate, expandable, expanded]);
++  }, [dataToTruncate, expandable, expanded, previewLines]);
+ 
+   useEffect(() => {
+     if (snippetRef.current) {
+@@ -184,7 +184,7 @@
+           <SnippetCopyAction
+             key="copy-snippet"
+             componentId="shared.model-trace-explorer.copy-snippet"
+-            copyText={data}
++            copyText={dataToTruncate}
+             size="small"
+             css={{ position: 'absolute', top: theme.spacing.xs, right: theme.spacing.xs, zIndex: 1 }}
+           />
 --- a/mlflow/server/js/src/shared/web-shared/traces-table/TraceCell.test.tsx
 +++ b/mlflow/server/js/src/shared/web-shared/traces-table/TraceCell.test.tsx
 @@ -2,8 +2,8 @@
