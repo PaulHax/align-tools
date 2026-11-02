@@ -112,7 +112,9 @@ Each situation groups the current patients into **Nearby**, **Not nearby**, and
 **Unknown proximity**. Patient updates focus on clinical and description changes
 instead of repeating proximity changes and unchanged descriptions.
 Expand **Decision process** to inspect the ADM's recorded phases, then expand an
-activity for its inputs, outputs, and source references. Selecting a phase beneath
+activity for its full inputs, outputs, and source references, without another
+preview-expansion step. Action rows include a readable action and patient summary
+when those fields are present. Selecting a phase beneath
 the chosen decision in the sidebar opens the same inline detail. It does not
 change the decision selected for comparison.
 
@@ -122,15 +124,18 @@ threshold, and whether guidance was followed appear when recorded. Missing
 payloads and uncertain log associations remain explicit. Cache hits are separate
 from fresh model invocations.
 
-**Recorded input** sits with the situation and **Recorded output** sits beneath
+**Input** sits with the situation and **Output** sits beneath
 the chosen action. Both show two-line code previews with a single **See more**
-control for the complete JSON; **See less** restores the preview.
+control for the complete JSON. Expanded code has **See less** at the top and
+bottom, so collapsing a long payload does not require scrolling to its end.
+Session code views omit line-number gutters.
 **Recorded decision metadata** is available inside **Decision process**.
 Saved records show the fields they contain. Missing request or result notices
 apply to captured model and tool activities, where those fields are expected.
-Process payloads use their exact recorded JSON fields or source-log ranges. **Load full
-payload** reads a selected log range on demand; **Open source artifact** provides
-the complete captured log. Large payloads above the inline limit remain available
+Process payloads use their exact recorded JSON fields or source-log ranges.
+Opening an activity loads its selected log range on demand; opening the page or
+a phase does not fetch those payloads. **Open source artifact** provides the
+complete captured log. Large payloads above the inline limit remain available
 through their source artifact.
 
 The chevron at the right of the session metrics row collapses and expands

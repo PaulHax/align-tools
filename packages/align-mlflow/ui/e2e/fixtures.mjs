@@ -264,6 +264,16 @@ const reviewerInput =
   "System: Review the proposed action against the target.\nProposal: Apply a tourniquet to Patient A.";
 const reviewerOutput =
   "Recommend assessing Patient B. Confidence: 0.8; estimated improvement: 0.4.";
+const recordedProposal = {
+  action: "Apply a tourniquet to Patient A.",
+  observations: Array.from(
+    { length: 30 },
+    (_, index) =>
+      `Recorded observation ${index + 1}: Patient A has visible severe bleeding; treatment supplies are available.`,
+  ),
+  conclusion:
+    "Captured proposal tail: control the observed bleeding before reassessment.",
+};
 const remainingLogLines = Array.from({ length: 20 }, () => "");
 remainingLogLines[0] = '{"treat A": 0.91, "inspect B": 0.44}';
 remainingLogLines[2] = '{"treat A": 0.62, "inspect B": 0.58}';
@@ -378,11 +388,12 @@ const reviewerProcess = (step) => ({
       activities: [
         {
           id: `propose-${step}`,
-          kind: "model",
-          label: "Propose treatment",
+          kind: "recorded",
+          label: "Recorded proposal",
           outputs: processPayload(
-            "Apply a tourniquet to Patient A.",
+            JSON.stringify(recordedProposal, null, 2).slice(0, 2048),
             recordSource(step, "/choice_info/multi_agent/proposal"),
+            true,
           ),
         },
       ],
@@ -552,7 +563,7 @@ export const createProcessDecisionPopulation = (runCount = 8) => {
       };
       const choiceInfo =
         sessionIndex === 1
-          ? { multi_agent: { proposal: "Apply a tourniquet to Patient A." } }
+          ? { multi_agent: { proposal: recordedProposal } }
           : sessionIndex === 2
             ? {
                 agent: {

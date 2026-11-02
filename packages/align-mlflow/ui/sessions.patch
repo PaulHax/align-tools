@@ -5404,8 +5404,8 @@
          paddingTop: theme.spacing.sm,
 --- /dev/null
 +++ b/mlflow/server/js/src/experiment-tracking/pages/experiment-chat-sessions/single-chat-view/OpenWorldDecisionProcess.tsx
-@@ -0,0 +1,464 @@
-+import { useEffect, useMemo, useRef, useState } from 'react';
+@@ -0,0 +1,515 @@
++import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 +import { Button, Typography, useDesignSystemTheme } from '@databricks/design-system';
 +import type { ModelTrace, ModelTraceSpanNode } from '@databricks/web-shared/model-trace-explorer';
 +import {
@@ -5553,10 +5553,13 @@
 +  useEffect(() => () => controller.current?.abort(), []);
 +  const resolved = useMemo(() => resolveRecordedPayload(payload, root), [payload, root]);
 +  const isPreview = !resolved?.available && fullPayload === undefined && payload.truncated;
-+  const data = resolved?.available ? fieldData(resolved.value) : (fullPayload ?? payload.preview);
-+  const isRawLog = payload.source.file === 'raw_align_system.log';
++  const text = resolved.available
++    ? typeof resolved.value === 'string'
++      ? resolved.value
++      : (JSON.stringify(resolved.value, null, 2) ?? 'null')
++    : (fullPayload ?? payload.preview);
 +  const canLoad = isPreview && Boolean(payload.source.byte_range && sourceArtifactUrl(payload.source, runId));
-+  const loadFullPayload = async () => {
++  const loadFullPayload = useCallback(async () => {
 +    controller.current?.abort();
 +    const request = new AbortController();
 +    controller.current = request;
@@ -5570,30 +5573,47 @@
 +    } finally {
 +      if (!request.signal.aborted) setLoading(false);
 +    }
-+  };
++  }, [payload.source, runId]);
++  useEffect(() => {
++    if (canLoad && !loading && !error) void loadFullPayload();
++  }, [canLoad, loading, error, loadFullPayload]);
 +  return (
 +    <section aria-label={title} css={{ minWidth: 0, display: 'flex', flexDirection: 'column', gap: theme.spacing.xs }}>
-+      <ModelTraceExplorerFieldRenderer
++      <ModelTraceExplorerCodeSnippet
 +        title={title}
-+        data={isRawLog ? JSON.stringify(data) : data}
-+        renderMode={isRawLog ? 'text' : 'default'}
-+        maxVisibleMessages={Infinity}
++        data={JSON.stringify(text)}
++        initialRenderMode={CodeSnippetRenderMode.TEXT}
++        initialExpanded
++        showLineNumbers={false}
++        showTopCollapse
++        hideRenderModeDropdown
 +      />
 +      {isPreview && <div>Preview only. The complete payload is available from its recorded source.</div>}
-+      {canLoad && (
++      {loading && <div role="status">Loading full payload…</div>}
++      {canLoad && error && (
 +        <Button
 +          componentId="mlflow.decision-process.load-payload"
 +          size="small"
 +          onClick={loadFullPayload}
 +          disabled={loading}
 +        >
-+          {loading ? 'Loading payload…' : 'Load full payload'}
++          Retry loading full payload
 +        </Button>
 +      )}
 +      {error && <div role="alert">Could not load the complete payload. {error}</div>}
 +      <SourceReference source={payload.source} runId={runId} />
 +    </section>
 +  );
++};
++
++const actionSummary = (activity: DecisionProcessActivity, root: ModelTraceSpanNode) => {
++  if (!activity.outputs) return undefined;
++  const resolved = resolveRecordedPayload(activity.outputs, root);
++  const action = resolved.available ? asObject(resolved.value) : undefined;
++  if (typeof action?.['action_type'] !== 'string') return undefined;
++  const name = action['action_type'].toLowerCase().replaceAll('_', ' ');
++  const patient = action['character_id'];
++  return name.charAt(0).toUpperCase() + name.slice(1) + (typeof patient === 'string' ? ` · ${patient}` : '');
 +};
 +
 +const ProcessActivity = ({
@@ -5607,6 +5627,7 @@
 +}) => {
 +  const { theme } = useDesignSystemTheme();
 +  const [expanded, setExpanded] = useState(false);
++  const description = actionSummary(activity, root);
 +  const missingInput =
 +    activity.kind === 'model'
 +      ? 'The request for this model call was not captured.'
@@ -5625,6 +5646,7 @@
 +    <details open={expanded} onToggle={(event) => setExpanded(event.currentTarget.open)} css={{ minWidth: 0 }}>
 +      <summary css={{ cursor: 'pointer', padding: `${theme.spacing.xs}px 0`, overflowWrap: 'anywhere' }}>
 +        <Typography.Text bold>{activity.label}</Typography.Text>
++        {description && <Typography.Text> · {description}</Typography.Text>}
 +        <Typography.Text color="secondary">
 +          {' '}
 +          · {activity.kind.replaceAll('_', ' ')}
@@ -5643,12 +5665,24 @@
 +          }}
 +        >
 +          {activity.inputs ? (
-+            <RecordedPayload payload={activity.inputs} title="Inputs" root={root} runId={runId} />
++            <RecordedPayload
++              key={`input:${JSON.stringify(activity.inputs.source)}`}
++              payload={activity.inputs}
++              title="Inputs"
++              root={root}
++              runId={runId}
++            />
 +          ) : (
 +            missingInput && <div>{missingInput}</div>
 +          )}
 +          {activity.outputs ? (
-+            <RecordedPayload payload={activity.outputs} title="Outputs" root={root} runId={runId} />
++            <RecordedPayload
++              key={`output:${JSON.stringify(activity.outputs.source)}`}
++              payload={activity.outputs}
++              title="Outputs"
++              root={root}
++              runId={runId}
++            />
 +          ) : (
 +            missingOutput && <div>{missingOutput}</div>
 +          )}
@@ -5768,7 +5802,15 @@
 +  );
 +};
 +
-+const RecordedSourcePreview = ({ title, value }: { title: string; value: unknown }) => {
++const RecordedSourcePreview = ({
++  title,
++  value,
++  initialExpanded = false,
++}: {
++  title: string;
++  value: unknown;
++  initialExpanded?: boolean;
++}) => {
 +  const data = useMemo(() => JSON.stringify(JSON.stringify(value, null, 2) ?? 'null'), [value]);
 +  return (
 +    <section aria-label={title}>
@@ -5777,6 +5819,9 @@
 +        data={data}
 +        initialRenderMode={CodeSnippetRenderMode.TEXT}
 +        previewLines={2}
++        initialExpanded={initialExpanded}
++        showLineNumbers={false}
++        showTopCollapse
 +        hideRenderModeDropdown
 +      />
 +    </section>
@@ -5806,15 +5851,25 @@
 +    <div css={sectionCss}>
 +      <section aria-label="Situation input" css={sectionCss}>
 +        {inputSummary && (
-+          <ModelTraceExplorerFieldRenderer title="" data={fieldData(inputSummary)} renderMode="default" />
++          <ModelTraceExplorerFieldRenderer
++            title=""
++            data={fieldData(inputSummary)}
++            renderMode="default"
++            showLineNumbers={false}
++          />
 +        )}
-+        <RecordedSourcePreview title="Recorded input" value={asObject(root.inputs)?.['source']} />
++        <RecordedSourcePreview title="Input" value={asObject(root.inputs)?.['source']} />
 +      </section>
 +      <section aria-label="Chosen action" css={sectionCss}>
 +        {outputSummary && (
-+          <ModelTraceExplorerFieldRenderer title="" data={fieldData(outputSummary)} renderMode="default" />
++          <ModelTraceExplorerFieldRenderer
++            title=""
++            data={fieldData(outputSummary)}
++            renderMode="default"
++            showLineNumbers={false}
++          />
 +        )}
-+        <RecordedSourcePreview title="Recorded output" value={outputSource?.['output']} />
++        <RecordedSourcePreview title="Output" value={outputSource?.['output']} />
 +      </section>
 +      <details
 +        data-decision-process
@@ -5856,11 +5911,7 @@
 +            <details open={metadataExpanded} onToggle={(event) => setMetadataExpanded(event.currentTarget.open)}>
 +              <summary css={{ cursor: 'pointer' }}>Recorded decision metadata</summary>
 +              {metadataExpanded && (
-+                <ModelTraceExplorerFieldRenderer
-+                  title="Recorded decision metadata"
-+                  data={fieldData(decisionMetadata)}
-+                  renderMode="json"
-+                />
++                <RecordedSourcePreview title="Recorded decision metadata" value={decisionMetadata} initialExpanded />
 +              )}
 +            </details>
 +          </div>
@@ -10924,52 +10975,196 @@
      });
  
      // Add individual trace rows only if session is expanded and not comparing
+--- a/mlflow/server/js/src/shared/web-shared/model-trace-explorer/CollapsibleJsonViewer.tsx
++++ b/mlflow/server/js/src/shared/web-shared/model-trace-explorer/CollapsibleJsonViewer.tsx
+@@ -15,6 +15,7 @@
+   data: string;
+   initialExpanded?: boolean;
+   renderMode?: 'json' | 'table';
++  showLineNumbers?: boolean;
+ }
+ 
+ type JsonColors = {
+@@ -147,6 +148,7 @@
+   theme: any;
+   lineMap: Map<string, LineInfo>;
+   path: string;
++  showLineNumbers: boolean;
+ }
+ 
+ function JsonNode({
+@@ -160,6 +162,7 @@
+   theme,
+   lineMap,
+   path,
++  showLineNumbers,
+ }: JsonNodeProps) {
+   const [collapsed, setCollapsed] = useState(!initialExpanded && depth > 0);
+ 
+@@ -210,7 +213,11 @@
+   if (depth > MAX_DEPTH) {
+     return (
+       <div css={lineWrapperStyle}>
+-        <span css={lineNumberStyle}>{displayLine}</span>
++        {showLineNumbers && (
++          <span data-testid="json-line-number" css={lineNumberStyle}>
++            {displayLine}
++          </span>
++        )}
+         <span css={expandStyle} />
+         <div
+           css={{
+@@ -244,7 +251,11 @@
+   if (isPrimitive) {
+     return (
+       <div css={lineWrapperStyle}>
+-        <span css={lineNumberStyle}>{displayLine}</span>
++        {showLineNumbers && (
++          <span data-testid="json-line-number" css={lineNumberStyle}>
++            {displayLine}
++          </span>
++        )}
+         <span css={expandStyle} />
+         <div
+           css={{
+@@ -272,7 +283,11 @@
+   return (
+     <div>
+       <div css={lineWrapperStyle}>
+-        <span css={lineNumberStyle}>{displayLine}</span>
++        {showLineNumbers && (
++          <span data-testid="json-line-number" css={lineNumberStyle}>
++            {displayLine}
++          </span>
++        )}
+         <span css={expandStyle} role="button" onClick={() => isExpandable && setCollapsed(!collapsed)}>
+           {isExpandable && (
+             <span
+@@ -347,12 +362,17 @@
+                   theme={theme}
+                   lineMap={lineMap}
+                   path={childPath}
++                  showLineNumbers={showLineNumbers}
+                 />
+               </Fragment>
+             );
+           })}
+           <div css={lineWrapperStyle}>
+-            <span css={lineNumberStyle}>{lineInfo.endLine}</span>
++            {showLineNumbers && (
++              <span data-testid="json-line-number" css={lineNumberStyle}>
++                {lineInfo.endLine}
++              </span>
++            )}
+             <span css={expandStyle} />
+             <div
+               css={{
+@@ -376,10 +396,14 @@
+   initialExpanded: boolean;
+   colors: JsonColors;
+   theme: any;
+-}
+-
+-function IdeJsonViewer({ parsedData, initialExpanded, colors, theme }: IdeJsonViewerProps) {
+-  const { lineMap, endLine } = useMemo(() => calculateLineNumbers(parsedData), [parsedData]);
++  showLineNumbers: boolean;
++}
++
++function IdeJsonViewer({ parsedData, initialExpanded, colors, theme, showLineNumbers }: IdeJsonViewerProps) {
++  const { lineMap, endLine } = useMemo(
++    () => (showLineNumbers ? calculateLineNumbers(parsedData) : { lineMap: new Map<string, LineInfo>(), endLine: 1 }),
++    [parsedData, showLineNumbers],
++  );
+ 
+   return (
+     <div css={{ paddingRight: theme.spacing.md * 2 }}>
+@@ -393,6 +417,7 @@
+         theme={theme}
+         lineMap={lineMap}
+         path=""
++        showLineNumbers={showLineNumbers}
+       />
+     </div>
+   );
+@@ -711,6 +736,7 @@
+   data,
+   initialExpanded = false,
+   renderMode = 'json',
++  showLineNumbers = true,
+ }: CollapsibleJsonViewerProps) {
+   const { theme } = useDesignSystemTheme();
+ 
+@@ -786,7 +812,13 @@
+           theme={theme}
+         />
+       ) : (
+-        <IdeJsonViewer parsedData={parseResult.data} initialExpanded={initialExpanded} colors={colors} theme={theme} />
++        <IdeJsonViewer
++          parsedData={parseResult.data}
++          initialExpanded={initialExpanded}
++          colors={colors}
++          theme={theme}
++          showLineNumbers={showLineNumbers}
++        />
+       )}
+     </div>
+   );
 --- a/mlflow/server/js/src/shared/web-shared/model-trace-explorer/ModelTraceExplorerCodeSnippet.tsx
 +++ b/mlflow/server/js/src/shared/web-shared/model-trace-explorer/ModelTraceExplorerCodeSnippet.tsx
-@@ -46,6 +46,7 @@
+@@ -46,6 +46,9 @@
    containsActiveMatch = false,
    initialRenderMode,
    initialExpanded,
 +  previewLines,
++  showLineNumbers = true,
++  showTopCollapse = false,
    hideRenderModeDropdown = false,
  }: {
    title: string;
-@@ -59,6 +60,8 @@
+@@ -59,6 +62,10 @@
    containsActiveMatch?: boolean;
    initialRenderMode?: CodeSnippetRenderMode;
    initialExpanded?: boolean;
 +  /** Maximum text lines shown before expanding the snippet. */
 +  previewLines?: number;
++  showLineNumbers?: boolean;
++  showTopCollapse?: boolean;
    /** When true, the per-snippet render mode dropdown is hidden (e.g. for aggregated table view). */
    hideRenderModeDropdown?: boolean;
  }) {
-@@ -170,6 +173,7 @@
+@@ -170,6 +177,9 @@
              containsActiveMatch={containsActiveMatch}
              renderMode={renderMode}
              initialExpanded={initialExpanded}
 +            previewLines={previewLines}
++            showLineNumbers={showLineNumbers}
++            showTopCollapse={showTopCollapse}
            />
          </div>
        </div>
 --- a/mlflow/server/js/src/shared/web-shared/model-trace-explorer/ModelTraceExplorerCodeSnippetBody.tsx
 +++ b/mlflow/server/js/src/shared/web-shared/model-trace-explorer/ModelTraceExplorerCodeSnippetBody.tsx
-@@ -26,6 +26,7 @@
+@@ -26,6 +26,9 @@
    containsActiveMatch = false,
    renderMode = CodeSnippetRenderMode.JSON,
    initialExpanded = false,
 +  previewLines = MAX_LINES_FOR_PREVIEW,
++  showLineNumbers = true,
++  showTopCollapse = false,
  }: {
    data: string;
    searchFilter?: string;
-@@ -33,6 +34,7 @@
+@@ -33,6 +36,9 @@
    containsActiveMatch?: boolean;
    renderMode?: CodeSnippetRenderMode;
    initialExpanded?: boolean;
 +  previewLines?: number;
++  showLineNumbers?: boolean;
++  showTopCollapse?: boolean;
  }) {
    const containsMatches = Boolean(searchFilter) && !isNil(activeMatch) && data.toLowerCase().includes(searchFilter);
    const { theme } = useDesignSystemTheme();
-@@ -55,19 +57,17 @@
+@@ -55,19 +61,46 @@
    }, [data, renderMode]);
  
    const expandable =
@@ -10979,6 +11174,35 @@
 -
 -  // Truncate after first 3 lines if not expanded
 +    isContentLong || dataToTruncate.split('\n').length > previewLines || dataToTruncate.length > MAX_CHARS_FOR_PREVIEW;
++  const toggleExpanded = () => setExpanded((current) => !current);
++  const expansionButton = (atTop = false) => (
++    <Button
++      css={{ width: '100%', padding: 0 }}
++      componentId={
++        atTop
++          ? 'shared.model-trace-explorer.snippet-see-less-top'
++          : expanded
++            ? 'shared.model-trace-explorer.snippet-see-less'
++            : 'shared.model-trace-explorer.snippet-see-more'
++      }
++      icon={expanded ? <ChevronUpIcon /> : <ChevronDownIcon />}
++      type="tertiary"
++      size={atTop ? 'small' : undefined}
++      onClick={toggleExpanded}
++    >
++      {expanded ? (
++        <FormattedMessage
++          defaultMessage="See less"
++          description="Model trace explorer > selected span > code snippet > see less button"
++        />
++      ) : (
++        <FormattedMessage
++          defaultMessage="See more"
++          description="Model trace explorer > selected span > code snippet > see more button"
++        />
++      )}
++    </Button>
++  );
 +
 +  // Show only the configured preview lines while collapsed.
    const displayedData = useMemo(() => {
@@ -10994,7 +11218,71 @@
  
    useEffect(() => {
      if (snippetRef.current) {
-@@ -184,7 +184,7 @@
+@@ -94,6 +127,7 @@
+   if (renderMode === 'json' || renderMode === 'table') {
+     return (
+       <div css={{ position: 'relative' }}>
++        {showTopCollapse && expanded && expandable && expansionButton(true)}
+         <SnippetCopyAction
+           key="copy-snippet"
+           componentId="shared.model-trace-explorer.copy-snippet"
+@@ -109,7 +143,12 @@
+             position: 'relative',
+           }}
+         >
+-          <CollapsibleJsonViewer data={data} initialExpanded renderMode={renderMode} />
++          <CollapsibleJsonViewer
++            data={data}
++            initialExpanded
++            renderMode={renderMode}
++            showLineNumbers={showLineNumbers}
++          />
+           {expandable && !expanded && (
+             <div
+               css={{
+@@ -127,32 +166,7 @@
+           <div
+             css={{ backgroundColor: theme.colors.backgroundSecondary, borderTop: `1px solid ${theme.colors.border}` }}
+           >
+-            <Button
+-              css={{
+-                width: '100%',
+-                padding: 0,
+-              }}
+-              componentId={
+-                expanded
+-                  ? 'shared.model-trace-explorer.snippet-see-less'
+-                  : 'shared.model-trace-explorer.snippet-see-more'
+-              }
+-              icon={expanded ? <ChevronUpIcon /> : <ChevronDownIcon />}
+-              type="tertiary"
+-              onClick={() => setExpanded(!expanded)}
+-            >
+-              {expanded ? (
+-                <FormattedMessage
+-                  defaultMessage="See less"
+-                  description="Model trace explorer > selected span > code snippet > see less button"
+-                />
+-              ) : (
+-                <FormattedMessage
+-                  defaultMessage="See more"
+-                  description="Model trace explorer > selected span > code snippet > see more button"
+-                />
+-              )}
+-            </Button>
++            {expansionButton()}
+           </div>
+         )}
+       </div>
+@@ -161,6 +175,7 @@
+ 
+   return (
+     <div css={{ position: 'relative' }}>
++      {showTopCollapse && expanded && expandable && expansionButton(true)}
+       {renderMode === 'markdown' ? (
+         <div
+           css={{
+@@ -184,14 +199,14 @@
            <SnippetCopyAction
              key="copy-snippet"
              componentId="shared.model-trace-explorer.copy-snippet"
@@ -11003,6 +11291,360 @@
              size="small"
              css={{ position: 'absolute', top: theme.spacing.xs, right: theme.spacing.xs, zIndex: 1 }}
            />
+           {}
+           <CodeSnippet
+             PreTag={PreWithRef}
+-            showLineNumbers
++            showLineNumbers={showLineNumbers}
+             language={renderMode}
+             lineProps={{ style: { wordBreak: 'break-word', whiteSpace: 'pre-wrap' } }}
+             wrapLines={expanded}
+@@ -211,31 +226,7 @@
+           </CodeSnippet>
+         </>
+       )}
+-      {expandable && (
+-        <div css={{ backgroundColor: theme.colors.backgroundSecondary }}>
+-          <Button
+-            css={{ width: '100%', padding: 0 }}
+-            componentId={
+-              expanded ? 'shared.model-trace-explorer.snippet-see-less' : 'shared.model-trace-explorer.snippet-see-more'
+-            }
+-            icon={expanded ? <ChevronUpIcon /> : <ChevronDownIcon />}
+-            type="tertiary"
+-            onClick={() => setExpanded(!expanded)}
+-          >
+-            {expanded ? (
+-              <FormattedMessage
+-                defaultMessage="See less"
+-                description="Model trace explorer > selected span > code snippet > see less button"
+-              />
+-            ) : (
+-              <FormattedMessage
+-                defaultMessage="See more"
+-                description="Model trace explorer > selected span > code snippet > see more button"
+-              />
+-            )}
+-          </Button>
+-        </div>
+-      )}
++      {expandable && <div css={{ backgroundColor: theme.colors.backgroundSecondary }}>{expansionButton()}</div>}
+     </div>
+   );
+ }
+--- a/mlflow/server/js/src/shared/web-shared/model-trace-explorer/field-renderers/ModelTraceExplorerFieldRenderer.tsx
++++ b/mlflow/server/js/src/shared/web-shared/model-trace-explorer/field-renderers/ModelTraceExplorerFieldRenderer.tsx
+@@ -50,6 +50,9 @@
+   chatMessageFormat,
+   maxVisibleMessages = DEFAULT_MAX_VISIBLE_CHAT_MESSAGES,
+   assessments,
++  initialExpanded = false,
++  showLineNumbers = true,
++  showTopCollapse = false,
+ }: {
+   title: string;
+   data: string;
+@@ -57,9 +60,13 @@
+   chatMessageFormat?: string;
+   maxVisibleMessages?: number;
+   assessments?: Assessment[];
++  initialExpanded?: boolean;
++  showLineNumbers?: boolean;
++  showTopCollapse?: boolean;
+ }) => {
+   const { theme } = useDesignSystemTheme();
+-  const [messagesExpanded, setMessagesExpanded] = useState(false);
++  const [messagesExpanded, setMessagesExpanded] = useState(initialExpanded);
++  const snippetOptions = { initialExpanded, showLineNumbers, showTopCollapse };
+   const parsedData = useMemo(() => {
+     try {
+       return JSON.parse(data);
+@@ -69,8 +76,8 @@
+   }, [data]);
+ 
+   useEffect(() => {
+-    setMessagesExpanded(false);
+-  }, [data]);
++    setMessagesExpanded(initialExpanded);
++  }, [data, initialExpanded]);
+ 
+   const dataIsScalar = isString(parsedData) || isNumber(parsedData) || isBoolean(parsedData);
+   // wrap the value in an object with the title as key. this helps normalizeConversation
+@@ -124,21 +131,42 @@
+             )}
+           </Typography.Link>
+         )}
+-        <ModelTraceExplorerConversation messages={visibleMessages} />
++        <ModelTraceExplorerConversation messages={visibleMessages} {...snippetOptions} />
+       </div>
+     );
+   }
+ 
+   if (renderMode === 'json') {
+-    return <ModelTraceExplorerCodeSnippet title={title} data={data} initialRenderMode={CodeSnippetRenderMode.JSON} />;
++    return (
++      <ModelTraceExplorerCodeSnippet
++        title={title}
++        data={data}
++        initialRenderMode={CodeSnippetRenderMode.JSON}
++        {...snippetOptions}
++      />
++    );
+   }
+ 
+   if (renderMode === 'text') {
+-    return <ModelTraceExplorerCodeSnippet title={title} data={data} initialRenderMode={CodeSnippetRenderMode.TEXT} />;
++    return (
++      <ModelTraceExplorerCodeSnippet
++        title={title}
++        data={data}
++        initialRenderMode={CodeSnippetRenderMode.TEXT}
++        {...snippetOptions}
++      />
++    );
+   }
+ 
+   if (renderMode === 'table') {
+-    return <ModelTraceExplorerCodeSnippet title={title} data={data} initialRenderMode={CodeSnippetRenderMode.TABLE} />;
++    return (
++      <ModelTraceExplorerCodeSnippet
++        title={title}
++        data={data}
++        initialRenderMode={CodeSnippetRenderMode.TABLE}
++        {...snippetOptions}
++      />
++    );
+   }
+ 
+   if (dataIsScalar) {
+@@ -156,7 +184,14 @@
+         );
+       }
+     }
+-    return <ModelTraceExplorerTextFieldRenderer title={title} value={String(parsedData)} />;
++    return (
++      <ModelTraceExplorerTextFieldRenderer
++        title={title}
++        value={String(parsedData)}
++        initialExpanded={initialExpanded}
++        showTopCollapse={showTopCollapse}
++      />
++    );
+   }
+ 
+   if (isChatTools) {
+@@ -183,11 +218,11 @@
+               size={att.size}
+             />
+           ))}
+-          <ModelTraceExplorerCodeSnippet title={title} data={data} />
++          <ModelTraceExplorerCodeSnippet title={title} data={data} {...snippetOptions} />
+         </div>
+       );
+     }
+   }
+ 
+-  return <ModelTraceExplorerCodeSnippet title={title} data={data} />;
++  return <ModelTraceExplorerCodeSnippet title={title} data={data} {...snippetOptions} />;
+ };
+--- a/mlflow/server/js/src/shared/web-shared/model-trace-explorer/field-renderers/ModelTraceExplorerTextFieldRenderer.tsx
++++ b/mlflow/server/js/src/shared/web-shared/model-trace-explorer/field-renderers/ModelTraceExplorerTextFieldRenderer.tsx
+@@ -1,15 +1,26 @@
+ import { useState } from 'react';
+ 
+-import { ChevronDownIcon, ChevronRightIcon, Typography, useDesignSystemTheme } from '@databricks/design-system';
++import { Button, ChevronDownIcon, ChevronRightIcon, Typography, useDesignSystemTheme } from '@databricks/design-system';
+ import { FormattedMessage } from '@databricks/i18n';
+ import { GenAIMarkdownRenderer } from '../../genai-markdown-renderer/GenAIMarkdownRenderer';
+ import { SnippetCopyAction } from '../../snippet/actions/SnippetCopyAction';
+ 
+ const STRING_TRUNCATION_LIMIT = 400;
+ 
+-export const ModelTraceExplorerTextFieldRenderer = ({ title, value }: { title: string; value: string }) => {
++export const ModelTraceExplorerTextFieldRenderer = ({
++  title,
++  value,
++  initialExpanded = false,
++  showTopCollapse = false,
++}: {
++  title: string;
++  value: string;
++  initialExpanded?: boolean;
++  showTopCollapse?: boolean;
++}) => {
+   const { theme } = useDesignSystemTheme();
+-  const [expanded, setExpanded] = useState(false);
++  const [expanded, setExpanded] = useState(initialExpanded);
++  const toggleExpanded = () => setExpanded((current) => !current);
+ 
+   const isExpandable = value.length > STRING_TRUNCATION_LIMIT;
+   const displayValue =
+@@ -63,12 +74,22 @@
+           size="small"
+           css={{ position: 'absolute', top: theme.spacing.xs, right: theme.spacing.xs, zIndex: 1 }}
+         />
++        {showTopCollapse && expanded && isExpandable && (
++          <Button
++            componentId="shared.model-trace-explorer.text-field-see-less-top"
++            type="tertiary"
++            size="small"
++            onClick={toggleExpanded}
++          >
++            <FormattedMessage
++              defaultMessage="See less"
++              description="Button to collapse a long text field from its beginning"
++            />
++          </Button>
++        )}
+         <GenAIMarkdownRenderer>{displayValue}</GenAIMarkdownRenderer>
+         {isExpandable && (
+-          <Typography.Link
+-            onClick={() => setExpanded(!expanded)}
+-            componentId="shared.model-trace-explorer.text-field-see-more-link"
+-          >
++          <Typography.Link onClick={toggleExpanded} componentId="shared.model-trace-explorer.text-field-see-more-link">
+             {expanded ? (
+               <FormattedMessage
+                 defaultMessage="See less"
+--- a/mlflow/server/js/src/shared/web-shared/model-trace-explorer/right-pane/ModelTraceExplorerChatMessage.tsx
++++ b/mlflow/server/js/src/shared/web-shared/model-trace-explorer/right-pane/ModelTraceExplorerChatMessage.tsx
+@@ -122,9 +122,15 @@
+ function ModelTraceExplorerChatMessageContent({
+   content,
+   shouldDisplayCodeSnippet,
++  initialExpanded,
++  showLineNumbers,
++  showTopCollapse,
+ }: {
+   content: string;
+   shouldDisplayCodeSnippet: boolean;
++  initialExpanded?: boolean;
++  showLineNumbers?: boolean;
++  showTopCollapse?: boolean;
+ }) {
+   const { theme } = useDesignSystemTheme();
+ 
+@@ -140,6 +146,9 @@
+         activeMatch={null}
+         containsActiveMatch={false}
+         renderMode={CodeSnippetRenderMode.JSON}
++        initialExpanded={initialExpanded}
++        showLineNumbers={showLineNumbers}
++        showTopCollapse={showTopCollapse}
+       />
+     );
+   }
+@@ -314,12 +323,18 @@
+ export function ModelTraceExplorerChatMessage({
+   message,
+   className,
++  initialExpanded = false,
++  showLineNumbers,
++  showTopCollapse,
+ }: {
+   message: ModelTraceChatMessage;
+   className?: string;
++  initialExpanded?: boolean;
++  showLineNumbers?: boolean;
++  showTopCollapse?: boolean;
+ }) {
+   const { theme } = useDesignSystemTheme();
+-  const [expanded, setExpanded] = useState(false);
++  const [expanded, setExpanded] = useState(initialExpanded);
+   const { content, isJson } = tryGetJsonContent(message.content ?? '');
+ 
+   // tool call responses can be JSON, and in these cases
+@@ -356,7 +371,13 @@
+         {message.reasoning && <ModelTraceExplorerReasoningSection reasoning={message.reasoning} />}
+         {!isNil(message.tool_calls) &&
+           message.tool_calls.map((toolCall) => (
+-            <ModelTraceExplorerToolCallMessage key={toolCall.id} toolCall={toolCall} />
++            <ModelTraceExplorerToolCallMessage
++              key={toolCall.id}
++              toolCall={toolCall}
++              initialExpanded={initialExpanded}
++              showLineNumbers={showLineNumbers}
++              showTopCollapse={showTopCollapse}
++            />
+           ))}
+         {/* Text content renders before audio parts. The markdown renderer and audio
+             player are separate rendering paths, so original part interleaving is not
+@@ -365,6 +386,9 @@
+         <ModelTraceExplorerChatMessageContent
+           content={displayedContent}
+           shouldDisplayCodeSnippet={shouldDisplayCodeSnippet}
++          initialExpanded={initialExpanded}
++          showLineNumbers={showLineNumbers}
++          showTopCollapse={showTopCollapse}
+         />
+         {message.audioParts && message.audioParts.length > 0 && (
+           <ModelTraceExplorerAudioPlayer audioParts={message.audioParts} />
+--- a/mlflow/server/js/src/shared/web-shared/model-trace-explorer/right-pane/ModelTraceExplorerConversation.tsx
++++ b/mlflow/server/js/src/shared/web-shared/model-trace-explorer/right-pane/ModelTraceExplorerConversation.tsx
+@@ -5,7 +5,17 @@
+ import { ModelTraceExplorerChatMessage } from './ModelTraceExplorerChatMessage';
+ import type { ModelTraceChatMessage } from '../ModelTrace.types';
+ 
+-export function ModelTraceExplorerConversation({ messages }: { messages: ModelTraceChatMessage[] | null }) {
++export function ModelTraceExplorerConversation({
++  messages,
++  initialExpanded,
++  showLineNumbers,
++  showTopCollapse,
++}: {
++  messages: ModelTraceChatMessage[] | null;
++  initialExpanded?: boolean;
++  showLineNumbers?: boolean;
++  showTopCollapse?: boolean;
++}) {
+   const { theme } = useDesignSystemTheme();
+ 
+   if (isNil(messages)) {
+@@ -33,6 +43,9 @@
+           }}
+           key={index}
+           message={message}
++          initialExpanded={initialExpanded}
++          showLineNumbers={showLineNumbers}
++          showTopCollapse={showTopCollapse}
+         />
+       ))}
+     </div>
+--- a/mlflow/server/js/src/shared/web-shared/model-trace-explorer/right-pane/ModelTraceExplorerToolCallMessage.tsx
++++ b/mlflow/server/js/src/shared/web-shared/model-trace-explorer/right-pane/ModelTraceExplorerToolCallMessage.tsx
+@@ -4,7 +4,17 @@
+ import type { ModelTraceToolCall } from '../ModelTrace.types';
+ import { ModelTraceExplorerCodeSnippetBody } from '../ModelTraceExplorerCodeSnippetBody';
+ 
+-export function ModelTraceExplorerToolCallMessage({ toolCall }: { toolCall: ModelTraceToolCall }) {
++export function ModelTraceExplorerToolCallMessage({
++  toolCall,
++  initialExpanded,
++  showLineNumbers,
++  showTopCollapse,
++}: {
++  toolCall: ModelTraceToolCall;
++  initialExpanded?: boolean;
++  showLineNumbers?: boolean;
++  showTopCollapse?: boolean;
++}) {
+   const { theme } = useDesignSystemTheme();
+ 
+   return (
+@@ -54,7 +64,12 @@
+           }}
+         />
+       </Typography.Text>
+-      <ModelTraceExplorerCodeSnippetBody data={toolCall.function.arguments} />
++      <ModelTraceExplorerCodeSnippetBody
++        data={toolCall.function.arguments}
++        initialExpanded={initialExpanded}
++        showLineNumbers={showLineNumbers}
++        showTopCollapse={showTopCollapse}
++      />
+     </div>
+   );
+ }
 --- a/mlflow/server/js/src/shared/web-shared/traces-table/TraceCell.test.tsx
 +++ b/mlflow/server/js/src/shared/web-shared/traces-table/TraceCell.test.tsx
 @@ -2,8 +2,8 @@
