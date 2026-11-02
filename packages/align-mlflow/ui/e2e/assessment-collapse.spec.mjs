@@ -57,12 +57,33 @@ test("session assessments collapse without losing the selected decision or a not
   await expect(
     assessments.getByRole("button", { name: "Save", exact: true }),
   ).toBeEnabled();
-  const expandedWidth = (await selectedDecision.boundingBox()).width;
-
   const close = page.getByRole("button", {
     name: "Collapse session assessments",
     exact: true,
   });
+  const controlledRegion = page.locator(
+    `[id="${await close.getAttribute("aria-controls")}"]`,
+  );
+  const assessmentShell = controlledRegion.locator("..");
+  const resizable = controlledRegion.locator(".react-resizable");
+  const originalResizableWidth = Number.parseFloat(
+    await resizable.evaluate((element) => getComputedStyle(element).width),
+  );
+  const handle = resizable.locator(":scope > div").last();
+  await expect(handle).toHaveCSS("cursor", "ew-resize");
+  const handlePosition = await handle.boundingBox();
+  const handleX = handlePosition.x + handlePosition.width / 2;
+  const handleY = handlePosition.y + handlePosition.height / 2;
+  await page.mouse.move(handleX, handleY);
+  await page.mouse.down();
+  await page.mouse.move(handleX - 72, handleY, { steps: 4 });
+  await page.mouse.up();
+  await expect(resizable).toHaveCSS(
+    "width",
+    `${originalResizableWidth + 72}px`,
+  );
+  const expandedPanelWidth = (await assessmentShell.boundingBox()).width;
+  const expandedWidth = (await selectedDecision.boundingBox()).width;
   const togglePosition = await close.boundingBox();
   await close.focus();
   await page.keyboard.press("Enter");
@@ -88,9 +109,10 @@ test("session assessments collapse without losing the selected decision or a not
   await expect(navigation).toBeVisible();
   await expect(selectedNavigation).toHaveAttribute("aria-pressed", "true");
   await expect(selectedTitle).toHaveAttribute("aria-pressed", "true");
-  expect(
-    (await selectedDecision.boundingBox()).width - expandedWidth,
-  ).toBeGreaterThanOrEqual(250);
+  expect((await assessmentShell.boundingBox()).width).toBe(0);
+  const recoveredWidth =
+    (await selectedDecision.boundingBox()).width - expandedWidth;
+  expect(Math.abs(recoveredWidth - expandedPanelWidth)).toBeLessThanOrEqual(1);
 
   await reopen.click();
   await expect(assessments).toBeVisible();
@@ -102,6 +124,16 @@ test("session assessments collapse without losing the selected decision or a not
   ).toHaveAttribute("aria-expanded", "true");
   await expect(assessments.getByText("0.03", { exact: true })).toBeVisible();
   await expect(notes).toHaveValue(draft);
+  await expect(resizable).toHaveCSS(
+    "width",
+    `${originalResizableWidth + 72}px`,
+  );
+  expect(
+    Math.abs((await assessmentShell.boundingBox()).width - expandedPanelWidth),
+  ).toBeLessThanOrEqual(1);
+  expect(
+    Math.abs((await selectedDecision.boundingBox()).width - expandedWidth),
+  ).toBeLessThanOrEqual(1);
   await expect(
     assessments.getByRole("button", { name: "Save", exact: true }),
   ).toBeEnabled();

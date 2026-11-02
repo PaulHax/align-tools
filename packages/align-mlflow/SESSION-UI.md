@@ -119,15 +119,18 @@ threshold, and whether guidance was followed appear when recorded. Missing
 payloads and uncertain log associations remain explicit. Cache hits are separate
 from fresh model invocations.
 
-**Recorded environment state** exposes the original decision JSON. Process
-payloads use their exact recorded JSON fields or source-log ranges. **Load full
+**Recorded environment state** sits with the situation and exposes the original
+input JSON. **Recorded action** exposes the original output beneath the chosen
+action. **Recorded decision metadata** is available inside **Decision process**.
+Process payloads use their exact recorded JSON fields or source-log ranges. **Load full
 payload** reads a selected log range on demand; **Open source artifact** provides
 the complete captured log. Large payloads above the inline limit remain available
 through their source artifact.
 
-The chevron at the assessment panel's outer edge collapses and expands **Session
-assessments**. The same control remains in place while collapsed. Decision
-selection, panel width, and unsaved notes are retained.
+The chevron at the right of the session metrics row collapses and expands
+**Session assessments**. The same control remains in place while collapsed, and
+the panel gives its full width back to the trace. Decision selection, resized
+panel width, and unsaved notes are retained.
 
 Older imports can gain process evidence with the [card refresh command](INGESTION.md#refresh-existing-decision-evidence).
 

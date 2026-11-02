@@ -583,7 +583,7 @@ export const createProcessDecisionPopulation = (runCount = 8) => {
         "mlflow.spanType": "UNKNOWN",
         "align.card_format": "situation-action-v1",
         "mlflow.spanInputs": {
-          input: `Patient A has severe bleeding. Patient B is awaiting assessment.\n\nDecision ${step} environment summary.`,
+          input: `**Situation**\n\nPatient A has severe bleeding. Patient B is awaiting assessment.\n\nDecision ${step} environment summary.`,
           source: { state: rawState },
         },
         "mlflow.spanOutputs": {
@@ -592,6 +592,8 @@ export const createProcessDecisionPopulation = (runCount = 8) => {
           source: {
             output: { action: rawAction },
             choice_info: choiceInfo,
+            recorded_debug_note:
+              "Metadata remains associated with the decision.",
           },
         },
       };

@@ -4712,6 +4712,39 @@
              {shouldEnableAssessmentsInSessions() && (
                <SingleChatTurnAssessments trace={trace} getAssessmentTitle={getAssessmentTitle} />
              )}
+--- a/mlflow/server/js/src/experiment-tracking/pages/experiment-chat-sessions/single-chat-view/ExperimentSingleChatSessionMetrics.tsx
++++ b/mlflow/server/js/src/experiment-tracking/pages/experiment-chat-sessions/single-chat-view/ExperimentSingleChatSessionMetrics.tsx
+@@ -2,11 +2,14 @@
+ import type { ExperimentSingleChatMetrics } from './useExperimentSingleChatMetrics';
+ 
+ import { FormattedMessage } from '@databricks/i18n';
++import type { ReactNode } from 'react';
+ 
+ export const ExperimentSingleChatSessionMetrics = ({
+   chatSessionMetrics,
++  actions,
+ }: {
+   chatSessionMetrics: ExperimentSingleChatMetrics;
++  actions?: ReactNode;
+ }) => {
+   const { theme } = useDesignSystemTheme();
+ 
+@@ -16,6 +19,7 @@
+         borderBottom: `1px solid ${theme.colors.grey100}`,
+         paddingBottom: theme.spacing.sm,
+         display: 'flex',
++        flexWrap: 'wrap',
+         gap: theme.spacing.sm,
+       }}
+     >
+@@ -127,6 +131,7 @@
+           </Tag>
+         </div>
+       )}
++      {actions && <div css={{ marginLeft: 'auto', flexShrink: 0 }}>{actions}</div>}
+     </div>
+   );
+ };
 --- a/mlflow/server/js/src/experiment-tracking/pages/experiment-chat-sessions/single-chat-view/ExperimentSingleChatSessionPage.test.tsx
 +++ b/mlflow/server/js/src/experiment-tracking/pages/experiment-chat-sessions/single-chat-view/ExperimentSingleChatSessionPage.test.tsx
 @@ -6,6 +6,13 @@
@@ -4780,7 +4813,7 @@
    test('mounts ExperimentCustomViewProvider with the current experiment ID when custom trace view is enabled', async () => {
 --- a/mlflow/server/js/src/experiment-tracking/pages/experiment-chat-sessions/single-chat-view/ExperimentSingleChatSessionPage.tsx
 +++ b/mlflow/server/js/src/experiment-tracking/pages/experiment-chat-sessions/single-chat-view/ExperimentSingleChatSessionPage.tsx
-@@ -10,10 +10,10 @@
+@@ -10,11 +10,14 @@
    useSearchMlflowTraces,
  } from '@databricks/web-shared/genai-traces-table';
  
@@ -4789,11 +4822,16 @@
  import invariant from 'invariant';
  import { useGetExperimentQuery } from '../../../hooks/useExperimentQuery';
 -import React, { useCallback, useMemo, useRef, useState, useEffect } from 'react';
+-import { ExperimentSingleChatSessionScoreResults } from './ExperimentSingleChatSessionScoreResults';
 +import React, { useCallback, useMemo, useState, useEffect } from 'react';
- import { ExperimentSingleChatSessionScoreResults } from './ExperimentSingleChatSessionScoreResults';
++import {
++  ExperimentSingleChatSessionScoreResults,
++  SessionAssessmentsToggle,
++} from './ExperimentSingleChatSessionScoreResults';
  import { TracesV3Toolbar } from '../../../components/experiment-page/components/traces-v3/TracesV3Toolbar';
  import type { ModelTrace, ModelTraceInfoV3 } from '@databricks/web-shared/model-trace-explorer';
-@@ -31,26 +31,24 @@
+ import {
+@@ -31,26 +34,24 @@
    shouldEnableModelTraceExplorerCustomTraceView,
    shouldUseTracesV4API,
  } from '@databricks/web-shared/model-trace-explorer';
@@ -4828,7 +4866,7 @@
  
  // Custom View pulls in @a2ui (ESM-only) transitively via ExperimentCustomViewProvider.
  // Lazy-load it so the chat-session route only pulls @a2ui into the graph when enabled.
-@@ -97,16 +95,22 @@
+@@ -97,16 +98,22 @@
    );
  };
  
@@ -4853,7 +4891,7 @@
  
    useRegisterAssistantContext('sessionId', sessionId);
    useRegisterAssistantContext('traceId', selectedTrace ? getModelTraceId(selectedTrace) : null);
-@@ -136,11 +140,11 @@
+@@ -136,11 +143,11 @@
      locations: traceSearchLocations,
      filters,
      disabled: false,
@@ -4868,7 +4906,7 @@
  
    const chatSessionMetrics = useExperimentSingleChatMetrics({ traceInfos: sortedTraceInfos });
  
-@@ -151,16 +155,15 @@
+@@ -151,16 +158,15 @@
      isLoading: isLoadingTraceDatas,
      invalidateSingleTraceQuery,
    } = useGetTraces(getTrace, sortedTraceInfos);
@@ -4888,7 +4926,7 @@
        }
      }
    }, [selectedTraceIdFromUrl, traces, isLoadingTraceDatas]);
-@@ -172,10 +175,16 @@
+@@ -172,10 +178,16 @@
        invalidateTraceQuery={invalidateSingleTraceQuery}
      >
        <div css={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
@@ -4905,7 +4943,27 @@
            css={
              shouldEnableAssessmentsInSessions()
                ? {
-@@ -195,23 +204,20 @@
+@@ -186,7 +198,18 @@
+         />
+ 
+         {shouldEnableAssessmentsInSessions() && (
+-          <ExperimentSingleChatSessionMetrics chatSessionMetrics={chatSessionMetrics} />
++          <ExperimentSingleChatSessionMetrics
++            chatSessionMetrics={chatSessionMetrics}
++            actions={
++              traces?.[0] && isV3ModelTraceInfo(traces[0].info) ? (
++                <SessionAssessmentsToggle
++                  id={sessionAssessmentsId}
++                  expanded={sessionAssessmentsExpanded}
++                  onToggle={() => setSessionAssessmentsExpanded((expanded) => !expanded)}
++                />
++              ) : undefined
++            }
++          />
+         )}
+         {isLoadingTraceDatas || isLoadingTraceInfos ? (
+           <div css={{ display: 'flex', flex: 1, minHeight: 0 }}>
+@@ -195,23 +218,19 @@
            </div>
          ) : (
            <div css={{ display: 'flex', flex: 1, minHeight: 0 }}>
@@ -4933,11 +4991,10 @@
                <ExperimentSingleChatSessionScoreResults
 +                id={sessionAssessmentsId}
 +                expanded={sessionAssessmentsExpanded}
-+                onToggle={() => setSessionAssessmentsExpanded((expanded) => !expanded)}
                  traces={traces ?? []}
                  sessionId={sessionId}
                  onRefreshSession={() => {
-@@ -225,32 +231,24 @@
+@@ -225,32 +244,24 @@
              )}
            </div>
          )}
@@ -4978,7 +5035,7 @@
            >
              <div
                css={{
-@@ -277,6 +275,34 @@
+@@ -277,6 +288,34 @@
    );
  };
  
@@ -5037,23 +5094,19 @@
  import { ResizableBox } from 'react-resizable';
  import { isEvaluatingTracesInDetailsViewEnabled } from '@databricks/web-shared/model-trace-explorer';
  import { useRunScorerInTracesViewConfiguration } from '../../experiment-scorers/hooks/useRunScorerInTracesViewConfiguration';
-@@ -22,13 +29,29 @@
- export const ExperimentSingleChatSessionScoreResults = ({
-   traces,
-   sessionId,
+@@ -19,17 +26,56 @@
+ const initialWidth = 300;
+ const maxWidth = 600;
+ 
++export const SessionAssessmentsToggle = ({
 +  id,
 +  expanded,
 +  onToggle,
-   onRefreshSession,
- }: {
-   traces: ModelTrace[];
-   sessionId: string;
++}: {
 +  id: string;
 +  expanded: boolean;
 +  onToggle: () => void;
-   onRefreshSession?: () => void;
- }) => {
-   const { theme } = useDesignSystemTheme();
++}) => {
 +  const intl = useIntl();
 +  const toggleLabel = expanded
 +    ? intl.formatMessage({
@@ -5064,22 +5117,51 @@
 +        defaultMessage: 'Expand session assessments',
 +        description: 'Label for expanding the session assessment panel',
 +      });
- 
++
++  return (
++    <Tooltip componentId="mlflow.session.assessments-toggle-tooltip" content={toggleLabel}>
++      <Button
++        componentId="mlflow.session.toggle-assessments"
++        type="tertiary"
++        size="small"
++        icon={expanded ? <ChevronRightIcon /> : <ChevronLeftIcon />}
++        aria-label={toggleLabel}
++        aria-expanded={expanded}
++        aria-controls={id}
++        onClick={onToggle}
++      />
++    </Tooltip>
++  );
++};
++
+ export const ExperimentSingleChatSessionScoreResults = ({
+   traces,
+   sessionId,
++  id,
++  expanded,
+   onRefreshSession,
+ }: {
+   traces: ModelTrace[];
+   sessionId: string;
++  id: string;
++  expanded: boolean;
+   onRefreshSession?: () => void;
+ }) => {
+   const { theme } = useDesignSystemTheme();
+-
    const firstTraceInfoInSession = useMemo(() => {
      const traceInfo = first(traces)?.info;
-@@ -67,60 +90,88 @@
-   return (
-     <div
+     if (!traceInfo || !isV3ModelTraceInfo(traceInfo)) {
+@@ -69,58 +115,72 @@
        css={{
-+        position: 'relative',
          display: 'flex',
          flexDirection: 'column',
 +        flexShrink: 0,
          minHeight: 0,
 -        paddingTop: theme.spacing.sm,
 -        overflow: 'auto',
-+        width: expanded ? undefined : theme.spacing.lg + theme.spacing.sm,
-+        borderLeft: expanded ? undefined : `1px solid ${theme.colors.border}`,
++        minWidth: 0,
++        width: expanded ? undefined : 0,
        }}
      >
 -      <ResizableBox
@@ -5105,19 +5187,6 @@
 -            }}
 -          />
 -        }
-+      <Tooltip componentId="mlflow.session.assessments-toggle-tooltip" content={toggleLabel}>
-+        <Button
-+          componentId="mlflow.session.toggle-assessments"
-+          type="tertiary"
-+          size="small"
-+          icon={expanded ? <ChevronRightIcon /> : <ChevronLeftIcon />}
-+          aria-label={toggleLabel}
-+          aria-expanded={expanded}
-+          aria-controls={id}
-+          onClick={onToggle}
-+          css={{ position: 'absolute', right: theme.spacing.xs, top: theme.spacing.sm * 2, zIndex: 1 }}
-+        />
-+      </Tooltip>
 +      <div
 +        id={id}
 +        hidden={!expanded}
@@ -5335,7 +5404,7 @@
          paddingTop: theme.spacing.sm,
 --- /dev/null
 +++ b/mlflow/server/js/src/experiment-tracking/pages/experiment-chat-sessions/single-chat-view/OpenWorldDecisionProcess.tsx
-@@ -0,0 +1,421 @@
+@@ -0,0 +1,448 @@
 +import { useEffect, useMemo, useRef, useState } from 'react';
 +import { Button, Typography, useDesignSystemTheme } from '@databricks/design-system';
 +import type { ModelTrace, ModelTraceSpanNode } from '@databricks/web-shared/model-trace-explorer';
@@ -5690,70 +5759,97 @@
 +  const { theme } = useDesignSystemTheme();
 +  const [expanded, setExpanded] = useState(false);
 +  const [stateExpanded, setStateExpanded] = useState(false);
++  const [actionExpanded, setActionExpanded] = useState(false);
++  const [metadataExpanded, setMetadataExpanded] = useState(false);
 +  const { root, process: decisionProcess, inputSummary, outputSummary } = decision;
++  const outputSource = asObject(asObject(root.outputs)?.['source']);
++  const decisionMetadata = Object.fromEntries(Object.entries(outputSource ?? {}).filter(([key]) => key !== 'output'));
 +  useEffect(() => {
 +    if (phaseSelection) setExpanded(true);
 +  }, [phaseSelection]);
 +  const sectionCss = { display: 'flex', flexDirection: 'column' as const, minWidth: 0, gap: theme.spacing.sm };
 +  return (
 +    <div css={sectionCss}>
-+      {inputSummary && (
-+        <ModelTraceExplorerFieldRenderer title="Environment" data={fieldData(inputSummary)} renderMode="default" />
-+      )}
-+      {outputSummary && (
-+        <ModelTraceExplorerFieldRenderer title="Selected action" data={fieldData(outputSummary)} renderMode="default" />
-+      )}
-+      <details open={stateExpanded} onToggle={(event) => setStateExpanded(event.currentTarget.open)}>
-+        <summary css={{ cursor: 'pointer' }}>Recorded environment state</summary>
-+        {stateExpanded && (
-+          <ModelTraceExplorerFieldRenderer
-+            title="Recorded state and action"
-+            data={fieldData({
-+              input: asObject(root.inputs)?.['source'],
-+              ...asObject(asObject(root.outputs)?.['source']),
-+            })}
-+            renderMode="json"
-+          />
++      <section aria-label="Situation input" css={sectionCss}>
++        {inputSummary && (
++          <ModelTraceExplorerFieldRenderer title="" data={fieldData(inputSummary)} renderMode="default" />
 +        )}
-+      </details>
-+      {decisionProcess ? (
-+        <details
-+          data-decision-process
-+          open={expanded}
-+          onToggle={(event) => setExpanded(event.currentTarget.open)}
-+          css={{ borderTop: `1px solid ${theme.colors.border}`, paddingTop: theme.spacing.sm }}
-+        >
-+          <summary css={{ cursor: 'pointer' }}>Decision process ({decisionProcess.phases.length} phases)</summary>
-+          {expanded && (
-+            <div css={{ ...sectionCss, paddingTop: theme.spacing.sm }}>
-+              <Typography.Text color="secondary">{decisionProcess.producer}</Typography.Text>
-+              {decisionProcess.review && <ReviewSummary review={decisionProcess.review} />}
-+              {decisionProcess.gaps?.length > 0 && (
-+                <section aria-label="Capture gaps">
-+                  <Typography.Text bold>Capture gaps</Typography.Text>
-+                  <ul css={{ margin: '4px 0', paddingLeft: 20 }}>
-+                    {decisionProcess.gaps.map((gap, index) => (
-+                      <li key={index}>{gap}</li>
-+                    ))}
-+                  </ul>
-+                </section>
-+              )}
-+              {decisionProcess.phases.map((phase) => (
-+                <ProcessPhase
-+                  key={phase.id}
-+                  phase={phase}
-+                  root={root}
-+                  runId={runId}
-+                  selected={phaseSelection?.phaseId === phase.id}
-+                  selectionRevision={phaseSelection?.revision}
-+                />
-+              ))}
-+            </div>
++        <details open={stateExpanded} onToggle={(event) => setStateExpanded(event.currentTarget.open)}>
++          <summary css={{ cursor: 'pointer' }}>Recorded environment state</summary>
++          {stateExpanded && (
++            <ModelTraceExplorerFieldRenderer
++              title="Recorded input"
++              data={fieldData(asObject(root.inputs)?.['source'])}
++              renderMode="json"
++            />
 +          )}
 +        </details>
-+      ) : (
-+        <div>Decision process is not available in this imported trace.</div>
-+      )}
++      </section>
++      <section aria-label="Chosen action" css={sectionCss}>
++        {outputSummary && (
++          <ModelTraceExplorerFieldRenderer title="" data={fieldData(outputSummary)} renderMode="default" />
++        )}
++        <details open={actionExpanded} onToggle={(event) => setActionExpanded(event.currentTarget.open)}>
++          <summary css={{ cursor: 'pointer' }}>Recorded action</summary>
++          {actionExpanded && (
++            <ModelTraceExplorerFieldRenderer
++              title="Recorded output"
++              data={fieldData(outputSource?.['output'])}
++              renderMode="json"
++            />
++          )}
++        </details>
++      </section>
++      <details
++        data-decision-process
++        open={expanded}
++        onToggle={(event) => setExpanded(event.currentTarget.open)}
++        css={{ borderTop: `1px solid ${theme.colors.border}`, paddingTop: theme.spacing.sm }}
++      >
++        <summary css={{ cursor: 'pointer' }}>Decision process ({decisionProcess?.phases.length ?? 0} phases)</summary>
++        {expanded && (
++          <div css={{ ...sectionCss, paddingTop: theme.spacing.sm }}>
++            {decisionProcess ? (
++              <>
++                <Typography.Text color="secondary">{decisionProcess.producer}</Typography.Text>
++                {decisionProcess.review && <ReviewSummary review={decisionProcess.review} />}
++                {decisionProcess.gaps?.length > 0 && (
++                  <section aria-label="Capture gaps">
++                    <Typography.Text bold>Capture gaps</Typography.Text>
++                    <ul css={{ margin: '4px 0', paddingLeft: 20 }}>
++                      {decisionProcess.gaps.map((gap, index) => (
++                        <li key={index}>{gap}</li>
++                      ))}
++                    </ul>
++                  </section>
++                )}
++                {decisionProcess.phases.map((phase) => (
++                  <ProcessPhase
++                    key={phase.id}
++                    phase={phase}
++                    root={root}
++                    runId={runId}
++                    selected={phaseSelection?.phaseId === phase.id}
++                    selectionRevision={phaseSelection?.revision}
++                  />
++                ))}
++              </>
++            ) : (
++              <div>Decision process is not available in this imported trace.</div>
++            )}
++            <details open={metadataExpanded} onToggle={(event) => setMetadataExpanded(event.currentTarget.open)}>
++              <summary css={{ cursor: 'pointer' }}>Recorded decision metadata</summary>
++              {metadataExpanded && (
++                <ModelTraceExplorerFieldRenderer
++                  title="Recorded decision metadata"
++                  data={fieldData(decisionMetadata)}
++                  renderMode="json"
++                />
++              )}
++            </details>
++          </div>
++        )}
++      </details>
 +    </div>
 +  );
 +};

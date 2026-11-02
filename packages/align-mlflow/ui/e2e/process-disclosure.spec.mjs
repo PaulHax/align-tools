@@ -17,7 +17,7 @@ const card = (scope, step = 1) =>
 const summary = (scope, name) =>
   scope.locator("summary").filter({
     hasText: new RegExp(
-      "^" + name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "(?:\\s|$)",
+      "^" + name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "(?:\\s*·|$)",
     ),
   });
 const navigation = (page, session) =>
@@ -52,12 +52,35 @@ const expectSelection = async (page, scope, session, selected) => {
 const expectCompactDecision = async (scope, session, phases) => {
   const decision = card(scope);
   await expect(
-    decision.getByText("Patient A has severe bleeding.", { exact: false }),
+    decision.getByRole("heading", {
+      name: /^(Environment|Selected action|Chosen action)$/,
+    }),
+  ).toHaveCount(0);
+  await expect(decision.getByText("Situation", { exact: true })).toHaveCount(1);
+  await expect(decision.getByText("Situation", { exact: true })).toBeVisible();
+  const situation = decision.getByRole("region", {
+    name: "Situation input",
+    exact: true,
+  });
+  const action = decision.getByRole("region", {
+    name: "Chosen action",
+    exact: true,
+  });
+  await expect(
+    situation.getByText("Patient A has severe bleeding.", { exact: false }),
   ).toBeVisible();
   await expect(
-    decision.getByText("Apply a tourniquet to Patient A.", { exact: false }),
+    action.getByText("Apply a tourniquet to Patient A.", { exact: false }),
   ).toBeVisible();
-  await expect(summary(decision, "Recorded environment state")).toBeVisible();
+  await expect(summary(situation, "Recorded environment state")).toBeVisible();
+  await expect(summary(action, "Recorded action")).toBeVisible();
+  const [situationBounds, actionBounds] = await Promise.all([
+    situation.boundingBox(),
+    action.boundingBox(),
+  ]);
+  expect(situationBounds.y + situationBounds.height).toBeLessThanOrEqual(
+    actionBounds.y + 1,
+  );
   await expect(
     decision.getByText(`Recorded environment for ${session} decision 1`, {
       exact: false,
@@ -73,6 +96,7 @@ const expectCompactDecision = async (scope, session, phases) => {
     .allTextContents();
   expect(visibleHeadings).toEqual([
     "Recorded environment state",
+    "Recorded action",
     `Decision process (${phases} phases)`,
   ]);
   return decision;
@@ -150,12 +174,49 @@ test("pipeline evidence expands by phase and call while the environment remains 
   await openPipelineCall(decision);
   await expectSelection(page, page, session, 2);
   await summary(decision, "Recorded environment state").click();
+  const recordedInput = summary(decision, "Recorded environment state").locator(
+    "..",
+  );
   await expect(
-    decision.getByRole("heading", {
-      name: "Recorded state and action",
+    recordedInput.getByRole("heading", {
+      name: "Recorded input",
       exact: true,
     }),
   ).toBeVisible();
+  await expect(recordedInput).toContainText("example-triage-scenario");
+  await expect(recordedInput).not.toContainText("APPLY_TREATMENT");
+  await expect(recordedInput).not.toContainText("choice_info");
+  await expect(recordedInput).not.toContainText("recorded_debug_note");
+  const action = decision.getByRole("region", {
+    name: "Chosen action",
+    exact: true,
+  });
+  await summary(action, "Recorded action").click();
+  const recordedAction = summary(action, "Recorded action").locator("..");
+  await expect(
+    recordedAction.getByRole("heading", {
+      name: "Recorded output",
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(recordedAction).toContainText("APPLY_TREATMENT");
+  await expect(recordedAction).not.toContainText("example-triage-scenario");
+  await expect(recordedAction).not.toContainText("choice_info");
+  await expect(recordedAction).not.toContainText("recorded_debug_note");
+  const process = summary(decision, "Decision process (3 phases)").locator(
+    "..",
+  );
+  await summary(process, "Recorded decision metadata").click();
+  const recordedMetadata = summary(
+    process,
+    "Recorded decision metadata",
+  ).locator("..");
+  await expect(recordedMetadata).toContainText("choice_info");
+  await expect(recordedMetadata).toContainText(
+    "Metadata remains associated with the decision.",
+  );
+  await expect(recordedMetadata).not.toContainText("APPLY_TREATMENT");
+  await expect(recordedMetadata).not.toContainText("example-triage-scenario");
   await expectSelection(page, page, session, 2);
   await navigation(page, session)
     .getByRole("button", { name: "Open Predict urgency phase", exact: true })
