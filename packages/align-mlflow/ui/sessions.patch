@@ -5404,7 +5404,7 @@
          paddingTop: theme.spacing.sm,
 --- /dev/null
 +++ b/mlflow/server/js/src/experiment-tracking/pages/experiment-chat-sessions/single-chat-view/OpenWorldDecisionProcess.tsx
-@@ -0,0 +1,515 @@
+@@ -0,0 +1,529 @@
 +import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 +import { Button, Typography, useDesignSystemTheme } from '@databricks/design-system';
 +import type { ModelTrace, ModelTraceSpanNode } from '@databricks/web-shared/model-trace-explorer';
@@ -5587,6 +5587,7 @@
 +        showLineNumbers={false}
 +        showTopCollapse
 +        hideRenderModeDropdown
++        bordered={false}
 +      />
 +      {isPreview && <div>Preview only. The complete payload is available from its recorded source.</div>}
 +      {loading && <div role="status">Loading full payload…</div>}
@@ -5823,6 +5824,7 @@
 +        showLineNumbers={false}
 +        showTopCollapse
 +        hideRenderModeDropdown
++        bordered={false}
 +      />
 +    </section>
 +  );
@@ -5841,6 +5843,7 @@
 +  const [expanded, setExpanded] = useState(false);
 +  const [metadataExpanded, setMetadataExpanded] = useState(false);
 +  const { root, process: decisionProcess, inputSummary, outputSummary } = decision;
++  const situationSummary = inputSummary?.replace(/^\*\*Situation\*\*(?:\r?\n){2}/, '');
 +  const outputSource = asObject(asObject(root.outputs)?.['source']);
 +  const decisionMetadata = Object.fromEntries(Object.entries(outputSource ?? {}).filter(([key]) => key !== 'output'));
 +  useEffect(() => {
@@ -5851,23 +5854,34 @@
 +    <div css={sectionCss}>
 +      <section aria-label="Situation input" css={sectionCss}>
 +        {inputSummary && (
-+          <ModelTraceExplorerFieldRenderer
-+            title=""
-+            data={fieldData(inputSummary)}
-+            renderMode="default"
-+            showLineNumbers={false}
-+          />
++          <section aria-label="Situation summary">
++            <ModelTraceExplorerFieldRenderer
++              title="Situation"
++              data={fieldData(situationSummary)}
++              renderMode="default"
++              showLineNumbers={false}
++              showTopCollapse
++              bordered={false}
++            />
++          </section>
 +        )}
 +        <RecordedSourcePreview title="Input" value={asObject(root.inputs)?.['source']} />
 +      </section>
-+      <section aria-label="Chosen action" css={sectionCss}>
++      <section
++        aria-label="Chosen action"
++        css={{ ...sectionCss, borderTop: `1px solid ${theme.colors.border}`, paddingTop: theme.spacing.sm }}
++      >
 +        {outputSummary && (
-+          <ModelTraceExplorerFieldRenderer
-+            title=""
-+            data={fieldData(outputSummary)}
-+            renderMode="default"
-+            showLineNumbers={false}
-+          />
++          <section aria-label="Action summary">
++            <ModelTraceExplorerFieldRenderer
++              title=""
++              data={fieldData(outputSummary)}
++              renderMode="default"
++              showLineNumbers={false}
++              showTopCollapse
++              bordered={false}
++            />
++          </section>
 +        )}
 +        <RecordedSourcePreview title="Output" value={outputSource?.['output']} />
 +      </section>
@@ -11111,17 +11125,18 @@
    );
 --- a/mlflow/server/js/src/shared/web-shared/model-trace-explorer/ModelTraceExplorerCodeSnippet.tsx
 +++ b/mlflow/server/js/src/shared/web-shared/model-trace-explorer/ModelTraceExplorerCodeSnippet.tsx
-@@ -46,6 +46,9 @@
+@@ -46,6 +46,10 @@
    containsActiveMatch = false,
    initialRenderMode,
    initialExpanded,
 +  previewLines,
 +  showLineNumbers = true,
 +  showTopCollapse = false,
++  bordered = true,
    hideRenderModeDropdown = false,
  }: {
    title: string;
-@@ -59,6 +62,10 @@
+@@ -59,6 +63,11 @@
    containsActiveMatch?: boolean;
    initialRenderMode?: CodeSnippetRenderMode;
    initialExpanded?: boolean;
@@ -11129,10 +11144,20 @@
 +  previewLines?: number;
 +  showLineNumbers?: boolean;
 +  showTopCollapse?: boolean;
++  bordered?: boolean;
    /** When true, the per-snippet render mode dropdown is hidden (e.g. for aggregated table view). */
    hideRenderModeDropdown?: boolean;
  }) {
-@@ -170,6 +177,9 @@
+@@ -158,7 +167,7 @@
+         <div
+           css={{
+             overflow: 'hidden',
+-            border: `1px solid ${theme.colors.border}`,
++            border: bordered ? `1px solid ${theme.colors.border}` : 0,
+             borderRadius: theme.borders.borderRadiusSm,
+             marginInline: theme.spacing.sm,
+           }}
+@@ -170,6 +179,9 @@
              containsActiveMatch={containsActiveMatch}
              renderMode={renderMode}
              initialExpanded={initialExpanded}
@@ -11334,32 +11359,34 @@
  }
 --- a/mlflow/server/js/src/shared/web-shared/model-trace-explorer/field-renderers/ModelTraceExplorerFieldRenderer.tsx
 +++ b/mlflow/server/js/src/shared/web-shared/model-trace-explorer/field-renderers/ModelTraceExplorerFieldRenderer.tsx
-@@ -50,6 +50,9 @@
+@@ -50,6 +50,10 @@
    chatMessageFormat,
    maxVisibleMessages = DEFAULT_MAX_VISIBLE_CHAT_MESSAGES,
    assessments,
 +  initialExpanded = false,
 +  showLineNumbers = true,
 +  showTopCollapse = false,
++  bordered = true,
  }: {
    title: string;
    data: string;
-@@ -57,9 +60,13 @@
+@@ -57,9 +61,14 @@
    chatMessageFormat?: string;
    maxVisibleMessages?: number;
    assessments?: Assessment[];
 +  initialExpanded?: boolean;
 +  showLineNumbers?: boolean;
 +  showTopCollapse?: boolean;
++  bordered?: boolean;
  }) => {
    const { theme } = useDesignSystemTheme();
 -  const [messagesExpanded, setMessagesExpanded] = useState(false);
 +  const [messagesExpanded, setMessagesExpanded] = useState(initialExpanded);
-+  const snippetOptions = { initialExpanded, showLineNumbers, showTopCollapse };
++  const snippetOptions = { initialExpanded, showLineNumbers, showTopCollapse, bordered };
    const parsedData = useMemo(() => {
      try {
        return JSON.parse(data);
-@@ -69,8 +76,8 @@
+@@ -69,8 +78,8 @@
    }, [data]);
  
    useEffect(() => {
@@ -11370,7 +11397,7 @@
  
    const dataIsScalar = isString(parsedData) || isNumber(parsedData) || isBoolean(parsedData);
    // wrap the value in an object with the title as key. this helps normalizeConversation
-@@ -124,21 +131,42 @@
+@@ -124,21 +133,42 @@
              )}
            </Typography.Link>
          )}
@@ -11417,7 +11444,7 @@
    }
  
    if (dataIsScalar) {
-@@ -156,7 +184,14 @@
+@@ -156,7 +186,15 @@
          );
        }
      }
@@ -11428,12 +11455,13 @@
 +        value={String(parsedData)}
 +        initialExpanded={initialExpanded}
 +        showTopCollapse={showTopCollapse}
++        bordered={bordered}
 +      />
 +    );
    }
  
    if (isChatTools) {
-@@ -183,11 +218,11 @@
+@@ -183,11 +221,11 @@
                size={att.size}
              />
            ))}
@@ -11449,11 +11477,11 @@
  };
 --- a/mlflow/server/js/src/shared/web-shared/model-trace-explorer/field-renderers/ModelTraceExplorerTextFieldRenderer.tsx
 +++ b/mlflow/server/js/src/shared/web-shared/model-trace-explorer/field-renderers/ModelTraceExplorerTextFieldRenderer.tsx
-@@ -1,15 +1,26 @@
+@@ -1,15 +1,56 @@
  import { useState } from 'react';
  
 -import { ChevronDownIcon, ChevronRightIcon, Typography, useDesignSystemTheme } from '@databricks/design-system';
-+import { Button, ChevronDownIcon, ChevronRightIcon, Typography, useDesignSystemTheme } from '@databricks/design-system';
++import { Button, ChevronDownIcon, ChevronUpIcon, Typography, useDesignSystemTheme } from '@databricks/design-system';
  import { FormattedMessage } from '@databricks/i18n';
  import { GenAIMarkdownRenderer } from '../../genai-markdown-renderer/GenAIMarkdownRenderer';
  import { SnippetCopyAction } from '../../snippet/actions/SnippetCopyAction';
@@ -11466,46 +11494,106 @@
 +  value,
 +  initialExpanded = false,
 +  showTopCollapse = false,
++  bordered = true,
 +}: {
 +  title: string;
 +  value: string;
 +  initialExpanded?: boolean;
 +  showTopCollapse?: boolean;
++  bordered?: boolean;
 +}) => {
    const { theme } = useDesignSystemTheme();
 -  const [expanded, setExpanded] = useState(false);
 +  const [expanded, setExpanded] = useState(initialExpanded);
 +  const toggleExpanded = () => setExpanded((current) => !current);
++  const expansionButton = (atTop = false) => (
++    <Button
++      css={{ width: '100%', padding: 0 }}
++      componentId={
++        atTop
++          ? 'shared.model-trace-explorer.text-field-see-less-top'
++          : expanded
++            ? 'shared.model-trace-explorer.text-field-see-less'
++            : 'shared.model-trace-explorer.text-field-see-more'
++      }
++      type="tertiary"
++      size="small"
++      icon={expanded ? <ChevronUpIcon /> : <ChevronDownIcon />}
++      onClick={toggleExpanded}
++    >
++      {expanded ? (
++        <FormattedMessage
++          defaultMessage="See less"
++          description="Button to collapse a long text field in the trace explorer summary field renderer"
++        />
++      ) : (
++        <FormattedMessage
++          defaultMessage="See more"
++          description="Button to expand a long text field in the trace explorer summary field renderer"
++        />
++      )}
++    </Button>
++  );
  
    const isExpandable = value.length > STRING_TRUNCATION_LIMIT;
    const displayValue =
-@@ -63,12 +74,22 @@
+@@ -48,7 +89,7 @@
+           // reserve space for the copy action so it doesn't overlap the rendered markdown
+           paddingRight: theme.spacing.lg,
+           paddingBlock: theme.spacing.sm,
+-          border: `1px solid ${theme.colors.border}`,
++          border: bordered ? `1px solid ${theme.colors.border}` : 0,
+           borderRadius: theme.borders.borderRadiusSm,
+           // get rid of last margin in markdown renderer
+           '& > div:last-of-type': {
+@@ -63,25 +104,29 @@
            size="small"
            css={{ position: 'absolute', top: theme.spacing.xs, right: theme.spacing.xs, zIndex: 1 }}
          />
-+        {showTopCollapse && expanded && isExpandable && (
-+          <Button
-+            componentId="shared.model-trace-explorer.text-field-see-less-top"
-+            type="tertiary"
-+            size="small"
-+            onClick={toggleExpanded}
-+          >
-+            <FormattedMessage
-+              defaultMessage="See less"
-+              description="Button to collapse a long text field from its beginning"
-+            />
-+          </Button>
-+        )}
++        {showTopCollapse && expanded && isExpandable && expansionButton(true)}
          <GenAIMarkdownRenderer>{displayValue}</GenAIMarkdownRenderer>
-         {isExpandable && (
+-        {isExpandable && (
 -          <Typography.Link
 -            onClick={() => setExpanded(!expanded)}
 -            componentId="shared.model-trace-explorer.text-field-see-more-link"
 -          >
-+          <Typography.Link onClick={toggleExpanded} componentId="shared.model-trace-explorer.text-field-see-more-link">
-             {expanded ? (
-               <FormattedMessage
-                 defaultMessage="See less"
+-            {expanded ? (
+-              <FormattedMessage
+-                defaultMessage="See less"
+-                description="Button to collapse a long text field in the trace explorer summary field renderer"
+-              />
+-            ) : (
+-              <FormattedMessage
+-                defaultMessage="See more"
+-                description="Button to expand a long text field in the trace explorer summary field renderer"
+-              />
+-            )}
+-          </Typography.Link>
+-        )}
++        {isExpandable &&
++          (showTopCollapse ? (
++            expansionButton()
++          ) : (
++            <Typography.Link
++              onClick={toggleExpanded}
++              componentId="shared.model-trace-explorer.text-field-see-more-link"
++            >
++              {expanded ? (
++                <FormattedMessage
++                  defaultMessage="See less"
++                  description="Button to collapse a long text field in the trace explorer summary field renderer"
++                />
++              ) : (
++                <FormattedMessage
++                  defaultMessage="See more"
++                  description="Button to expand a long text field in the trace explorer summary field renderer"
++                />
++              )}
++            </Typography.Link>
++          ))}
+       </div>
+     </div>
+   );
 --- a/mlflow/server/js/src/shared/web-shared/model-trace-explorer/right-pane/ModelTraceExplorerChatMessage.tsx
 +++ b/mlflow/server/js/src/shared/web-shared/model-trace-explorer/right-pane/ModelTraceExplorerChatMessage.tsx
 @@ -122,9 +122,15 @@
@@ -11581,7 +11669,7 @@
            <ModelTraceExplorerAudioPlayer audioParts={message.audioParts} />
 --- a/mlflow/server/js/src/shared/web-shared/model-trace-explorer/right-pane/ModelTraceExplorerConversation.tsx
 +++ b/mlflow/server/js/src/shared/web-shared/model-trace-explorer/right-pane/ModelTraceExplorerConversation.tsx
-@@ -5,7 +5,17 @@
+@@ -5,7 +5,19 @@
  import { ModelTraceExplorerChatMessage } from './ModelTraceExplorerChatMessage';
  import type { ModelTraceChatMessage } from '../ModelTrace.types';
  
@@ -11591,16 +11679,27 @@
 +  initialExpanded,
 +  showLineNumbers,
 +  showTopCollapse,
++  bordered = true,
 +}: {
 +  messages: ModelTraceChatMessage[] | null;
 +  initialExpanded?: boolean;
 +  showLineNumbers?: boolean;
 +  showTopCollapse?: boolean;
++  bordered?: boolean;
 +}) {
    const { theme } = useDesignSystemTheme();
  
    if (isNil(messages)) {
-@@ -33,6 +43,9 @@
+@@ -17,7 +29,7 @@
+       css={{
+         display: 'flex',
+         flexDirection: 'column',
+-        border: `1px solid ${theme.colors.border}`,
++        border: bordered ? `1px solid ${theme.colors.border}` : 0,
+         borderRadius: theme.borders.borderRadiusSm,
+       }}
+     >
+@@ -33,6 +45,9 @@
            }}
            key={index}
            message={message}

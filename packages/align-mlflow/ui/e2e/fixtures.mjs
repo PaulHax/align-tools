@@ -590,15 +590,25 @@ export const createProcessDecisionPopulation = (runCount = 8) => {
                 },
               }
             : {};
+      const detailedSummary = sessionIndex === 0 && step === 1;
+      const situationSummary = `**Situation**\n\nPatient A has severe bleeding. Patient B is awaiting assessment.\n\nDecision ${step} environment summary.`;
+      const actionSummary =
+        "**Executed action:** Apply a tourniquet to Patient A.\n\n**Justification:** Control the observed severe bleeding.";
       const attributes = {
         "mlflow.spanType": "UNKNOWN",
         "align.card_format": "situation-action-v1",
         "mlflow.spanInputs": {
-          input: `**Situation**\n\nPatient A has severe bleeding. Patient B is awaiting assessment.\n\nDecision ${step} environment summary.`,
+          input: detailedSummary
+            ? situationSummary +
+              "\n\nThe available decision set includes treating Patient A and assessing Patient B. No assessment result for Patient B is part of this observation. Patient A is the subject of the recorded treatment proposal. The available supplies include a tourniquet. These details describe the same visible observation and available choices throughout this decision; they do not add a treatment outcome or findings from an unperformed assessment.\n\nEnd of situation summary: Patient B still awaits assessment."
+            : situationSummary,
           source: { state: rawState },
         },
         "mlflow.spanOutputs": {
-          response: `**Executed action:** Apply a tourniquet to Patient A.\n\n**Justification:** Control the observed severe bleeding.`,
+          response: detailedSummary
+            ? actionSummary +
+              "\n\nThe proposal uses the treatment supplies already listed in the observation. Its stated justification addresses the severe bleeding described for Patient A. Assessment of Patient B remains an available alternative in the same decision set. This summary describes the selected action and its recorded justification without asserting additional examination findings or a completed treatment result.\n\nEnd of action summary: no later treatment outcome is asserted."
+            : actionSummary,
           evidence: { record_index: step - 1, process },
           source: {
             output: { action: rawAction },

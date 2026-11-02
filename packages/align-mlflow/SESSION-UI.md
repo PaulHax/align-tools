@@ -108,6 +108,9 @@ setup and ingestion do not create them, and saving one needs no server restart.
 ## Inspect a decision
 
 Session pages show the recorded environment changes and selected action first.
+Each decision has one outer frame. Situation text and Input use aligned peer
+headings without nested card outlines; spacing and a divider distinguish the
+input group from the action and Output. Code keeps its preformatted shading.
 Each situation groups the current patients into **Nearby**, **Not nearby**, and
 **Unknown proximity**. Patient updates focus on clinical and description changes
 instead of repeating proximity changes and unchanged descriptions.
@@ -128,6 +131,8 @@ from fresh model invocations.
 the chosen action. Both show two-line code previews with a single **See more**
 control for the complete JSON. Expanded code has **See less** at the top and
 bottom, so collapsing a long payload does not require scrolling to its end.
+Expanded Situation and action summaries also have a collapse control at the top.
+Readable summaries and source previews use matching chevron expansion buttons.
 Session code views omit line-number gutters.
 **Recorded decision metadata** is available inside **Decision process**.
 Saved records show the fields they contain. Missing request or result notices

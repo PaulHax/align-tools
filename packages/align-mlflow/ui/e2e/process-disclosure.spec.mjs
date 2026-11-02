@@ -94,6 +94,47 @@ const collapseRawPreview = async (recorded) => {
   await collapse.first().click();
 };
 
+const expandAndCollapseSummary = async (
+  page,
+  decision,
+  session,
+  name,
+  tail,
+) => {
+  const readable = decision.getByRole("region", { name, exact: true });
+  const expand = readable.getByRole("button", {
+    name: "See more",
+    exact: true,
+  });
+  await expect(expand).toBeVisible();
+  const preview = await readable.innerText();
+  expect(preview).toContain("...");
+  await expect(readable).not.toContainText(tail);
+  await expand.click();
+  await expect(readable).toContainText(tail);
+  const collapse = readable.getByRole("button", {
+    name: "See less",
+    exact: true,
+  });
+  await expect(collapse).toHaveCount(2);
+  await expect(
+    readable.getByRole("link", { name: "See less", exact: true }),
+  ).toHaveCount(0);
+  const topCollapse = collapse.first();
+  const [toggleBounds, contentBounds] = await Promise.all([
+    topCollapse.boundingBox(),
+    readable.getByText(tail, { exact: false }).boundingBox(),
+  ]);
+  expect(toggleBounds.y).toBeLessThanOrEqual(contentBounds.y + 1);
+  await expectSelection(page, page, session, 2);
+  await topCollapse.click();
+  await expect(readable).not.toContainText(tail);
+  await expect(expand).toBeVisible();
+  expect(await readable.innerText()).toBe(preview);
+  await expect(collapse).toHaveCount(0);
+  await expectSelection(page, page, session, 2);
+};
+
 const expectCompactDecision = async (scope, session, phases) => {
   const decision = card(scope);
   await expect(
@@ -222,6 +263,20 @@ test("pipeline evidence expands by phase and call while the environment remains 
   await navigation(page, session)
     .getByRole("button", { name: "Decision 2", exact: true })
     .click();
+  await expandAndCollapseSummary(
+    page,
+    decision,
+    session,
+    "Situation summary",
+    "End of situation summary: Patient B still awaits assessment.",
+  );
+  await expandAndCollapseSummary(
+    page,
+    decision,
+    session,
+    "Action summary",
+    "End of action summary: no later treatment outcome is asserted.",
+  );
   await openPipelineCall(decision);
   await expectSelection(page, page, session, 2);
   const situation = decision.getByRole("region", {
