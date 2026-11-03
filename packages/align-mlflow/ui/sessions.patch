@@ -5331,9 +5331,9 @@
          paddingTop: theme.spacing.sm,
 --- /dev/null
 +++ b/mlflow/server/js/src/experiment-tracking/pages/experiment-chat-sessions/single-chat-view/OpenWorldDecisionProcess.tsx
-@@ -0,0 +1,699 @@
-+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-+import { Button, Typography, useDesignSystemTheme } from '@databricks/design-system';
+@@ -0,0 +1,855 @@
++import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
++import { Button, ChevronDownIcon, ChevronRightIcon, Typography, useDesignSystemTheme } from '@databricks/design-system';
 +import type { ModelTrace, ModelTraceSpanNode } from '@databricks/web-shared/model-trace-explorer';
 +import {
 +  parseModelTraceToTree,
@@ -5562,6 +5562,81 @@
 +  return name.charAt(0).toUpperCase() + name.slice(1) + (typeof patient === 'string' ? ` · ${patient}` : '');
 +};
 +
++const readableOutput = (activity: DecisionProcessActivity, root: ModelTraceSpanNode) => {
++  const payload = activity.outputs;
++  if (!payload) return undefined;
++  const resolved = resolveRecordedPayload(payload, root);
++  const value = resolved.available ? resolved.value : payload.truncated ? undefined : payload.preview;
++  const object = asObject(value);
++  if (resolved.available && payload.source.file === 'input_output.json' && object) {
++    switch (payload.source.json_pointer) {
++      case '/choice_info/multi_agent/proposal':
++        return {
++          title: actionSummary(activity, root),
++          fields: Object.entries(asObject(object['parameters']) ?? {}).flatMap(([key, parameter]) =>
++            typeof parameter === 'string' || typeof parameter === 'number' || typeof parameter === 'boolean'
++              ? [[key.replaceAll('_', ' '), parameter] as [string, unknown]]
++              : [],
++          ),
++          text: object['justification'],
++        };
++      case '/choice_info/multi_agent/advice': {
++        const alternative = asObject(object['alternative']);
++        return {
++          fields:
++            typeof alternative?.['tool_name'] === 'string'
++              ? [['Alternative tool', alternative['tool_name']] as [string, unknown]]
++              : [],
++          text: object['reason'],
++        };
++      }
++      case '/choice_info/multi_agent/final_review_response':
++        return { text: object['response_to_advice'] };
++    }
++  }
++  if (typeof value === 'string' && (activity.kind === 'model' || activity.kind === 'tool')) {
++    // Structured text remains in the original payload renderer.
++    if (!/^\s*(?:\{|\[)/.test(value)) return { text: value };
++  }
++  return undefined;
++};
++
++const ActivitySummary = ({
++  activity,
++  root,
++  showLabel,
++  proposalShown,
++}: {
++  activity: DecisionProcessActivity;
++  root: ModelTraceSpanNode;
++  showLabel: boolean;
++  proposalShown: boolean;
++}) => {
++  const { theme } = useDesignSystemTheme();
++  const output = readableOutput(activity, root);
++  const text = typeof output?.text === 'string' ? output.text : undefined;
++  const label =
++    output?.title && proposalShown ? 'Justification' : (output?.title ?? getDecisionActivityLabel(activity));
++  if (!text && !output?.title && !output?.fields?.length && !showLabel) return null;
++  return (
++    <section
++      aria-label={getDecisionActivityLabel(activity)}
++      css={{
++        paddingBlock: theme.spacing.xs,
++        overflowWrap: 'anywhere',
++      }}
++    >
++      <Typography.Text bold>{label}</Typography.Text>
++      {!!output?.fields?.length && <ReviewValueList fields={output.fields} />}
++      {text && (
++        <Typography.Paragraph css={{ whiteSpace: 'pre-wrap', marginBlock: theme.spacing.xs }}>
++          {text}
++        </Typography.Paragraph>
++      )}
++    </section>
++  );
++};
++
 +const ProcessActivity = ({
 +  activity,
 +  root,
@@ -5637,6 +5712,113 @@
 +  );
 +};
 +
++const ProcessDisclosureRow = ({
++  label,
++  preview,
++  count,
++  children,
++}: {
++  label: string;
++  preview?: string;
++  count?: string;
++  children: ReactNode;
++}) => {
++  const { theme } = useDesignSystemTheme();
++  const [expanded, setExpanded] = useState(false);
++  const oneLine = { minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const };
++  return (
++    <details onToggle={(event) => setExpanded(event.currentTarget.open)} css={{ minWidth: 0 }}>
++      <summary
++        css={{
++          display: 'flex',
++          alignItems: 'center',
++          gap: theme.spacing.xs,
++          paddingBlock: theme.spacing.xs,
++          paddingInline: theme.spacing.sm,
++          cursor: 'pointer',
++          listStyle: 'none',
++          border: '1px solid ' + theme.colors.borderDecorative,
++          borderRadius: theme.borders.borderRadiusSm,
++          backgroundColor: theme.colors.backgroundPrimary,
++          '&::-webkit-details-marker': { display: 'none' },
++          '&:hover': { backgroundColor: theme.colors.actionDefaultBackgroundHover },
++          '&:active': { backgroundColor: theme.colors.actionDefaultBackgroundPress },
++          '&:focus-visible': { outline: '2px solid ' + theme.colors.actionDefaultBorderFocus, outlineOffset: -2 },
++        }}
++      >
++        <Typography.Text
++          bold
++          size="sm"
++          css={{
++            ...oneLine,
++            maxWidth: '50%',
++            paddingInline: theme.spacing.xs,
++            borderRadius: theme.borders.borderRadiusSm,
++            backgroundColor: theme.colors.backgroundSecondary,
++          }}
++        >
++          {label}
++        </Typography.Text>
++        {preview && (
++          <Typography.Text color="secondary" title={preview} css={{ ...oneLine, flex: 1 }}>
++            {preview}
++          </Typography.Text>
++        )}
++        {count && (
++          <Typography.Text
++            color="secondary"
++            size="sm"
++            css={{ marginLeft: 'auto', flexShrink: 0, whiteSpace: 'nowrap' }}
++          >
++            {count}
++          </Typography.Text>
++        )}
++        <span
++          aria-hidden
++          css={{ display: 'flex', flexShrink: 0, marginLeft: 'auto', color: theme.colors.textSecondary }}
++        >
++          {expanded ? <ChevronDownIcon /> : <ChevronRightIcon />}
++        </span>
++      </summary>
++      {expanded && <div css={{ minWidth: 0, paddingInline: theme.spacing.sm }}>{children}</div>}
++    </details>
++  );
++};
++
++const ProcessActivities = ({
++  activities,
++  root,
++  runId,
++  sourceGroup = false,
++  proposalShown = false,
++  children,
++}: {
++  activities: DecisionProcessActivity[];
++  root: ModelTraceSpanNode;
++  runId?: string;
++  sourceGroup?: boolean;
++  proposalShown?: boolean;
++  children?: ReactNode;
++}) => (
++  <>
++    {activities.map((activity, index) => (
++      <ActivitySummary
++        key={`${activity.id}:${index}`}
++        activity={activity}
++        root={root}
++        showLabel={sourceGroup || activity.kind === 'model' || activity.kind === 'tool' || activity.kind === 'cache'}
++        proposalShown={proposalShown}
++      />
++    ))}
++    {children}
++    <ProcessDisclosureRow label="Recorded evidence">
++      {activities.map((activity, index) => (
++        <ProcessActivity key={`${activity.id}:${index}`} activity={activity} root={root} runId={runId} />
++      ))}
++    </ProcessDisclosureRow>
++  </>
++);
++
 +const ProcessPhase = ({
 +  phase,
 +  root,
@@ -5651,36 +5833,26 @@
 +  hint?: string;
 +}) => {
 +  const { theme } = useDesignSystemTheme();
-+  const [expanded, setExpanded] = useState(false);
 +  return (
-+    <details open={expanded} onToggle={(event) => setExpanded(event.currentTarget.open)} css={{ minWidth: 0 }}>
-+      <summary css={{ cursor: 'pointer', padding: `${theme.spacing.xs}px 0`, overflowWrap: 'anywhere' }}>
-+        <Typography.Text bold>{phase.label}</Typography.Text>
-+        <Typography.Text color="secondary">
-+          {' '}
-+          · {phase.activities.length} {phase.activities.length === 1 ? 'record' : 'records'}
-+        </Typography.Text>
-+        {hint && (
-+          <Typography.Text color="secondary" css={{ display: 'block', paddingLeft: theme.spacing.sm, fontWeight: 400 }}>
-+            {hint}
-+          </Typography.Text>
-+        )}
-+      </summary>
-+      {expanded && (
-+        <div css={{ paddingLeft: theme.spacing.sm, minWidth: 0 }}>
-+          {phase.summary && <div css={{ paddingBottom: theme.spacing.xs }}>{phase.summary}</div>}
-+          {review && <PhaseOutcome phaseId={phase.id} review={review} />}
++    <ProcessDisclosureRow label={phase.label} preview={hint}>
++      {phase.summary && <div css={{ paddingBottom: theme.spacing.xs }}>{phase.summary}</div>}
++      {review && <PhaseOutcome phaseId={phase.id} review={review} />}
++      {phase.activities.length ? (
++        <ProcessActivities
++          activities={phase.activities}
++          root={root}
++          runId={runId}
++          proposalShown={phase.id === 'proposal' && Boolean(review?.proposal)}
++        >
 +          {review && phase.id === 'review' && <ReviewDetails review={review} />}
-+          {phase.activities.length ? (
-+            phase.activities.map((activity) => (
-+              <ProcessActivity key={activity.id} activity={activity} root={root} runId={runId} />
-+            ))
-+          ) : (
-+            <div>No invocation details were captured for this phase.</div>
-+          )}
-+        </div>
++        </ProcessActivities>
++      ) : (
++        <>
++          {review && phase.id === 'review' && <ReviewDetails review={review} />}
++          <div>No invocation details were captured for this phase.</div>
++        </>
 +      )}
-+    </details>
++    </ProcessDisclosureRow>
 +  );
 +};
 +
@@ -5809,32 +5981,23 @@
 +  root: ModelTraceSpanNode;
 +  runId?: string;
 +}) => {
-+  const { theme } = useDesignSystemTheme();
-+  const [expanded, setExpanded] = useState(false);
 +  if (activities.length === 0) return null;
++  const isSourceLogs = label === 'Source logs';
++  const noun = isSourceLogs ? 'excerpt' : 'record';
++  const count = activities.length;
 +  return (
-+    <details open={expanded} onToggle={(event) => setExpanded(event.currentTarget.open)}>
-+      <summary css={{ cursor: 'pointer', padding: `${theme.spacing.xs}px 0`, overflowWrap: 'anywhere' }}>
-+        <Typography.Text bold>{label}</Typography.Text>
++    <ProcessDisclosureRow
++      label={label}
++      preview={compactHint(getDecisionActivityLabel(activities[0]), 100)}
++      count={count + ' ' + noun + (count === 1 ? '' : 's')}
++    >
++      {isSourceLogs && (
 +        <Typography.Text color="secondary">
-+          {' '}
-+          · {activities.length} {label === 'Source logs' ? 'excerpts' : 'records'} ·{' '}
-+          {compactHint(getDecisionActivityLabel(activities[0]), 100)}
++          These excerpts have no verified association with a workflow stage or individual call.
 +        </Typography.Text>
-+      </summary>
-+      {expanded && (
-+        <div css={{ paddingLeft: theme.spacing.sm }}>
-+          {label === 'Source logs' && (
-+            <Typography.Text color="secondary">
-+              These excerpts have no verified association with a workflow stage or individual call.
-+            </Typography.Text>
-+          )}
-+          {activities.map((activity, index) => (
-+            <ProcessActivity key={`${activity.id}:${index}`} activity={activity} root={root} runId={runId} />
-+          ))}
-+        </div>
 +      )}
-+    </details>
++      <ProcessActivities activities={activities} root={root} runId={runId} sourceGroup />
++    </ProcessDisclosureRow>
 +  );
 +};
 +
@@ -5883,8 +6046,6 @@
 +
 +export const OpenWorldDecisionContent = ({ decision, runId }: { decision: OpenWorldDecision; runId?: string }) => {
 +  const { theme } = useDesignSystemTheme();
-+  const [metadataExpanded, setMetadataExpanded] = useState(false);
-+  const [gapsExpanded, setGapsExpanded] = useState(false);
 +  const { root, process: decisionProcess, inputSummary, outputSummary } = decision;
 +  const presentation = useMemo(() => getDecisionProcessPresentation(decision), [decision]);
 +  const situationSummary = inputSummary?.replace(/^\*\*Situation\*\*(?:\r?\n){2}/, '');
@@ -5897,6 +6058,12 @@
 +    gaps.length > 0 ||
 +    metadataKeys.length > 0;
 +  const sectionCss = { display: 'flex', flexDirection: 'column' as const, minWidth: 0, gap: theme.spacing.sm };
++  const disclosureRowsCss = {
++    display: 'flex',
++    flexDirection: 'column' as const,
++    gap: theme.spacing.xs,
++    minWidth: 0,
++  };
 +  return (
 +    <div css={sectionCss}>
 +      <section aria-label="Situation input" css={sectionCss}>
@@ -5919,6 +6086,31 @@
 +        />
 +      </section>
 +      <section
++        aria-label="Decision process"
++        data-decision-process
++        css={{ ...sectionCss, borderTop: `1px solid ${theme.colors.border}`, paddingTop: theme.spacing.sm }}
++      >
++        <Typography.Title level={4} withoutMargins color="secondary">
++          Decision process
++        </Typography.Title>
++        <section aria-label="Workflow stages" css={disclosureRowsCss}>
++          {presentation.workflowPhases.length > 0 ? (
++            presentation.workflowPhases.map((phase) => (
++              <ProcessPhase
++                key={phase.id}
++                phase={phase}
++                root={root}
++                runId={runId}
++                review={decisionProcess?.review}
++                hint={getDecisionPhaseHint(phase, decisionProcess?.review, root)}
++              />
++            ))
++          ) : (
++            <div>Workflow stages were not recorded.</div>
++          )}
++        </section>
++      </section>
++      <section
 +        aria-label="Chosen action"
 +        css={{ ...sectionCss, borderTop: `1px solid ${theme.colors.border}`, paddingTop: theme.spacing.sm }}
 +      >
@@ -5936,31 +6128,6 @@
 +        )}
 +        <RecordedSourcePreview title="Output" caption="input_output.json → output" value={outputSource?.['output']} />
 +      </section>
-+      <section
-+        aria-label="Decision process"
-+        data-decision-process
-+        css={{ ...sectionCss, borderTop: `1px solid ${theme.colors.border}`, paddingTop: theme.spacing.sm }}
-+      >
-+        <Typography.Title level={4} withoutMargins color="secondary">
-+          Decision process
-+        </Typography.Title>
-+        <section aria-label="Workflow stages" css={sectionCss}>
-+          {presentation.workflowPhases.length > 0 ? (
-+            presentation.workflowPhases.map((phase) => (
-+              <ProcessPhase
-+                key={phase.id}
-+                phase={phase}
-+                root={root}
-+                runId={runId}
-+                review={decisionProcess?.review}
-+                hint={getDecisionPhaseHint(phase, decisionProcess?.review, root)}
-+              />
-+            ))
-+          ) : (
-+            <div>Workflow stages were not recorded.</div>
-+          )}
-+        </section>
-+      </section>
 +      {hasSupportingEvidence && (
 +        <section
 +          aria-label="Supporting evidence"
@@ -5970,32 +6137,25 @@
 +          <Typography.Title level={4} withoutMargins color="secondary">
 +            Supporting evidence
 +          </Typography.Title>
-+          {presentation.sourceLogActivities.length > 0 && (
++          <div css={disclosureRowsCss}>
 +            <SourceActivities
 +              label="Source logs"
 +              activities={presentation.sourceLogActivities}
 +              root={root}
 +              runId={runId}
 +            />
-+          )}
-+          {presentation.otherSourceActivities.length > 0 && (
 +            <SourceActivities
 +              label="Other source evidence"
 +              activities={presentation.otherSourceActivities}
 +              root={root}
 +              runId={runId}
 +            />
-+          )}
-+          {gaps.length > 0 && (
-+            <details open={gapsExpanded} onToggle={(event) => setGapsExpanded(event.currentTarget.open)}>
-+              <summary css={{ cursor: 'pointer', padding: `${theme.spacing.xs}px 0`, overflowWrap: 'anywhere' }}>
-+                <Typography.Text bold>Capture gaps</Typography.Text>
-+                <Typography.Text color="secondary">
-+                  {' '}
-+                  · {gaps.length} {gaps.length === 1 ? 'gap' : 'gaps'} · {compactHint(gaps[0])}
-+                </Typography.Text>
-+              </summary>
-+              {gapsExpanded && (
++            {gaps.length > 0 && (
++              <ProcessDisclosureRow
++                label="Capture gaps"
++                preview={compactHint(gaps[0])}
++                count={gaps.length + (gaps.length === 1 ? ' gap' : ' gaps')}
++              >
 +                <section aria-label="Capture gaps">
 +                  <ul css={{ margin: '4px 0', paddingLeft: 20 }}>
 +                    {gaps.map((gap, index) => (
@@ -6003,29 +6163,25 @@
 +                    ))}
 +                  </ul>
 +                </section>
-+              )}
-+            </details>
-+          )}
-+          {metadataKeys.length > 0 && (
-+            <details open={metadataExpanded} onToggle={(event) => setMetadataExpanded(event.currentTarget.open)}>
-+              <summary css={{ cursor: 'pointer', padding: `${theme.spacing.xs}px 0`, overflowWrap: 'anywhere' }}>
-+                <Typography.Text bold>Additional metadata</Typography.Text>
-+                <Typography.Text color="secondary">
-+                  {' '}
-+                  · {metadataKeys.slice(0, 4).join(', ')}
-+                  {metadataKeys.length > 4 && ` (+${metadataKeys.length - 4})`}
-+                </Typography.Text>
-+              </summary>
-+              {metadataExpanded && (
++              </ProcessDisclosureRow>
++            )}
++            {metadataKeys.length > 0 && (
++              <ProcessDisclosureRow
++                label="Additional metadata"
++                preview={
++                  metadataKeys.slice(0, 4).join(', ') +
++                  (metadataKeys.length > 4 ? ' (+' + (metadataKeys.length - 4) + ')' : '')
++                }
++              >
 +                <RecordedSourcePreview
 +                  title="Additional metadata"
 +                  value={presentation.additionalMetadata}
 +                  initialExpanded
 +                  allowCollapse={false}
 +                />
-+              )}
-+            </details>
-+          )}
++              </ProcessDisclosureRow>
++            )}
++          </div>
 +        </section>
 +      )}
 +    </div>
@@ -6229,7 +6385,7 @@
 +};
 --- /dev/null
 +++ b/mlflow/server/js/src/experiment-tracking/pages/experiment-chat-sessions/single-chat-view/decisionProcessPresentation.ts
-@@ -0,0 +1,289 @@
+@@ -0,0 +1,313 @@
 +import type { ModelTraceSpanNode } from '@databricks/web-shared/model-trace-explorer';
 +import { getDecisionActivityLabel } from './decisionActivityLabels';
 +import { resolveRecordedPayload } from './decisionProcessPayloads';
@@ -6244,8 +6400,10 @@
 +const asObject = (value: unknown): Record<string, unknown> | undefined =>
 +  value !== null && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : undefined;
 +
++const oneLine = (value: string) => value.replace(/\s+/g, ' ').trim();
++
 +const compact = (value: string, limit = 160) => {
-+  const text = value.replace(/\s+/g, ' ').trim();
++  const text = oneLine(value);
 +  return text.length > limit ? `${text.slice(0, limit - 1).trimEnd()}…` : text;
 +};
 +
@@ -6488,29 +6646,51 @@
 +  }
 +};
 +
++const resolvePhaseRecord = (phase: DecisionProcessPhase, key: string, root?: ModelTraceSpanNode) => {
++  if (!root) return undefined;
++  const pointer = '/choice_info/multi_agent/' + key;
++  for (const activity of phase.activities) {
++    for (const payload of [activity.outputs, activity.inputs]) {
++      if (payload?.source.file === 'input_output.json' && payload.source.json_pointer === pointer) {
++        const resolved = resolveRecordedPayload(payload, root);
++        if (resolved.available) return resolved.value;
++      }
++    }
++  }
++  return undefined;
++};
++
++const recordedText = (value: unknown) => (typeof value === 'string' ? oneLine(value) || undefined : undefined);
++
++const joinHint = (label: string, detail?: string) => (detail ? oneLine(label) + ' · ' + detail : oneLine(label));
++
 +export const getDecisionPhaseHint = (
 +  phase: DecisionProcessPhase,
 +  review?: DecisionProcess['review'],
 +  root?: ModelTraceSpanNode,
 +): string | undefined => {
-+  if (phase.id === 'proposal' && review?.proposal) return compact(review.proposal);
++  if (phase.id === 'proposal' && review?.proposal) {
++    const proposal = asObject(resolvePhaseRecord(phase, 'proposal', root));
++    const justification =
++      recordedText(proposal?.['justification']) ??
++      recordedText(resolvePhaseRecord(phase, 'original_justification', root));
++    return joinHint(review.proposal, justification);
++  }
 +  if (phase.id === 'review' && review?.reviewer_recommendation) {
 +    const recommendation = review.reviewer_recommendation === 'keep' ? 'Keep proposal' : review.reviewer_recommendation;
-+    return compact(recommendation);
++    const advice = asObject(resolvePhaseRecord(phase, 'advice', root));
++    return joinHint(recommendation, recordedText(advice?.['reason']));
 +  }
 +  if (phase.id === 'final' && review?.final_action) {
-+    return compact(
-+      [
-+        review.final_action,
-+        typeof review.followed_guidance === 'boolean'
-+          ? review.followed_guidance
-+            ? 'Followed guidance'
-+            : 'Did not follow guidance'
-+          : undefined,
-+      ]
-+        .filter(Boolean)
-+        .join(' · '),
-+    );
++    const response = resolvePhaseRecord(phase, 'final_review_response', root);
++    const guidance =
++      typeof review.followed_guidance === 'boolean'
++        ? review.followed_guidance
++          ? 'Followed guidance'
++          : 'Did not follow guidance'
++        : undefined;
++    const detail = recordedText(asObject(response)?.['response_to_advice'] ?? response) ?? guidance;
++    return joinHint(review.final_action, detail);
 +  }
 +  if (phase.summary) return compact(phase.summary);
 +  const activity = phase.activities.find((item) => item.outputs || item.inputs);

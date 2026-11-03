@@ -266,6 +266,8 @@ const reviewerOutput =
   "Recommend assessing Patient B. Confidence: 0.8; estimated improvement: 0.4.";
 const recordedProposal = {
   action: "Apply a tourniquet to Patient A.",
+  justification:
+    "Control Patient A’s observed severe bleeding before reassessing. The recorded observation has no assessment result for Patient B.",
   observations: Array.from(
     { length: 30 },
     (_, index) =>
@@ -609,6 +611,8 @@ export const createProcessDecisionPopulation = (runCount = 8) => {
                 proposal_validation: null,
                 advice: {
                   recommendation: "Assess Patient B before treatment.",
+                  reason:
+                    "Assess Patient B to check whether an unobserved injury also needs immediate care.",
                 },
                 review_assessment_validation: {
                   valid: true,
@@ -625,6 +629,10 @@ export const createProcessDecisionPopulation = (runCount = 8) => {
                   followed_guidance: false,
                 },
                 final_action: rawAction,
+                final_review_response: {
+                  response_to_advice:
+                    "I kept the proposal because Patient A’s bleeding was observed and requires treatment now.",
+                },
                 disposition: "kept_proposal",
                 calls: { proposal: 1, review: 1, final: 1 },
                 unclassified_note:
