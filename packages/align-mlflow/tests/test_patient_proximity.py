@@ -67,8 +67,8 @@ def test_import_and_refresh_group_proximity_without_repeating_unchanged_patients
         tmp_path, records, "No action details recorded.\n"
     )
     summaries = [root(trace).inputs["input"] for trace in traces]
-    first_roster = "**Nearby:** Patient 2 · **Not nearby:** Patient 1 · **Unknown proximity:** Alpha (Casey), Bravo, Charlie"
-    moved_roster = "**Nearby:** Patient 1 · **Not nearby:** Patient 2 · **Unknown proximity:** Alpha (Casey), Bravo, Charlie"
+    first_roster = "**Now nearby:** Patient 2 · **Not nearby:** Patient 1 · **Unknown proximity:** Alpha (Casey), Bravo, Charlie"
+    moved_roster = "**Now nearby:** Patient 1 · **Not nearby:** Patient 2 · **Unknown proximity:** Alpha (Casey), Bravo, Charlie"
     assert first_roster in summaries[0]
     assert "Patient 1 has a visible injury." in summaries[0]
     assert "Patient 2 has another visible injury." in summaries[0]

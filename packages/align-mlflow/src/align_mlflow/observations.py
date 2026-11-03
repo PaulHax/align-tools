@@ -49,7 +49,7 @@ def _patient_label(patient: dict) -> str:
 
 def _proximity_roster(patients: list[dict]) -> str:
     groups: dict[str, list[str]] = {
-        "Nearby": [],
+        "Now nearby": [],
         "Not nearby": [],
         "Unknown proximity": [],
     }
@@ -58,7 +58,7 @@ def _proximity_roster(patients: list[dict]) -> str:
             continue
         nearby = patient.get("nearby")
         group = (
-            "Nearby"
+            "Now nearby"
             if nearby is True
             else "Not nearby"
             if nearby is False

@@ -108,33 +108,49 @@ setup and ingestion do not create them, and saving one needs no server restart.
 ## Inspect a decision
 
 Session pages show the recorded environment changes and selected action first.
-Each decision has one outer frame. Situation text and Input use aligned peer
-headings without nested card outlines; spacing and a divider distinguish the
-input group from the action and Output. Code keeps its preformatted shading.
-Each situation groups the current patients into **Nearby**, **Not nearby**, and
+Each decision has one outer frame without nested field outlines. Compact source
+captions identify the JSON sections shown beneath the readable summaries:
+`input_output.json → input` and `input_output.json → output`. Spacing and a
+divider distinguish the situation from the action. Code keeps its preformatted
+shading.
+Each situation groups the current patients into **Now nearby**, **Not nearby**, and
 **Unknown proximity**. Patient updates focus on clinical and description changes
 instead of repeating proximity changes and unchanged descriptions.
-Expand **Decision process** to inspect the ADM's recorded phases, then expand an
-activity for its full inputs, outputs, and source references, without another
-preview-expansion step. Action rows include a readable action and patient summary
-when those fields are present. Selecting a phase beneath
-the chosen decision in the sidebar opens the same inline detail. It does not
-change the decision selected for comparison.
+**Decision process** shows workflow stages immediately, with a concise preview
+of each stage's captured action, recommendation, or other evidence. Counts refer
+only to these stages. Source-log buckets and saved-action projections do not
+increase the stage count. Expand a stage and an activity for its full inputs,
+outputs, and source references, without another preview-expansion step.
+Selecting a stage beneath the chosen decision in the sidebar opens the same
+inline detail and preserves the decision selected for comparison.
 
-Reviewer summaries distinguish the proposal, reviewer recommendation, computed
-suggestion, and final action. Influence, confidence, estimated improvement, swap
-threshold, and whether guidance was followed appear when recorded. Missing
-payloads and uncertain log associations remain explicit. Cache hits are separate
-from fresh model invocations.
+Reviewer proposals appear with **Proposal**, advice and computed suggestions with
+**Review**, and the final action and whether guidance was followed with **Final
+selection**. **Review settings** holds influence, swap threshold, and the review
+contract; **Review measurements** holds confidence, estimated improvement, and
+strength. Explicitly owned metadata appears with its relevant stage.
 
-**Input** sits with the situation and **Output** sits beneath
-the chosen action. Both show two-line code previews with a single **See more**
+**Supporting evidence** is separate from the workflow. **Source logs** contains
+excerpts whose stage or individual call association is not established.
+**Capture gaps** explains limitations of the available evidence. **Additional
+metadata** retains fields not already exposed in the appropriate stage. These
+rows preview their contents before expansion. The saved environment action
+remains in the output source rather than appearing again as a workflow stage.
+Original records and source references remain available for inspection. Cache
+hits remain distinct from fresh model invocations.
+
+The source sections show two-line code previews with a single **See more**
 control for the complete JSON. Expanded code has **See less** at the top and
 bottom, so collapsing a long payload does not require scrolling to its end.
 Expanded Situation and action summaries also have a collapse control at the top.
 Readable summaries and source previews use matching chevron expansion buttons.
 Session code views omit line-number gutters.
-**Recorded decision metadata** is available inside **Decision process**.
+Single-object previews omit their outer braces and excess indentation; arrays,
+nested objects, and raw log text retain their structure. The copy control still
+copies complete, valid JSON for structured data.
+Disclosure labels use the same bold styling. Generic log rows include a response
+excerpt or a tool name and arguments instead of repeating uninformative headings
+and `recorded` badges. The complete source remains available when the row opens.
 Saved records show the fields they contain. Missing request or result notices
 apply to captured model and tool activities, where those fields are expected.
 Process payloads use their exact recorded JSON fields or source-log ranges.

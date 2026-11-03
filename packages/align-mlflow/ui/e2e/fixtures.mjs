@@ -306,9 +306,26 @@ const processPayload = (preview, source, truncated = false) => ({
   source,
 });
 
+const savedActionPhase = (
+  step,
+  action = "Apply a tourniquet to Patient A.",
+) => ({
+  id: "saved-action",
+  label: "Saved environment action",
+  activities: [
+    {
+      id: "saved-action",
+      kind: "action",
+      status: "recorded",
+      label: "Saved environment action",
+      outputs: processPayload(action, recordSource(step, "/output/action")),
+    },
+  ],
+});
+
 const pipelineProcess = (step) => ({
   schema_version: "decision-process-v1",
-  producer: "example-pipeline",
+  producer: "pipeline",
   phases: [
     {
       id: `tracking-${step}`,
@@ -359,32 +376,18 @@ const pipelineProcess = (step) => ({
         },
       ],
     },
-    {
-      id: `selection-${step}`,
-      label: "Select action",
-      activities: [
-        {
-          id: `selection-result-${step}`,
-          kind: "action",
-          label: "Select treatment for Patient A",
-          outputs: processPayload(
-            "Apply a tourniquet to Patient A.",
-            recordSource(step, "/output/action"),
-          ),
-        },
-      ],
-    },
+    savedActionPhase(step),
   ],
   gaps: ["Cached merit scores do not include a fresh model request."],
 });
 
 const reviewerProcess = (step) => ({
   schema_version: "decision-process-v1",
-  producer: "example-reviewer",
+  producer: "reviewer",
   phases: [
     {
-      id: `proposal-${step}`,
-      label: "Decision proposal",
+      id: "proposal",
+      label: "Proposal",
       activities: [
         {
           id: `propose-${step}`,
@@ -399,7 +402,7 @@ const reviewerProcess = (step) => ({
       ],
     },
     {
-      id: `review-${step}`,
+      id: "review",
       label: "Review",
       summary: "Reviewer suggested checking Patient B before treatment.",
       activities: [
@@ -414,7 +417,7 @@ const reviewerProcess = (step) => ({
       ],
     },
     {
-      id: `final-${step}`,
+      id: "final",
       label: "Final selection",
       activities: [
         {
@@ -423,11 +426,12 @@ const reviewerProcess = (step) => ({
           label: "Record executed treatment",
           outputs: processPayload(
             "Apply a tourniquet to Patient A.",
-            recordSource(step, "/output/action"),
+            recordSource(step, "/choice_info/multi_agent/final_action"),
           ),
         },
       ],
     },
+    savedActionPhase(step),
   ],
   review: {
     proposal: "Apply a tourniquet to Patient A.",
@@ -447,7 +451,7 @@ const reviewerProcess = (step) => ({
 
 const langGraphProcess = (step) => ({
   schema_version: "decision-process-v1",
-  producer: "example-langgraph",
+  producer: "langgraph",
   phases: [
     {
       id: `assessment-${step}`,
@@ -495,39 +499,71 @@ const langGraphProcess = (step) => ({
           id: `treatment-call-${step}`,
           kind: "tool",
           label: "Choose available treatment",
+          inputs: processPayload(
+            '{"patient_id":"patient-a","treatment":"tourniquet"}',
+            recordSource(
+              step,
+              "/choice_info/agent/proposal_history/1/tool_calls/0/args",
+            ),
+          ),
           outputs: processPayload(
             "Apply a tourniquet to Patient A.",
-            recordSource(step, "/output/action"),
+            recordSource(
+              step,
+              "/choice_info/agent/proposal_history/1/tool_results/0",
+            ),
           ),
         },
       ],
     },
+    savedActionPhase(step),
   ],
   gaps: ["The model request before urgency classification was not captured."],
 });
 
+const legacyLogExcerpts = [
+  {
+    label: "AGENT",
+    text: "[bold]*AGENT*[/bold]\nPatient A has severe bleeding; inspect the recorded treatment options.",
+  },
+  {
+    label: "AGENT TOOL CALL",
+    text: '[bold]*AGENT TOOL CALL*[/bold]: inspect_patient({"patient_id":"patient-a"})',
+  },
+  {
+    label: "AGENT TOOL CALL",
+    text: '[bold]*AGENT TOOL CALL*[/bold]: list_treatments({"patient_id":"patient-b"})',
+  },
+];
+
 const legacyProcess = (step) => ({
   schema_version: "decision-process-v1",
-  producer: "example-legacy",
+  producer: "unknown",
   phases: [
     {
-      id: `legacy-${step}`,
-      label: "Recorded decision",
+      id: "unassigned",
+      label: "Other recorded log sections",
+      summary:
+        "Component ownership is unknown; these sections are not attributed to individual calls.",
       activities: [
-        {
-          id: `record-${step}`,
+        ...legacyLogExcerpts.map((excerpt, index) => ({
+          id: `unassociated-log-${step}-${index}`,
           kind: "recorded",
-          label: "Legacy decision record",
+          label: excerpt.label,
           outputs: processPayload(
-            "Treat Patient A for severe bleeding.",
-            recordSource(step, "/output/action"),
+            excerpt.text,
+            recordSource(
+              step,
+              `/choice_info/unassociated_log_excerpts/${index}`,
+            ),
           ),
-        },
+        })),
       ],
     },
+    savedActionPhase(step, "Treat Patient A for severe bleeding."),
   ],
   gaps: [
-    "Only the final decision record was captured; intermediate ADM activity is unavailable.",
+    "No intermediate ADM activity can be associated with the final decision record.",
     "The unassociated log excerpt cannot establish which model call produced this action.",
   ],
 });
@@ -563,7 +599,38 @@ export const createProcessDecisionPopulation = (runCount = 8) => {
       };
       const choiceInfo =
         sessionIndex === 1
-          ? { multi_agent: { proposal: recordedProposal } }
+          ? {
+              multi_agent: {
+                proposal: recordedProposal,
+                proposal_tool: {
+                  name: "propose_treatment",
+                  note: "Proposal tool metadata remains with the proposal stage.",
+                },
+                proposal_validation: null,
+                advice: {
+                  recommendation: "Assess Patient B before treatment.",
+                },
+                review_assessment_validation: {
+                  valid: true,
+                  note: "Reviewer assessment validation remains with review.",
+                },
+                review_status: "reviewed",
+                review_response_contract: "advice",
+                weighting: {
+                  configuration: { influence: 0.5, swap_threshold: 0.1 },
+                  confidence: 0.8,
+                  estimated_improvement: 0.4,
+                  strength: 0.16,
+                  suggestion: "Switch to assessing Patient B.",
+                  followed_guidance: false,
+                },
+                final_action: rawAction,
+                disposition: "kept_proposal",
+                calls: { proposal: 1, review: 1, final: 1 },
+                unclassified_note:
+                  "Unknown multi-agent metadata remains available once.",
+              },
+            }
           : sessionIndex === 2
             ? {
                 agent: {
@@ -586,10 +653,28 @@ export const createProcessDecisionPopulation = (runCount = 8) => {
                       response:
                         "Immediate treatment is indicated by the observed bleeding.",
                     },
+                    {
+                      tool_calls: [
+                        {
+                          name: "choose_treatment",
+                          args: {
+                            patient_id: "patient-a",
+                            treatment: "tourniquet",
+                          },
+                        },
+                      ],
+                      tool_results: [rawAction],
+                    },
                   ],
                 },
               }
-            : {};
+            : sessionIndex === 3
+              ? {
+                  unassociated_log_excerpts: legacyLogExcerpts.map(
+                    (excerpt) => excerpt.text,
+                  ),
+                }
+              : {};
       const detailedSummary = sessionIndex === 0 && step === 1;
       const situationSummary = `**Situation**\n\nPatient A has severe bleeding. Patient B is awaiting assessment.\n\nDecision ${step} environment summary.`;
       const actionSummary =

@@ -395,7 +395,7 @@ def test_cli_highlights_input_changes_within_each_episode(tmp_path):
     assert "evacuation vehicle arrived" in summaries[3]
     assert "No longer visible" in summaries[4]
     assert "Hidden patient description" not in summaries[4]
-    assert "**Nearby:** Patient 1" in summaries[5]
+    assert "**Now nearby:** Patient 1" in summaries[5]
     assert "Patient updates since previous input" not in summaries[5]
     assert "Elapsed" not in summaries[5]
     assert session(imported[0]) != session(imported[6])

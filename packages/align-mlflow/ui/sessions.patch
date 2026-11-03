@@ -4418,13 +4418,14 @@
 +};
 --- /dev/null
 +++ b/mlflow/server/js/src/experiment-tracking/pages/experiment-chat-sessions/single-chat-view/ExperimentChatSessionViewer.tsx
-@@ -0,0 +1,131 @@
+@@ -0,0 +1,158 @@
 +import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 +import { Button, Typography, useDesignSystemTheme } from '@databricks/design-system';
 +import { getModelTraceId, type ModelTrace, type ModelTraceInfoV3 } from '@databricks/web-shared/model-trace-explorer';
 +import { ExperimentSingleChatConversation } from './ExperimentSingleChatConversation';
 +import { ExperimentSingleChatSessionSidebar } from './ExperimentSingleChatSessionSidebar';
 +import { getOpenWorldDecision } from './OpenWorldDecisionProcess';
++import { getDecisionPhaseHint, getDecisionProcessPresentation } from './decisionProcessPresentation';
 +import type { DecisionPhaseSelection } from './decisionProcessTypes';
 +
 +export const orderSessionTraces = (traces: ModelTraceInfoV3[]) => {
@@ -4457,7 +4458,11 @@
 +  const [hoveredTurnIndex, setHoveredTurnIndex] = useState<number | null>(null);
 +  const [phaseSelection, setPhaseSelection] = useState<DecisionPhaseSelection>();
 +  const selectedTrace = selectedTurnIndex !== null ? traces[selectedTurnIndex] : undefined;
-+  const selectedProcess = useMemo(() => selectedTrace && getOpenWorldDecision(selectedTrace)?.process, [selectedTrace]);
++  const selectedDecision = useMemo(() => selectedTrace && getOpenWorldDecision(selectedTrace), [selectedTrace]);
++  const selectedPresentation = useMemo(
++    () => selectedDecision && getDecisionProcessPresentation(selectedDecision),
++    [selectedDecision],
++  );
 +  const activeTurnIndex = hoveredTurnIndex ?? selectedTurnIndex;
 +  const selectedTraceId =
 +    selectedTurnIndex !== null && traces[selectedTurnIndex] ? getModelTraceId(traces[selectedTurnIndex]) : undefined;
@@ -4480,6 +4485,37 @@
 +    onSelectTurn(index);
 +    setHoveredTurnIndex(index);
 +  };
++  const processLink = (trace: ModelTrace, id: string, label: string, accessibleLabel: string, hint?: string) => (
++    <Button
++      key={id}
++      componentId="mlflow.session.open-process-phase"
++      type="tertiary"
++      size="small"
++      aria-label={accessibleLabel}
++      title={hint}
++      aria-pressed={phaseSelection?.traceId === getModelTraceId(trace) && phaseSelection.phaseId === id}
++      css={{
++        display: 'flex',
++        width: '100%',
++        height: 'auto',
++        justifyContent: 'flex-start',
++        whiteSpace: 'normal',
++        textAlign: 'left',
++        overflowWrap: 'anywhere',
++        marginTop: theme.spacing.xs,
++        '& > span': { width: '100%' },
++      }}
++      onClick={() =>
++        setPhaseSelection((current) => ({
++          traceId: getModelTraceId(trace),
++          phaseId: id,
++          revision: (current?.revision ?? 0) + 1,
++        }))
++      }
++    >
++      <span css={{ display: 'block', width: '100%', textAlign: 'left' }}>{label}</span>
++    </Button>
++  );
 +
 +  return (
 +    <div css={{ display: 'flex', flex: 1, minHeight: 0, minWidth: 0 }} onMouseLeave={() => setHoveredTurnIndex(null)}>
@@ -4494,41 +4530,32 @@
 +            scrollToTrace(getModelTraceId(traces[index]));
 +          }}
 +          renderTurnChildren={(trace) =>
-+            selectedProcess?.phases.length ? (
++            selectedDecision && selectedPresentation ? (
 +              <div css={{ paddingLeft: theme.spacing.sm, paddingBottom: theme.spacing.sm }}>
 +                <Typography.Text color="secondary">Decision process</Typography.Text>
-+                {selectedProcess.phases.map((phase) => (
-+                  <Button
-+                    key={phase.id}
-+                    componentId="mlflow.session.open-process-phase"
-+                    type="tertiary"
-+                    size="small"
-+                    aria-label={`Open ${phase.label} phase`}
-+                    aria-pressed={
-+                      phaseSelection?.traceId === getModelTraceId(trace) && phaseSelection.phaseId === phase.id
-+                    }
-+                    css={{
-+                      display: 'flex',
-+                      width: '100%',
-+                      height: 'auto',
-+                      justifyContent: 'flex-start',
-+                      whiteSpace: 'normal',
-+                      textAlign: 'left',
-+                      overflowWrap: 'anywhere',
-+                      marginTop: theme.spacing.xs,
-+                      '& > span': { width: '100%' },
-+                    }}
-+                    onClick={() =>
-+                      setPhaseSelection((current) => ({
-+                        traceId: getModelTraceId(trace),
-+                        phaseId: phase.id,
-+                        revision: (current?.revision ?? 0) + 1,
-+                      }))
-+                    }
-+                  >
-+                    <span css={{ display: 'block', width: '100%', textAlign: 'left' }}>{phase.label}</span>
-+                  </Button>
-+                ))}
++                {selectedPresentation.workflowPhases.map((phase) =>
++                  processLink(
++                    trace,
++                    phase.id,
++                    phase.label,
++                    `Open ${phase.label} phase`,
++                    getDecisionPhaseHint(phase, selectedDecision.process?.review, selectedDecision.root),
++                  ),
++                )}
++                {selectedPresentation.workflowPhases.length === 0 && (
++                  <div>
++                    <Typography.Text color="secondary" size="sm">
++                      Workflow stages were not recorded.
++                    </Typography.Text>
++                  </div>
++                )}
++                {selectedPresentation.sourceLogActivities.length > 0 &&
++                  selectedPresentation.sourcePhaseIds.length > 0 && (
++                    <div css={{ paddingTop: theme.spacing.sm }}>
++                      <Typography.Text color="secondary">Source evidence</Typography.Text>
++                      {processLink(trace, selectedPresentation.sourcePhaseIds[0], 'Source logs', 'Open Source logs')}
++                    </div>
++                  )}
 +              </div>
 +            ) : null
 +          }
@@ -5404,7 +5431,7 @@
          paddingTop: theme.spacing.sm,
 --- /dev/null
 +++ b/mlflow/server/js/src/experiment-tracking/pages/experiment-chat-sessions/single-chat-view/OpenWorldDecisionProcess.tsx
-@@ -0,0 +1,529 @@
+@@ -0,0 +1,759 @@
 +import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 +import { Button, Typography, useDesignSystemTheme } from '@databricks/design-system';
 +import type { ModelTrace, ModelTraceSpanNode } from '@databricks/web-shared/model-trace-explorer';
@@ -5417,6 +5444,8 @@
 +import { ModelTraceExplorerCodeSnippet } from '@databricks/web-shared/model-trace-explorer/ModelTraceExplorerCodeSnippet';
 +import { CodeSnippetRenderMode } from '@databricks/web-shared/model-trace-explorer/ModelTrace.types';
 +import { loadRecordedPayload, resolveRecordedPayload, sourceArtifactUrl } from './decisionProcessPayloads';
++import { getDecisionActivityLabel } from './decisionActivityLabels';
++import { getDecisionPhaseHint, getDecisionProcessPresentation } from './decisionProcessPresentation';
 +import type {
 +  DecisionPhaseSelection,
 +  DecisionProcess,
@@ -5514,6 +5543,23 @@
 +
 +const fieldData = (value: unknown) => JSON.stringify(value) ?? 'null';
 +
++const formatRecordedValue = (value: unknown) => {
++  if (typeof value === 'string') return { display: value, copyText: value };
++  const copyText = JSON.stringify(value, null, 2) ?? 'null';
++  const object = asObject(value);
++  const plainObject =
++    object && (Object.getPrototypeOf(object) === Object.prototype || Object.getPrototypeOf(object) === null);
++  const display =
++    plainObject && copyText.startsWith('{\n') && copyText.endsWith('\n}')
++      ? copyText
++          .slice(2, -2)
++          .split('\n')
++          .map((line) => (line.startsWith('  ') ? line.slice(2) : line))
++          .join('\n')
++      : copyText;
++  return { display, copyText };
++};
++
 +const SourceReference = ({ source, runId }: { source: DecisionProcessSource; runId?: string }) => {
 +  const href = sourceArtifactUrl(source, runId);
 +  return (
@@ -5553,11 +5599,10 @@
 +  useEffect(() => () => controller.current?.abort(), []);
 +  const resolved = useMemo(() => resolveRecordedPayload(payload, root), [payload, root]);
 +  const isPreview = !resolved?.available && fullPayload === undefined && payload.truncated;
-+  const text = resolved.available
-+    ? typeof resolved.value === 'string'
-+      ? resolved.value
-+      : (JSON.stringify(resolved.value, null, 2) ?? 'null')
-+    : (fullPayload ?? payload.preview);
++  const formatted = useMemo(
++    () => formatRecordedValue(resolved.available ? resolved.value : (fullPayload ?? payload.preview)),
++    [resolved, fullPayload, payload.preview],
++  );
 +  const canLoad = isPreview && Boolean(payload.source.byte_range && sourceArtifactUrl(payload.source, runId));
 +  const loadFullPayload = useCallback(async () => {
 +    controller.current?.abort();
@@ -5581,7 +5626,8 @@
 +    <section aria-label={title} css={{ minWidth: 0, display: 'flex', flexDirection: 'column', gap: theme.spacing.xs }}>
 +      <ModelTraceExplorerCodeSnippet
 +        title={title}
-+        data={JSON.stringify(text)}
++        data={JSON.stringify(formatted.display)}
++        copyText={formatted.copyText}
 +        initialRenderMode={CodeSnippetRenderMode.TEXT}
 +        initialExpanded
 +        showLineNumbers={false}
@@ -5629,6 +5675,10 @@
 +  const { theme } = useDesignSystemTheme();
 +  const [expanded, setExpanded] = useState(false);
 +  const description = actionSummary(activity, root);
++  const detailLabels = [
++    activity.kind === 'recorded' ? undefined : activity.kind.replaceAll('_', ' '),
++    activity.status === 'recorded' ? undefined : activity.status,
++  ].filter(Boolean);
 +  const missingInput =
 +    activity.kind === 'model'
 +      ? 'The request for this model call was not captured.'
@@ -5646,13 +5696,9 @@
 +  return (
 +    <details open={expanded} onToggle={(event) => setExpanded(event.currentTarget.open)} css={{ minWidth: 0 }}>
 +      <summary css={{ cursor: 'pointer', padding: `${theme.spacing.xs}px 0`, overflowWrap: 'anywhere' }}>
-+        <Typography.Text bold>{activity.label}</Typography.Text>
++        <Typography.Text bold>{getDecisionActivityLabel(activity)}</Typography.Text>
 +        {description && <Typography.Text> · {description}</Typography.Text>}
-+        <Typography.Text color="secondary">
-+          {' '}
-+          · {activity.kind.replaceAll('_', ' ')}
-+          {activity.status && ` · ${activity.status}`}
-+        </Typography.Text>
++        {detailLabels.length > 0 && <Typography.Text color="secondary"> · {detailLabels.join(' · ')}</Typography.Text>}
 +      </summary>
 +      {expanded && (
 +        <div
@@ -5700,12 +5746,16 @@
 +  runId,
 +  selected,
 +  selectionRevision,
++  review,
++  hint,
 +}: {
 +  phase: DecisionProcessPhase;
 +  root: ModelTraceSpanNode;
 +  runId?: string;
 +  selected: boolean;
 +  selectionRevision?: number;
++  review?: DecisionProcess['review'];
++  hint?: string;
 +}) => {
 +  const { theme } = useDesignSystemTheme();
 +  const [expanded, setExpanded] = useState(false);
@@ -5733,12 +5783,19 @@
 +        <Typography.Text bold>{phase.label}</Typography.Text>
 +        <Typography.Text color="secondary">
 +          {' '}
-+          · {phase.activities.length} {phase.activities.length === 1 ? 'activity' : 'activities'}
++          · {phase.activities.length} {phase.activities.length === 1 ? 'record' : 'records'}
 +        </Typography.Text>
++        {hint && (
++          <Typography.Text color="secondary" css={{ display: 'block', paddingLeft: theme.spacing.sm, fontWeight: 400 }}>
++            {hint}
++          </Typography.Text>
++        )}
 +      </summary>
 +      {expanded && (
 +        <div css={{ paddingLeft: theme.spacing.sm, minWidth: 0 }}>
 +          {phase.summary && <div css={{ paddingBottom: theme.spacing.xs }}>{phase.summary}</div>}
++          {review && <PhaseOutcome phaseId={phase.id} review={review} />}
++          {review && phase.id === 'review' && <ReviewDetails review={review} />}
 +          {phase.activities.length ? (
 +            phase.activities.map((activity) => (
 +              <ProcessActivity key={activity.id} activity={activity} root={root} runId={runId} />
@@ -5752,72 +5809,210 @@
 +  );
 +};
 +
-+const ReviewSummary = ({ review }: { review: NonNullable<DecisionProcess['review']> }) => {
-+  const fields: [string, unknown][] = [
-+    ['Proposed action', review.proposal],
-+    ['Reviewer recommendation', review.reviewer_recommendation],
-+    ['Computed suggestion', review.computed_suggestion],
-+    ['Final action', review.final_action],
-+    [
-+      'Followed guidance',
-+      review.followed_guidance === null
-+        ? 'Not recorded'
-+        : review.followed_guidance === undefined
-+          ? undefined
-+          : review.followed_guidance
-+            ? 'Yes'
-+            : 'No',
-+    ],
-+    ['Review mode', review.review_mode],
-+    ['Influence', review.influence],
-+    ['Confidence', review.confidence],
-+    ['Estimated improvement', review.estimated_improvement],
-+    ['Swap threshold', review.swap_threshold],
-+    ['Strength', review.strength],
++const ReviewValueList = ({ fields }: { fields: [string, unknown][] }) => (
++  <dl
++    css={{
++      margin: '8px 0',
++      display: 'grid',
++      gridTemplateColumns: 'minmax(100px, 1fr) minmax(0, 2fr)',
++      gap: '4px 8px',
++      '& dt': { fontWeight: 600 },
++      '& dd': { margin: 0, overflowWrap: 'anywhere', whiteSpace: 'pre-wrap' },
++    }}
++  >
++    {fields
++      .filter(([, value]) => value !== undefined)
++      .map(([label, value]) => (
++        <div key={label} css={{ display: 'contents' }}>
++          <dt>{label}</dt>
++          <dd>{String(value)}</dd>
++        </div>
++      ))}
++  </dl>
++);
++
++const ReviewDetails = ({ review }: { review: NonNullable<DecisionProcess['review']> }) => {
++  const { theme } = useDesignSystemTheme();
++  const groups: { label: string; fields: [string, unknown][] }[] = [
++    {
++      label: 'Review settings',
++      fields: [
++        ['Review contract', review.review_mode],
++        ['Influence', review.influence],
++        ['Swap threshold', review.swap_threshold],
++      ],
++    },
++    {
++      label: 'Review measurements',
++      fields: [
++        ['Confidence', review.confidence],
++        ['Estimated improvement', review.estimated_improvement],
++        ['Strength', review.strength],
++      ],
++    },
 +  ];
 +  return (
-+    <section aria-label="Reviewer guidance and final selection">
-+      <Typography.Title level={4} withoutMargins>
-+        Reviewer guidance and final selection
-+      </Typography.Title>
-+      <dl
-+        css={{
-+          margin: '8px 0',
-+          display: 'grid',
-+          gridTemplateColumns: 'minmax(100px, 1fr) minmax(0, 2fr)',
-+          gap: '4px 8px',
-+          '& dt': { fontWeight: 600 },
-+          '& dd': { margin: 0, overflowWrap: 'anywhere', whiteSpace: 'pre-wrap' },
-+        }}
-+      >
-+        {fields
-+          .filter(([, value]) => value !== undefined)
-+          .map(([label, value]) => (
-+            <div key={label} css={{ display: 'contents' }}>
-+              <dt>{label}</dt>
-+              <dd>{String(value)}</dd>
-+            </div>
-+          ))}
-+      </dl>
++    <>
++      {groups
++        .filter((group) => group.fields.some(([, value]) => value !== undefined))
++        .map((group) => (
++          <details key={group.label}>
++            <summary css={{ cursor: 'pointer', padding: `${theme.spacing.xs}px 0`, overflowWrap: 'anywhere' }}>
++              <Typography.Text bold>{group.label}</Typography.Text>
++            </summary>
++            <section aria-label={group.label}>
++              <ReviewValueList fields={group.fields} />
++            </section>
++          </details>
++        ))}
++    </>
++  );
++};
++
++const PhaseOutcome = ({ phaseId, review }: { phaseId: string; review: NonNullable<DecisionProcess['review']> }) => {
++  const fields: [string, unknown][] =
++    phaseId === 'proposal'
++      ? [['Proposed action', review.proposal]]
++      : phaseId === 'review'
++        ? [
++            ['Reviewer recommendation', review.reviewer_recommendation],
++            ['Computed suggestion', review.computed_suggestion],
++          ]
++        : phaseId === 'final'
++          ? [
++              ['Final action', review.final_action],
++              [
++                'Followed guidance',
++                review.followed_guidance === null
++                  ? 'Not recorded'
++                  : review.followed_guidance === undefined
++                    ? undefined
++                    : review.followed_guidance
++                      ? 'Yes'
++                      : 'No',
++              ],
++            ]
++          : [];
++  return fields.some(([, value]) => value !== undefined) ? (
++    <section
++      aria-label={`${phaseId === 'final' ? 'Final selection' : phaseId === 'review' ? 'Review' : 'Proposal'} outcome`}
++    >
++      <ReviewValueList fields={fields} />
 +    </section>
++  ) : null;
++};
++
++const compactHint = (value: string, maximum = 150) => {
++  const text = value.replace(/\s+/g, ' ').trim();
++  return text.length > maximum ? text.slice(0, maximum - 1).trimEnd() + '…' : text;
++};
++
++const additionalMetadataFields = (metadata: Record<string, unknown>): [string, unknown][] =>
++  Object.entries(metadata).flatMap(([key, value]) => {
++    const object = asObject(value);
++    return ['choice_info', 'multi_agent', 'langchain_agent'].includes(key) && object
++      ? additionalMetadataFields(object)
++      : [[key, value] as [string, unknown]];
++  });
++
++const additionalMetadataKeys = (metadata: Record<string, unknown>): string[] => {
++  const informative = (value: unknown) =>
++    value !== null &&
++    value !== undefined &&
++    value !== '' &&
++    (!Array.isArray(value) || value.length > 0) &&
++    (!asObject(value) || Object.keys(asObject(value) ?? {}).length > 0);
++  return additionalMetadataFields(metadata)
++    .sort(([, left], [, right]) => Number(informative(right)) - Number(informative(left)))
++    .map(([key]) => key);
++};
++
++const SourceActivities = ({
++  label,
++  activities,
++  root,
++  runId,
++  phaseSelection,
++  sourcePhaseIds = [],
++}: {
++  label: string;
++  activities: DecisionProcessActivity[];
++  root: ModelTraceSpanNode;
++  runId?: string;
++  phaseSelection?: DecisionPhaseSelection;
++  sourcePhaseIds?: string[];
++}) => {
++  const { theme } = useDesignSystemTheme();
++  const [expanded, setExpanded] = useState(false);
++  const ref = useRef<HTMLDetailsElement>(null);
++  const selected = Boolean(phaseSelection && sourcePhaseIds.includes(phaseSelection.phaseId));
++  useEffect(() => {
++    if (!selected) return;
++    setExpanded(true);
++    const frame = requestAnimationFrame(() => {
++      const element = ref.current;
++      const scroller = element?.closest<HTMLElement>('[data-session-conversation]');
++      if (element && scroller) {
++        scroller.scrollTop += element.getBoundingClientRect().top - scroller.getBoundingClientRect().top;
++      }
++    });
++    return () => cancelAnimationFrame(frame);
++  }, [selected, phaseSelection?.revision]);
++  if (activities.length === 0) return null;
++  return (
++    <details ref={ref} open={expanded} onToggle={(event) => setExpanded(event.currentTarget.open)}>
++      <summary css={{ cursor: 'pointer', padding: `${theme.spacing.xs}px 0`, overflowWrap: 'anywhere' }}>
++        <Typography.Text bold>{label}</Typography.Text>
++        <Typography.Text color="secondary">
++          {' '}
++          · {activities.length} {label === 'Source logs' ? 'excerpts' : 'records'} ·{' '}
++          {compactHint(getDecisionActivityLabel(activities[0]), 100)}
++        </Typography.Text>
++      </summary>
++      {expanded && (
++        <div css={{ paddingLeft: theme.spacing.sm }}>
++          {label === 'Source logs' && (
++            <Typography.Text color="secondary">
++              These excerpts have no verified association with a workflow stage or individual call.
++            </Typography.Text>
++          )}
++          {activities.map((activity, index) => (
++            <ProcessActivity key={`${activity.id}:${index}`} activity={activity} root={root} runId={runId} />
++          ))}
++        </div>
++      )}
++    </details>
 +  );
 +};
 +
 +const RecordedSourcePreview = ({
 +  title,
++  caption,
 +  value,
 +  initialExpanded = false,
 +}: {
 +  title: string;
++  caption?: string;
 +  value: unknown;
 +  initialExpanded?: boolean;
 +}) => {
-+  const data = useMemo(() => JSON.stringify(JSON.stringify(value, null, 2) ?? 'null'), [value]);
++  const { theme } = useDesignSystemTheme();
++  const formatted = useMemo(() => formatRecordedValue(value), [value]);
 +  return (
 +    <section aria-label={title}>
++      {caption && (
++        <Typography.Text
++          color="secondary"
++          size="sm"
++          css={{ display: 'block', paddingInline: theme.spacing.sm, marginLeft: theme.spacing.xs }}
++        >
++          {caption}
++        </Typography.Text>
++      )}
 +      <ModelTraceExplorerCodeSnippet
-+        title={title}
-+        data={data}
++        title=""
++        data={JSON.stringify(formatted.display)}
++        copyText={formatted.copyText}
 +        initialRenderMode={CodeSnippetRenderMode.TEXT}
 +        previewLines={2}
 +        initialExpanded={initialExpanded}
@@ -5840,15 +6035,19 @@
 +  phaseSelection?: DecisionPhaseSelection;
 +}) => {
 +  const { theme } = useDesignSystemTheme();
-+  const [expanded, setExpanded] = useState(false);
 +  const [metadataExpanded, setMetadataExpanded] = useState(false);
++  const [gapsExpanded, setGapsExpanded] = useState(false);
 +  const { root, process: decisionProcess, inputSummary, outputSummary } = decision;
++  const presentation = useMemo(() => getDecisionProcessPresentation(decision), [decision]);
 +  const situationSummary = inputSummary?.replace(/^\*\*Situation\*\*(?:\r?\n){2}/, '');
 +  const outputSource = asObject(asObject(root.outputs)?.['source']);
-+  const decisionMetadata = Object.fromEntries(Object.entries(outputSource ?? {}).filter(([key]) => key !== 'output'));
-+  useEffect(() => {
-+    if (phaseSelection) setExpanded(true);
-+  }, [phaseSelection]);
++  const metadataKeys = additionalMetadataKeys(presentation.additionalMetadata);
++  const gaps = decisionProcess?.gaps ?? [];
++  const hasSupportingEvidence =
++    presentation.sourceLogActivities.length > 0 ||
++    presentation.otherSourceActivities.length > 0 ||
++    gaps.length > 0 ||
++    metadataKeys.length > 0;
 +  const sectionCss = { display: 'flex', flexDirection: 'column' as const, minWidth: 0, gap: theme.spacing.sm };
 +  return (
 +    <div css={sectionCss}>
@@ -5865,7 +6064,11 @@
 +            />
 +          </section>
 +        )}
-+        <RecordedSourcePreview title="Input" value={asObject(root.inputs)?.['source']} />
++        <RecordedSourcePreview
++          title="Input"
++          caption="input_output.json → input"
++          value={asObject(root.inputs)?.['source']}
++        />
 +      </section>
 +      <section
 +        aria-label="Chosen action"
@@ -5883,56 +6086,194 @@
 +            />
 +          </section>
 +        )}
-+        <RecordedSourcePreview title="Output" value={outputSource?.['output']} />
++        <RecordedSourcePreview title="Output" caption="input_output.json → output" value={outputSource?.['output']} />
 +      </section>
-+      <details
++      <section
++        aria-label="Decision process"
 +        data-decision-process
-+        open={expanded}
-+        onToggle={(event) => setExpanded(event.currentTarget.open)}
-+        css={{ borderTop: `1px solid ${theme.colors.border}`, paddingTop: theme.spacing.sm }}
++        css={{ ...sectionCss, borderTop: `1px solid ${theme.colors.border}`, paddingTop: theme.spacing.sm }}
 +      >
-+        <summary css={{ cursor: 'pointer' }}>Decision process ({decisionProcess?.phases.length ?? 0} phases)</summary>
-+        {expanded && (
-+          <div css={{ ...sectionCss, paddingTop: theme.spacing.sm }}>
-+            {decisionProcess ? (
-+              <>
-+                <Typography.Text color="secondary">{decisionProcess.producer}</Typography.Text>
-+                {decisionProcess.review && <ReviewSummary review={decisionProcess.review} />}
-+                {decisionProcess.gaps?.length > 0 && (
-+                  <section aria-label="Capture gaps">
-+                    <Typography.Text bold>Capture gaps</Typography.Text>
-+                    <ul css={{ margin: '4px 0', paddingLeft: 20 }}>
-+                      {decisionProcess.gaps.map((gap, index) => (
-+                        <li key={index}>{gap}</li>
-+                      ))}
-+                    </ul>
-+                  </section>
-+                )}
-+                {decisionProcess.phases.map((phase) => (
-+                  <ProcessPhase
-+                    key={phase.id}
-+                    phase={phase}
-+                    root={root}
-+                    runId={runId}
-+                    selected={phaseSelection?.phaseId === phase.id}
-+                    selectionRevision={phaseSelection?.revision}
-+                  />
-+                ))}
-+              </>
-+            ) : (
-+              <div>Decision process is not available in this imported trace.</div>
-+            )}
-+            <details open={metadataExpanded} onToggle={(event) => setMetadataExpanded(event.currentTarget.open)}>
-+              <summary css={{ cursor: 'pointer' }}>Recorded decision metadata</summary>
-+              {metadataExpanded && (
-+                <RecordedSourcePreview title="Recorded decision metadata" value={decisionMetadata} initialExpanded />
++        <div css={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: theme.spacing.sm }}>
++          <Typography.Title level={4} withoutMargins>
++            Decision process
++          </Typography.Title>
++          <Typography.Text color="secondary" size="sm">
++            {presentation.workflowPhases.length} {presentation.workflowPhases.length === 1 ? 'stage' : 'stages'}
++          </Typography.Text>
++        </div>
++        <section aria-label="Workflow stages" css={sectionCss}>
++          {presentation.workflowPhases.length > 0 ? (
++            presentation.workflowPhases.map((phase) => (
++              <ProcessPhase
++                key={phase.id}
++                phase={phase}
++                root={root}
++                runId={runId}
++                selected={phaseSelection?.phaseId === phase.id}
++                selectionRevision={phaseSelection?.revision}
++                review={decisionProcess?.review}
++                hint={getDecisionPhaseHint(phase, decisionProcess?.review, root)}
++              />
++            ))
++          ) : (
++            <div>Workflow stages were not recorded.</div>
++          )}
++        </section>
++      </section>
++      {hasSupportingEvidence && (
++        <section
++          aria-label="Supporting evidence"
++          data-decision-process
++          css={{ ...sectionCss, borderTop: `1px solid ${theme.colors.border}`, paddingTop: theme.spacing.sm }}
++        >
++          <Typography.Text bold color="secondary">
++            Supporting evidence
++          </Typography.Text>
++          {presentation.sourceLogActivities.length > 0 && (
++            <SourceActivities
++              label="Source logs"
++              activities={presentation.sourceLogActivities}
++              root={root}
++              runId={runId}
++              phaseSelection={phaseSelection}
++              sourcePhaseIds={presentation.sourcePhaseIds}
++            />
++          )}
++          {presentation.otherSourceActivities.length > 0 && (
++            <SourceActivities
++              label="Other source evidence"
++              activities={presentation.otherSourceActivities}
++              root={root}
++              runId={runId}
++            />
++          )}
++          {gaps.length > 0 && (
++            <details open={gapsExpanded} onToggle={(event) => setGapsExpanded(event.currentTarget.open)}>
++              <summary css={{ cursor: 'pointer', padding: `${theme.spacing.xs}px 0`, overflowWrap: 'anywhere' }}>
++                <Typography.Text bold>Capture gaps</Typography.Text>
++                <Typography.Text color="secondary">
++                  {' '}
++                  · {gaps.length} {gaps.length === 1 ? 'gap' : 'gaps'} · {compactHint(gaps[0])}
++                </Typography.Text>
++              </summary>
++              {gapsExpanded && (
++                <section aria-label="Capture gaps">
++                  <ul css={{ margin: '4px 0', paddingLeft: 20 }}>
++                    {gaps.map((gap, index) => (
++                      <li key={index}>{gap}</li>
++                    ))}
++                  </ul>
++                </section>
 +              )}
 +            </details>
-+          </div>
-+        )}
-+      </details>
++          )}
++          {metadataKeys.length > 0 && (
++            <details open={metadataExpanded} onToggle={(event) => setMetadataExpanded(event.currentTarget.open)}>
++              <summary css={{ cursor: 'pointer', padding: `${theme.spacing.xs}px 0`, overflowWrap: 'anywhere' }}>
++                <Typography.Text bold>Additional metadata</Typography.Text>
++                <Typography.Text color="secondary">
++                  {' '}
++                  · {metadataKeys.slice(0, 4).join(', ')}
++                  {metadataKeys.length > 4 && ` (+${metadataKeys.length - 4})`}
++                </Typography.Text>
++              </summary>
++              {metadataExpanded && (
++                <RecordedSourcePreview
++                  title="Additional metadata"
++                  value={presentation.additionalMetadata}
++                  initialExpanded
++                />
++              )}
++            </details>
++          )}
++        </section>
++      )}
 +    </div>
 +  );
++};
+--- /dev/null
++++ b/mlflow/server/js/src/experiment-tracking/pages/experiment-chat-sessions/single-chat-view/decisionActivityLabels.ts
+@@ -0,0 +1,81 @@
++import type { DecisionProcessActivity } from './decisionProcessTypes';
++
++const MAX_LABEL_LENGTH = 140;
++
++const compact = (text: string, limit = MAX_LABEL_LENGTH): string => {
++  const value = text
++    .replace(/\*\*([^*]+)\*\*/g, '$1')
++    .replace(/`([^`]+)`/g, '$1')
++    .replace(/\s+/g, ' ')
++    .trim();
++  return value.length > limit ? value.slice(0, limit - 1).trimEnd() + '…' : value;
++};
++
++const stripRichHeader = (text: string): string => text.replace(/^\s*\[bold\]\*[^*\r\n]+\*\[\/bold\]\s*:?\s*/i, '');
++
++const previewLines = (activity: DecisionProcessActivity): string[] => {
++  const preview = activity.outputs?.preview ?? activity.inputs?.preview ?? '';
++  return stripRichHeader(preview)
++    .split(/\r?\n/)
++    .map((line) =>
++      stripRichHeader(
++        line
++          .replace(/^\s*\[[\d/ :.-]+\]\s*/, '')
++          .replace(/^\s*\d{4}-\d{2}-\d{2}[T ][\d:.+\-Z]+\s*/, '')
++          .replace(/^\s*(?:TRACE|DEBUG|INFO|WARNING|WARN|ERROR|CRITICAL):[\w.-]+:\s*/, '')
++          .replace(/^\s*(?:TRACE|DEBUG|INFO|WARNING|WARN|ERROR|CRITICAL)\s+(?:\[[^\]]+\]\s*)?/, ''),
++      )
++        .replace(/^\s*(?:[-*]\s+|#+\s+)/, '')
++        .trim(),
++    )
++    .filter(
++      (line) => line !== '' && !/^(?:HTTP (?:Request|Response)\s*:|Context budget\s*:|--- message \d+ \|)/i.test(line),
++    );
++};
++
++const withExcerpt = (title: string, excerpt?: string): string => compact(excerpt ? `${title}: ${excerpt}` : title);
++
++const toolLabel = (line?: string): string => {
++  if (!line) return 'Tool call';
++  const call = /^([A-Za-z_][\w.-]*)\s*\((.*)$/.exec(line);
++  if (!call) return withExcerpt('Tool call', line);
++  const title = `Tool call: ${call[1]}`;
++  const rawArguments = call[2].endsWith(')') ? call[2].slice(0, -1) : call[2];
++  let args: unknown;
++  try {
++    args = JSON.parse(rawArguments);
++  } catch {
++    return compact(rawArguments.trim() ? `${title} · ${rawArguments}` : title);
++  }
++  if (args === null || typeof args !== 'object' || Array.isArray(args)) return compact(title);
++  const entries = Object.entries(args);
++  const brief = entries.filter(([key]) => !/^(?:justification|reason|reasoning|thinking)$/i.test(key));
++  const selected = brief.length ? brief : entries;
++  const argumentsLabel = selected
++    .slice(0, 3)
++    .map(([key, value]) => `${key}=${compact(typeof value === 'string' ? value : JSON.stringify(value), 44)}`)
++    .join(', ');
++  return compact(argumentsLabel ? `${title} · ${argumentsLabel}` : title);
++};
++
++export const getDecisionActivityLabel = (activity: DecisionProcessActivity): string => {
++  const label = activity.label.trim().toUpperCase();
++  const lines = previewLines(activity);
++  if (label === 'AGENT TOOL CALL') return toolLabel(lines[0]);
++  if (label === 'AGENT') return withExcerpt('Agent response', lines[0]);
++  if (label === 'AGENT THINKING' || label === 'AGENT REASONING') return withExcerpt('Agent reasoning', lines[0]);
++  const titles = new Map([
++    ['SCENARIO ID', 'Scenario'],
++    ['ALIGNMENT TARGET', 'Alignment target'],
++    ['AGENT SYSTEM PROMPT', 'System prompt'],
++    ['AGENT INITIAL PROMPT', 'Initial prompt'],
++    ['AGENT PROPOSE PROMPT', 'Proposal prompt'],
++    ['AGENT PROPOSAL', 'Proposal'],
++    ['AGENT TOOLS', 'Available tools'],
++    ['AGENT LISTING AVAILABLE ACTIONS', 'Available actions'],
++    ['AGENT OBSERVING ENVIRONMENT', 'Environment observation'],
++    ['LOG BEFORE RECORDED ACTION', 'Decision log'],
++  ]);
++  const title = titles.get(label);
++  return title ? withExcerpt(title, lines[0]) : activity.label;
 +};
 --- /dev/null
 +++ b/mlflow/server/js/src/experiment-tracking/pages/experiment-chat-sessions/single-chat-view/decisionProcessPayloads.ts
@@ -6045,6 +6386,301 @@
 +  }
 +  if (offset !== length) throw new Error('The source payload was incomplete.');
 +  return new TextDecoder('utf-8', { fatal: true }).decode(bytes);
++};
+--- /dev/null
++++ b/mlflow/server/js/src/experiment-tracking/pages/experiment-chat-sessions/single-chat-view/decisionProcessPresentation.ts
+@@ -0,0 +1,292 @@
++import type { ModelTraceSpanNode } from '@databricks/web-shared/model-trace-explorer';
++import { getDecisionActivityLabel } from './decisionActivityLabels';
++import { resolveRecordedPayload } from './decisionProcessPayloads';
++import type {
++  DecisionProcess,
++  DecisionProcessActivity,
++  DecisionProcessPayload,
++  DecisionProcessPhase,
++  OpenWorldDecision,
++} from './decisionProcessTypes';
++
++const asObject = (value: unknown): Record<string, unknown> | undefined =>
++  value !== null && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : undefined;
++
++const compact = (value: string, limit = 160) => {
++  const text = value.replace(/\s+/g, ' ').trim();
++  return text.length > limit ? `${text.slice(0, limit - 1).trimEnd()}…` : text;
++};
++
++const escapePointer = (key: string) => key.replaceAll('~', '~0').replaceAll('/', '~1');
++
++const resolvedPointers = (activities: DecisionProcessActivity[], root: ModelTraceSpanNode) =>
++  activities.flatMap((activity) =>
++    [activity.inputs, activity.outputs].flatMap((payload) =>
++      payload?.source.file === 'input_output.json' &&
++      payload.source.json_pointer !== undefined &&
++      resolveRecordedPayload(payload, root).available
++        ? [payload.source.json_pointer]
++        : [],
++    ),
++  );
++
++const covered = (pointer: string, pointers: string[]) =>
++  pointers.some((parent) => parent === '' || pointer === parent || pointer.startsWith(`${parent}/`));
++
++const fullyCovered = (value: unknown, pointer: string, pointers: string[]): boolean => {
++  if (covered(pointer, pointers)) return true;
++  if (value === null || typeof value !== 'object') return false;
++  const entries = Object.entries(value);
++  return (
++    entries.length > 0 &&
++    entries.every(([key, child]) => fullyCovered(child, `${pointer}/${escapePointer(key)}`, pointers))
++  );
++};
++
++const OMIT = Symbol('omit');
++const withoutCovered = (value: unknown, pointer: string, pointers: string[]): unknown => {
++  if (fullyCovered(value, pointer, pointers)) return OMIT;
++  const object = asObject(value);
++  // Partial arrays retain their source positions, including already exposed elements.
++  if (!object) return value;
++  const entries = Object.entries(object).flatMap(([key, child]) => {
++    const remaining = withoutCovered(child, `${pointer}/${escapePointer(key)}`, pointers);
++    return remaining === OMIT ? [] : [[key, remaining]];
++  });
++  return entries.length || !Object.keys(object).length ? Object.fromEntries(entries) : OMIT;
++};
++
++const stageFields = new Map<string, [string, string][]>(
++  Object.entries({
++    proposal: [
++      ['proposal', 'Recorded proposal'],
++      ['proposal_tool', 'Proposal tool'],
++      ['proposal_validation', 'Proposal validation'],
++      ['proposal_summary', 'Proposal summary'],
++      ['original_justification', 'Proposal justification'],
++    ],
++    review: [
++      ['advice', 'Recorded reviewer advice'],
++      ['review_context', 'Reviewer context'],
++      ['review_status', 'Review status'],
++      ['review_error', 'Review error'],
++      ['review_diagnostics', 'Review diagnostics'],
++      ['review_assessment_validation', 'Reviewer assessment validation'],
++      ['review_attempts', 'Review attempts'],
++      ['review_response_contract', 'Review contract'],
++      ['weighting', 'Review weighting'],
++    ],
++    final: [
++      ['final_review_response', 'Response to reviewer'],
++      ['final_review_context', 'Final selection context'],
++      ['final_review_response_validation', 'Final response validation'],
++      ['final_action', 'Recorded final choice'],
++      ['disposition', 'Final disposition'],
++      ['driver_override', 'Driver override'],
++    ],
++  }),
++);
++
++const meaningful = (value: unknown) =>
++  value !== null &&
++  value !== undefined &&
++  value !== '' &&
++  (!Array.isArray(value) || value.length > 0) &&
++  (!asObject(value) || Object.keys(value as Record<string, unknown>).length > 0);
++
++const sourceActivity = (
++  pointer: string,
++  label: string,
++  value: unknown,
++  recordIndex?: number,
++): DecisionProcessActivity => {
++  const text = typeof value === 'string' ? value : JSON.stringify(value, null, 2);
++  return {
++    id: `metadata:${pointer}`,
++    kind: 'recorded',
++    label,
++    outputs: {
++      preview: text.slice(0, 2048),
++      truncated: text.length > 2048,
++      source: {
++        file: 'input_output.json',
++        json_pointer: pointer,
++        ...(recordIndex !== undefined ? { record_index: recordIndex } : {}),
++      },
++    },
++  };
++};
++
++const withStageMetadata = (phase: DecisionProcessPhase, decision: OpenWorldDecision): DecisionProcessPhase => {
++  if (decision.process?.producer !== 'reviewer') return phase;
++  const source = asObject(asObject(decision.root.outputs)?.['source']);
++  const info = asObject(source?.['choice_info']);
++  const multi = asObject(info?.['multi_agent']);
++  const evidence = asObject(asObject(decision.root.outputs)?.['evidence']);
++  const index = evidence?.['record_index'];
++  const recordIndex = typeof index === 'number' && Number.isSafeInteger(index) ? index : undefined;
++  const pointers = resolvedPointers(phase.activities, decision.root);
++  const additions = (stageFields.get(phase.id) ?? []).flatMap(([key, label]) => {
++    const pointer = `/choice_info/multi_agent/${escapePointer(key)}`;
++    const value = multi?.[key];
++    const duplicateJustification =
++      key === 'original_justification' &&
++      value === asObject(multi?.['proposal'])?.['justification'] &&
++      covered('/choice_info/multi_agent/proposal', pointers);
++    return meaningful(value) && !fullyCovered(value, pointer, pointers) && !duplicateJustification
++      ? [sourceActivity(pointer, label, value, recordIndex)]
++      : [];
++  });
++  const validation = asObject(info?.['langchain_agent'])?.['parameter_validation'];
++  const validationPointer = '/choice_info/langchain_agent/parameter_validation';
++  if (phase.id === 'final' && meaningful(validation) && !covered(validationPointer, pointers)) {
++    additions.push(sourceActivity(validationPointer, 'Final-action parameter validation', validation, recordIndex));
++  }
++  return additions.length ? { ...phase, activities: [...phase.activities, ...additions] } : phase;
++};
++
++export const getDecisionProcessPresentation = (decision: OpenWorldDecision) => {
++  const workflowPhases: DecisionProcessPhase[] = [];
++  const sourceLogActivities: DecisionProcessActivity[] = [];
++  const sourcePhaseIds: string[] = [];
++  const otherSourceActivities: DecisionProcessActivity[] = [];
++  const normalizedProducer = new Set([
++    'reviewer',
++    'pipeline',
++    'langgraph',
++    'langchain',
++    'correlated',
++    'unknown',
++    'driver',
++  ]).has(decision.process?.producer ?? '');
++  for (const phase of decision.process?.phases ?? []) {
++    if (normalizedProducer && (phase.id === 'unassigned' || phase.id === 'logged')) {
++      sourceLogActivities.push(...phase.activities);
++      sourcePhaseIds.push(phase.id);
++    } else if (
++      (normalizedProducer && phase.id === 'recorded') ||
++      (phase.id === 'decision' && decision.process?.producer === 'langchain')
++    ) {
++      otherSourceActivities.push(...phase.activities);
++    } else if (normalizedProducer && phase.id === 'saved-action') {
++      otherSourceActivities.push(
++        ...phase.activities.filter(
++          (activity) =>
++            activity.inputs ||
++            activity.source ||
++            (activity.status && activity.status !== 'recorded') ||
++            activity.kind !== 'action' ||
++            activity.outputs?.source.file !== 'input_output.json' ||
++            activity.outputs.source.json_pointer !== '/output/action' ||
++            !resolveRecordedPayload(activity.outputs, decision.root).available,
++        ),
++      );
++    } else {
++      workflowPhases.push(withStageMetadata(phase, decision));
++    }
++  }
++  const source = asObject(asObject(decision.root.outputs)?.['source']) ?? {};
++  const pointers = [
++    '/output',
++    ...resolvedPointers(
++      [...workflowPhases.flatMap((phase) => phase.activities), ...sourceLogActivities, ...otherSourceActivities],
++      decision.root,
++    ),
++  ];
++  const justification = asObject(asObject(source['choice_info'])?.['langchain_agent'])?.['justification'];
++  if (
++    ['reviewer', 'langchain'].includes(decision.process?.producer ?? '') &&
++    typeof justification === 'string' &&
++    justification === asObject(asObject(source['output'])?.['action'])?.['justification']
++  ) {
++    pointers.push('/choice_info/langchain_agent/justification');
++  }
++  const multi = asObject(asObject(source['choice_info'])?.['multi_agent']);
++  const proposalJustification = asObject(multi?.['proposal'])?.['justification'];
++  if (
++    decision.process?.producer === 'reviewer' &&
++    typeof proposalJustification === 'string' &&
++    proposalJustification === multi?.['original_justification'] &&
++    covered('/choice_info/multi_agent/proposal', pointers)
++  ) {
++    pointers.push('/choice_info/multi_agent/original_justification');
++  }
++  const remaining = withoutCovered(source, '', pointers);
++  return {
++    workflowPhases,
++    sourceLogActivities,
++    sourcePhaseIds,
++    otherSourceActivities,
++    additionalMetadata: remaining === OMIT ? {} : (asObject(remaining) ?? {}),
++  };
++};
++
++const describeValue = (value: unknown): string | undefined => {
++  if (typeof value === 'string') return compact(value);
++  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
++  if (Array.isArray(value)) return value.slice(0, 2).map(describeValue).filter(Boolean).join(' · ') || undefined;
++  const object = asObject(value);
++  if (!object) return undefined;
++  if (typeof object['action_type'] === 'string') {
++    return compact([object['action_type'].replaceAll('_', ' '), object['character_id']].filter(Boolean).join(' · '));
++  }
++  for (const key of ['recommendation', 'summary', 'response_to_advice', 'justification', 'response']) {
++    if (typeof object[key] === 'string' && object[key]) return compact(object[key]);
++  }
++  const tool = object['tool_name'] ?? object['name'];
++  if (typeof tool === 'string') {
++    return compact(`${tool}${object['arguments'] ? ` · ${JSON.stringify(object['arguments'])}` : ''}`);
++  }
++  const entries = Object.entries(object).filter(([, child]) => meaningful(child));
++  return (
++    compact(
++      entries
++        .slice(0, 2)
++        .map(([key, child]) => `${key.replaceAll('_', ' ')}: ${describeValue(child) ?? JSON.stringify(child)}`)
++        .join(' · '),
++    ) || undefined
++  );
++};
++
++const payloadHint = (payload: DecisionProcessPayload | undefined, root?: ModelTraceSpanNode) => {
++  if (!payload) return undefined;
++  const resolved = root ? resolveRecordedPayload(payload, root) : undefined;
++  if (resolved?.available) return describeValue(resolved.value);
++  try {
++    return describeValue(JSON.parse(payload.preview));
++  } catch {
++    return compact(payload.preview.replace(/^\s*\[bold\]\*[^*\r\n]+\*\[\/bold\]\s*:?\s*/i, ''));
++  }
++};
++
++export const getDecisionPhaseHint = (
++  phase: DecisionProcessPhase,
++  review?: DecisionProcess['review'],
++  root?: ModelTraceSpanNode,
++): string | undefined => {
++  if (phase.id === 'proposal' && review?.proposal) return compact(review.proposal);
++  if (phase.id === 'review' && review?.reviewer_recommendation) {
++    const recommendation = review.reviewer_recommendation === 'keep' ? 'Keep proposal' : review.reviewer_recommendation;
++    return compact(recommendation);
++  }
++  if (phase.id === 'final' && review?.final_action) {
++    return compact(
++      [
++        review.final_action,
++        typeof review.followed_guidance === 'boolean'
++          ? review.followed_guidance
++            ? 'Followed guidance'
++            : 'Did not follow guidance'
++          : undefined,
++      ]
++        .filter(Boolean)
++        .join(' · '),
++    );
++  }
++  if (phase.summary) return compact(phase.summary);
++  const activity = phase.activities.find((item) => item.outputs || item.inputs);
++  if (!activity) return undefined;
++  const label = getDecisionActivityLabel(activity);
++  const hint = payloadHint(activity.outputs, root) || payloadHint(activity.inputs, root);
++  return compact(hint ? `${label}: ${hint}` : label);
 +};
 --- /dev/null
 +++ b/mlflow/server/js/src/experiment-tracking/pages/experiment-chat-sessions/single-chat-view/decisionProcessTypes.ts
@@ -11125,7 +11761,13 @@
    );
 --- a/mlflow/server/js/src/shared/web-shared/model-trace-explorer/ModelTraceExplorerCodeSnippet.tsx
 +++ b/mlflow/server/js/src/shared/web-shared/model-trace-explorer/ModelTraceExplorerCodeSnippet.tsx
-@@ -46,6 +46,10 @@
+@@ -41,16 +41,22 @@
+   title,
+   tokens,
+   data,
++  copyText,
+   searchFilter = '',
+   activeMatch = null,
    containsActiveMatch = false,
    initialRenderMode,
    initialExpanded,
@@ -11136,7 +11778,13 @@
    hideRenderModeDropdown = false,
  }: {
    title: string;
-@@ -59,6 +63,11 @@
+   tokens?: number;
+   data: string;
++  copyText?: string;
+   searchFilter?: string;
+   // the current active search match
+   activeMatch?: SearchMatch | null;
+@@ -59,6 +65,11 @@
    containsActiveMatch?: boolean;
    initialRenderMode?: CodeSnippetRenderMode;
    initialExpanded?: boolean;
@@ -11148,7 +11796,7 @@
    /** When true, the per-snippet render mode dropdown is hidden (e.g. for aggregated table view). */
    hideRenderModeDropdown?: boolean;
  }) {
-@@ -158,7 +167,7 @@
+@@ -158,18 +169,22 @@
          <div
            css={{
              overflow: 'hidden',
@@ -11157,7 +11805,12 @@
              borderRadius: theme.borders.borderRadiusSm,
              marginInline: theme.spacing.sm,
            }}
-@@ -170,6 +179,9 @@
+         >
+           <ModelTraceExplorerCodeSnippetBody
+             data={data}
++            copyText={copyText}
+             searchFilter={searchFilter}
+             activeMatch={activeMatch}
              containsActiveMatch={containsActiveMatch}
              renderMode={renderMode}
              initialExpanded={initialExpanded}
@@ -11169,7 +11822,13 @@
        </div>
 --- a/mlflow/server/js/src/shared/web-shared/model-trace-explorer/ModelTraceExplorerCodeSnippetBody.tsx
 +++ b/mlflow/server/js/src/shared/web-shared/model-trace-explorer/ModelTraceExplorerCodeSnippetBody.tsx
-@@ -26,6 +26,9 @@
+@@ -21,18 +21,26 @@
+ 
+ export function ModelTraceExplorerCodeSnippetBody({
+   data,
++  copyText,
+   searchFilter = '',
+   activeMatch = null,
    containsActiveMatch = false,
    renderMode = CodeSnippetRenderMode.JSON,
    initialExpanded = false,
@@ -11178,8 +11837,9 @@
 +  showTopCollapse = false,
  }: {
    data: string;
++  copyText?: string;
    searchFilter?: string;
-@@ -33,6 +36,9 @@
+   activeMatch?: SearchMatch | null;
    containsActiveMatch?: boolean;
    renderMode?: CodeSnippetRenderMode;
    initialExpanded?: boolean;
@@ -11189,7 +11849,7 @@
  }) {
    const containsMatches = Boolean(searchFilter) && !isNil(activeMatch) && data.toLowerCase().includes(searchFilter);
    const { theme } = useDesignSystemTheme();
-@@ -55,19 +61,46 @@
+@@ -55,19 +63,46 @@
    }, [data, renderMode]);
  
    const expandable =
@@ -11243,7 +11903,7 @@
  
    useEffect(() => {
      if (snippetRef.current) {
-@@ -94,6 +127,7 @@
+@@ -94,10 +129,11 @@
    if (renderMode === 'json' || renderMode === 'table') {
      return (
        <div css={{ position: 'relative' }}>
@@ -11251,7 +11911,12 @@
          <SnippetCopyAction
            key="copy-snippet"
            componentId="shared.model-trace-explorer.copy-snippet"
-@@ -109,7 +143,12 @@
+-          copyText={data}
++          copyText={copyText ?? data}
+           size="small"
+           css={{ position: 'absolute', top: theme.spacing.xs, right: theme.spacing.xs, zIndex: 1 }}
+         />
+@@ -109,7 +145,12 @@
              position: 'relative',
            }}
          >
@@ -11265,7 +11930,7 @@
            {expandable && !expanded && (
              <div
                css={{
-@@ -127,32 +166,7 @@
+@@ -127,32 +168,7 @@
            <div
              css={{ backgroundColor: theme.colors.backgroundSecondary, borderTop: `1px solid ${theme.colors.border}` }}
            >
@@ -11299,7 +11964,7 @@
            </div>
          )}
        </div>
-@@ -161,6 +175,7 @@
+@@ -161,6 +177,7 @@
  
    return (
      <div css={{ position: 'relative' }}>
@@ -11307,12 +11972,21 @@
        {renderMode === 'markdown' ? (
          <div
            css={{
-@@ -184,14 +199,14 @@
+@@ -173,7 +190,7 @@
+           <SnippetCopyAction
+             key="copy-snippet"
+             componentId="shared.model-trace-explorer.copy-snippet-markdown"
+-            copyText={dataToTruncate}
++            copyText={copyText ?? dataToTruncate}
+             size="small"
+             css={{ position: 'absolute', top: theme.spacing.xs, right: theme.spacing.xs, zIndex: 1 }}
+           />
+@@ -184,14 +201,14 @@
            <SnippetCopyAction
              key="copy-snippet"
              componentId="shared.model-trace-explorer.copy-snippet"
 -            copyText={data}
-+            copyText={dataToTruncate}
++            copyText={copyText ?? dataToTruncate}
              size="small"
              css={{ position: 'absolute', top: theme.spacing.xs, right: theme.spacing.xs, zIndex: 1 }}
            />
@@ -11324,7 +11998,7 @@
              language={renderMode}
              lineProps={{ style: { wordBreak: 'break-word', whiteSpace: 'pre-wrap' } }}
              wrapLines={expanded}
-@@ -211,31 +226,7 @@
+@@ -211,31 +228,7 @@
            </CodeSnippet>
          </>
        )}
