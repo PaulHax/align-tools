@@ -20,6 +20,17 @@ const summary = (scope, name) =>
   });
 const navigation = (page, session) =>
   page.getByRole("navigation", { name: `${session} decisions`, exact: true });
+const decisionTimeline = (scope) =>
+  scope.getByRole("list", { name: "Decision timeline", exact: true });
+
+const expectTimelineOrder = async (decision, labels) => {
+  const rows = decisionTimeline(decision).locator(":scope > li");
+  await expect(rows).toHaveCount(labels.length);
+  for (const [index, label] of labels.entries())
+    await expect(
+      rows.nth(index).getByText(label, { exact: true }),
+    ).toBeVisible();
+};
 
 const closeAssistant = async (page) => {
   const close = page
@@ -229,14 +240,14 @@ const expectCompactDecision = async (page, scope, session, stages) => {
   await expect(
     decision.locator("summary").filter({ hasText: /^Decision process/ }),
   ).toHaveCount(0);
-  const workflow = process.getByRole("region", {
-    name: "Workflow stages",
-    exact: true,
-  });
-  await expect(workflow).toHaveCount(stages.length > 0 ? 1 : 0);
-  await expect(workflow.locator("summary")).toHaveCount(stages.length);
+  await expect(
+    process.getByRole("region", { name: "Workflow stages", exact: true }),
+  ).toHaveCount(0);
+  const timeline = decisionTimeline(process);
+  if (stages.length) await expect(timeline).toHaveJSProperty("tagName", "OL");
+  let previousStageTop = -Infinity;
   for (const name of stages) {
-    const stage = summary(workflow, name);
+    const stage = summary(timeline, name);
     await expect(stage).toBeVisible();
     const fragments = await stage.evaluate((element) => {
       const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
@@ -256,6 +267,8 @@ const expectCompactDecision = async (page, scope, session, stages) => {
     const bottom = Math.max(...fragments.map(({ bottom }) => bottom));
     const lineHeight = Math.max(...fragments.map(({ height }) => height));
     expect(bottom - top).toBeLessThanOrEqual(lineHeight + 2);
+    expect(top).toBeGreaterThan(previousStageTop);
+    previousStageTop = top;
   }
   const supporting = decision.getByRole("region", {
     name: "Supporting evidence",
@@ -293,7 +306,7 @@ const expectCompactDecision = async (page, scope, session, stages) => {
   ]);
   expect(processTypography).toEqual(supportingTypography);
   await expect(
-    workflow.getByRole("region", {
+    timeline.getByRole("region", {
       name: "Supporting evidence",
       exact: true,
     }),
@@ -304,7 +317,7 @@ const expectCompactDecision = async (page, scope, session, stages) => {
     "Capture gaps",
     "Choice info",
   ])
-    await expect(summary(workflow, label)).toHaveCount(0);
+    await expect(summary(timeline, label)).toHaveCount(0);
   await expect(summary(decision, "Saved environment action")).toHaveCount(0);
   await expect(summary(supporting, "Additional metadata")).toHaveCount(0);
   await expect(supporting).not.toContainText("recorded_debug_note");
@@ -410,6 +423,7 @@ test("pipeline stages reveal readable context and recorded evidence while the en
     "State tracking",
     "Predict urgency",
   ]);
+  await expectTimelineOrder(decision, ["State tracking", "Predict urgency"]);
   await navigation(page, session)
     .getByRole("button", { name: "Decision 2", exact: true })
     .click();
@@ -588,33 +602,30 @@ const expectReviewerDistinction = async (decision, population) => {
   await expect(
     summary(decision, "Reviewer guidance and final selection"),
   ).toHaveCount(0);
-  const workflow = decision.getByRole("region", {
-    name: "Workflow stages",
-    exact: true,
-  });
+  const timeline = decisionTimeline(decision);
   const detailValue = (scope, label) =>
     scope
       .locator("dt")
       .filter({ hasText: new RegExp(`^${label}$`) })
       .locator("xpath=following-sibling::dd[1]");
-  await expect(summary(workflow, "Proposal")).toContainText(
+  await expect(summary(timeline, "Proposal")).toContainText(
     "Apply a tourniquet to Patient A.",
   );
-  await expect(summary(workflow, "Proposal")).toContainText(
+  await expect(summary(timeline, "Proposal")).toContainText(
     proposalJustification,
   );
-  await expect(summary(workflow, "Review")).toContainText(
+  await expect(summary(timeline, "Review")).toContainText(
     "Assess Patient B before treatment.",
   );
-  await expect(summary(workflow, "Review")).toContainText(adviceReason);
-  await expect(summary(workflow, "Final selection")).toContainText(
+  await expect(summary(timeline, "Review")).toContainText(adviceReason);
+  await expect(summary(timeline, "Final selection")).toContainText(
     "Apply a tourniquet to Patient A.",
   );
-  await expect(summary(workflow, "Final selection")).toContainText(
+  await expect(summary(timeline, "Final selection")).toContainText(
     finalResponse,
   );
-  await summary(workflow, "Proposal").click();
-  const proposalPhase = summary(workflow, "Proposal").locator("..");
+  await summary(timeline, "Proposal").click();
+  const proposalPhase = summary(timeline, "Proposal").locator("..");
   await expect(detailValue(proposalPhase, "Proposed action")).toHaveText(
     "Apply a tourniquet to Patient A.",
   );
@@ -665,10 +676,10 @@ const expectReviewerDistinction = async (decision, population) => {
   );
   await expectStaticEvidence(proposalPhase);
   await expectNoLineNumbers(proposalDetails);
-  const reviewToggle = summary(workflow, "Review");
+  const reviewToggle = summary(timeline, "Review");
   await reviewToggle.focus();
   await reviewToggle.press("Enter");
-  const reviewPhase = summary(workflow, "Review").locator("..");
+  const reviewPhase = summary(timeline, "Review").locator("..");
   await expect(detailValue(reviewPhase, "Reviewer recommendation")).toHaveText(
     "Assess Patient B before treatment.",
   );
@@ -730,8 +741,8 @@ const expectReviewerDistinction = async (decision, population) => {
     }),
   ).toBeVisible();
   await expectStaticEvidence(reviewPhase);
-  await summary(workflow, "Final selection").click();
-  const finalPhase = summary(workflow, "Final selection").locator("..");
+  await summary(timeline, "Final selection").click();
+  const finalPhase = summary(timeline, "Final selection").locator("..");
   await expect(detailValue(finalPhase, "Final action")).toHaveText(
     "Apply a tourniquet to Patient A.",
   );
@@ -796,8 +807,44 @@ test("reviewer advice and computed suggestion remain distinct from the executed 
     .getByRole("button", { name: "Decision 1", exact: true })
     .click();
   await expect(navigation(page, session).getByRole("button")).toHaveCount(3);
+  const loggedRows = [
+    "I will propose treatment for Patient A.",
+    "propose_treatment",
+    "I will keep the proposal after considering the recommendation.",
+    "list_treatments",
+  ];
+  await expectTimelineOrder(decision, [
+    ...loggedRows.slice(0, 2),
+    "Proposal",
+    "Review",
+    ...loggedRows.slice(2),
+    "Final selection",
+  ]);
+  const rowStyle = (name) =>
+    summary(decision, name)
+      .getByText(name, { exact: true })
+      .evaluate((label) => {
+        const row = getComputedStyle(label.closest("summary"));
+        const text = getComputedStyle(label);
+        return [row.borderWidth, row.padding, row.gap, text.font, text.color];
+      });
+  const toolStyle = await rowStyle("propose_treatment");
+  for (const stage of ["Proposal", "Review", "Final selection"]) {
+    expect(await rowStyle(stage)).toEqual(toolStyle);
+  }
   await expectReviewerDistinction(decision, population);
   await expectSelection(page, page, session, 1);
+  await navigation(page, session)
+    .getByRole("button", { name: "Decision 2", exact: true })
+    .click();
+  await expectTimelineOrder(card(page, 2), [
+    ...loggedRows,
+    "Saved stage summaries",
+    "Proposal",
+    "Review",
+    "Final selection",
+  ]);
+  await expectSelection(page, page, session, 2);
   await expectNoLineNumbers(page);
 });
 
@@ -896,18 +943,17 @@ test("legacy decision evidence keeps incomplete and unassociated logs explicit",
   await expect(
     process.getByText("Workflow stages were not recorded.", { exact: true }),
   ).toHaveCount(0);
-  const activity = process.getByRole("list", {
-    name: "Recorded activity",
-    exact: true,
-  });
+  const activity = decisionTimeline(process);
   await expect(activity).toHaveJSProperty("tagName", "OL");
-  const entries = activity.getByRole("listitem");
-  await expect(entries).toHaveCount(4);
+  const entries = activity.locator(":scope > li");
+  await expect(entries).toHaveCount(6);
   const response = entries.nth(1).getByRole("region", {
-    name: "Agent response",
+    name: "Agent message",
     exact: true,
   });
-  await expect(response.getByText("Agent", { exact: true })).toBeVisible();
+  await expect(
+    response.getByText("Agent message", { exact: true }),
+  ).toBeVisible();
   await expect(
     response.getByText(
       "Patient A has severe bleeding; inspect the recorded treatment options.",
@@ -915,37 +961,95 @@ test("legacy decision evidence keeps incomplete and unassociated logs explicit",
     ),
   ).toBeVisible();
   await expect(response.locator("pre")).toHaveCount(0);
-  const inspect = summary(entries.nth(2), "inspect_patient");
-  const treatments = summary(entries.nth(3), "list_treatments");
-  await expect(inspect).toContainText("patient_id=patient-a");
-  await expect(treatments).toContainText("patient_id=patient-b");
+  const availableActions = summary(entries.nth(2), "list_available_actions");
+  const observation = summary(entries.nth(3), "observe_environment");
+  const treatments = summary(entries.nth(4), "list_treatments");
+  const malformed = summary(entries.nth(5), "inspect_patient");
   await expect(
-    inspect.getByText("Review response", { exact: true }),
-  ).toHaveCount(0);
-  await expect(
-    treatments.getByText("Review response", { exact: true }),
+    availableActions.getByText("list_available_actions", { exact: true }),
   ).toBeVisible();
+  await page.setViewportSize({ width: 1446, height: 1000 });
+  for (const tool of [availableActions, observation, treatments, malformed])
+    await expect(tool.getByText("Tool call", { exact: true })).toBeVisible();
+  await expect(treatments).toContainText("patient_id=patient-b");
+  await expect(availableActions).not.toContainText("Review response");
+  await expect(treatments).toContainText("Review response");
+  await expect(availableActions).not.toContainText("Result not captured");
+  await expect(observation).toContainText("Result not captured");
+  await expect(treatments).not.toContainText("Result not captured");
+  await expect(activity.locator("pre code")).toHaveCount(0);
+
+  await availableActions.click();
+  const availableActionsDetails = availableActions.locator("..");
   await expect(
-    activity.getByRole("region", { name: "Log excerpt", exact: true }),
-  ).toHaveCount(0);
-  await inspect.click();
-  const inspectDetails = inspect.locator("..");
-  const capturedToolCall = inspectDetails.getByRole("region", {
-    name: "Log excerpt",
+    availableActionsDetails.getByText("No arguments", { exact: true }),
+  ).toBeVisible();
+  const result = availableActionsDetails.getByRole("region", {
+    name: "Tool result",
     exact: true,
   });
-  await expect(capturedToolCall.locator("pre code")).toHaveText(
-    '[bold]*AGENT TOOL CALL*[/bold]: inspect_patient({"patient_id":"patient-a"})',
+  await expect(result).toContainText("Inspect a selected patient.");
+  await expect(result).toContainText("List available treatments.");
+  await expect(result).not.toContainText("[bold]");
+  const raw = summary(availableActionsDetails, "Raw log excerpt");
+  const rawDetails = raw.locator("..");
+  await expect(rawDetails.locator("pre code")).toHaveCount(0);
+  await raw.click();
+  await expect(rawDetails).toContainText(
+    "[bold]*AGENT TOOL CALL*[/bold]: list_available_actions({})",
   );
-  await expect(inspectDetails).toContainText(
-    "/choice_info/unassociated_log_excerpts/3",
+  await expect(rawDetails).toContainText(
+    "[bold]*AGENT LISTING AVAILABLE ACTIONS*[/bold]",
   );
-  await expectStaticEvidence(inspectDetails);
+  await expect(rawDetails).toContainText(
+    "- inspect_patient: Inspect a selected patient.",
+  );
   await expect(
-    treatments
-      .locator("..")
-      .getByRole("region", { name: "Log excerpt", exact: true }),
+    rawDetails
+      .getByRole("link", { name: "Open source artifact", exact: true })
+      .first(),
+  ).toHaveAttribute(
+    "href",
+    /evidence(?:%2F|\/)log(?:%2F|\/)[a-f0-9]{64}(?:%2F|\/)raw_align_system\.log/,
+  );
+  await expectStaticEvidence(rawDetails);
+
+  await observation.click();
+  const observationDetails = observation.locator("..");
+  await expect(
+    observationDetails.getByText("Tool result was not captured.", {
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(
+    observationDetails.getByRole("region", {
+      name: "Tool result",
+      exact: true,
+    }),
   ).toHaveCount(0);
+
+  const treatmentDetails = treatments.locator("..");
+  await expect(summary(treatmentDetails, "Raw log excerpt")).toHaveCount(0);
+  await treatments.click();
+  const argumentsRegion = treatmentDetails.getByRole("region", {
+    name: "Arguments",
+    exact: true,
+  });
+  await expect(argumentsRegion).toContainText("patient-b");
+  await expect(argumentsRegion).toContainText(
+    "Keep the recorded treatment choice.",
+  );
+  await expect(treatmentDetails).not.toContainText(
+    "Tool result was not captured.",
+  );
+
+  await malformed.click();
+  const malformedDetails = malformed.locator("..");
+  await expect(malformedDetails.locator("pre code")).toHaveText(
+    '[bold]*AGENT TOOL CALL*[/bold]: inspect_patient({"patient_id":oops})',
+  );
+  await expectStaticEvidence(malformedDetails);
+
   const thinking = summary(entries.nth(0), "Thinking");
   const thinkingBody = thinking.locator("..").locator(":scope > :not(summary)");
   await expect(thinkingBody).not.toBeVisible();
@@ -1020,11 +1124,8 @@ test("legacy decision evidence keeps incomplete and unassociated logs explicit",
     exact: true,
   });
   await expect(summary(secondSupporting, "Source logs")).toHaveCount(0);
-  const secondActivity = secondDecision.getByRole("list", {
-    name: "Recorded activity",
-    exact: true,
-  });
-  await expect(secondActivity.getByRole("listitem")).toHaveCount(4);
+  const secondActivity = decisionTimeline(secondDecision);
+  await expect(secondActivity.locator(":scope > li")).toHaveCount(6);
   await expect(
     secondDecision.getByText("Stage attribution unavailable", { exact: true }),
   ).toHaveCount(0);
@@ -1043,12 +1144,7 @@ test("legacy decision evidence keeps incomplete and unassociated logs explicit",
     exact: true,
   });
   await expect(summary(thirdSupporting, "Source logs")).toHaveCount(0);
-  await expect(
-    thirdDecision.getByRole("list", {
-      name: "Recorded activity",
-      exact: true,
-    }),
-  ).toHaveCount(0);
+  await expect(decisionTimeline(thirdDecision)).toHaveCount(0);
   await summary(thirdSupporting, "Capture gaps").click();
   await expect(
     thirdSupporting

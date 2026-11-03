@@ -129,11 +129,21 @@ selection**. **Review settings** holds influence, swap threshold, and the review
 contract; **Review measurements** holds confidence, estimated improvement, and
 strength. Explicitly owned metadata appears with its relevant stage.
 
-Captured agent responses, recorded thinking, and tool calls follow the workflow
-stages in source order under **Decision process**. Agent messages use a role
-label and readable Markdown. Tool rows show the tool name and key arguments.
-Open a tool row to inspect the original log excerpt. Recorded thinking has its
-own expandable row.
+The decision timeline combines stage summaries with captured agent messages,
+thinking, and tool calls under **Decision process**. **Proposal** and **Review**
+follow a uniquely matched proposal call with a recorded action review marker.
+With uncertain stage timing, **Saved stage summaries** follows the recorded
+activity. **Final selection** closes the reviewed timeline. Decisions with only
+stage summaries show those stages in order.
+
+Stages, thinking, and tool calls use the same compact disclosure row. Icons
+and labels identify the row type. **Agent message** rows use readable Markdown.
+**Tool call** rows show the tool name and key arguments.
+Open a parsed call to inspect its arguments, any matched result, and the
+**Raw log excerpt** control. When a matched observation log contains no return
+value, the row shows **Result not captured**. Calls with malformed arguments
+open directly to the original excerpt. Recorded thinking has its own expandable
+row.
 
 **Supporting evidence** contains setup logs and other source records.
 **Capture gaps** explains limitations of the available evidence. The collapsed

@@ -5331,12 +5331,14 @@
          paddingTop: theme.spacing.sm,
 --- /dev/null
 +++ b/mlflow/server/js/src/experiment-tracking/pages/experiment-chat-sessions/single-chat-view/OpenWorldDecisionProcess.tsx
-@@ -0,0 +1,956 @@
+@@ -0,0 +1,1038 @@
 +import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 +import {
 +  Button,
++  CheckCircleIcon,
 +  ChevronDownIcon,
 +  ChevronRightIcon,
++  ClipboardIcon,
 +  FunctionIcon,
 +  RobotIcon,
 +  Typography,
@@ -5722,17 +5724,17 @@
 +
 +const ProcessDisclosureRow = ({
 +  label,
++  roleLabel,
 +  preview,
 +  count,
 +  icon,
-+  codePreview,
 +  children,
 +}: {
 +  label: string;
++  roleLabel?: string;
 +  preview?: string;
 +  count?: string;
 +  icon?: ReactNode;
-+  codePreview?: boolean;
 +  children: ReactNode;
 +}) => {
 +  const { theme } = useDesignSystemTheme();
@@ -5763,11 +5765,18 @@
 +            {icon}
 +          </span>
 +        )}
++        {roleLabel && (
++          <Typography.Text color="secondary" size="sm" css={oneLine}>
++            {roleLabel}
++          </Typography.Text>
++        )}
 +        <Typography.Text
 +          bold
 +          size="sm"
++          title={label}
 +          css={{
 +            ...oneLine,
++            flexShrink: 0,
 +            maxWidth: '50%',
 +            paddingInline: icon ? 0 : theme.spacing.xs,
 +            borderRadius: theme.borders.borderRadiusSm,
@@ -5777,21 +5786,12 @@
 +          {label}
 +        </Typography.Text>
 +        {preview && (
-+          <Typography.Text
-+            color="secondary"
-+            size={codePreview ? 'sm' : undefined}
-+            title={preview}
-+            css={{ ...oneLine, flex: 1, fontFamily: codePreview ? 'monospace' : undefined }}
-+          >
++          <Typography.Text color="secondary" title={preview} css={{ ...oneLine, flex: 1 }}>
 +            {preview}
 +          </Typography.Text>
 +        )}
 +        {count && (
-+          <Typography.Text
-+            color="secondary"
-+            size="sm"
-+            css={{ marginLeft: 'auto', flexShrink: 0, whiteSpace: 'nowrap' }}
-+          >
++          <Typography.Text color="secondary" size="sm" title={count} css={{ ...oneLine, marginLeft: 'auto' }}>
 +            {count}
 +          </Typography.Text>
 +        )}
@@ -5837,96 +5837,183 @@
 +  </div>
 +);
 +
-+const DecisionTranscript = ({
++const DecisionTimeline = ({
 +  entries,
++  phases,
++  stageAnchor,
++  review,
 +  root,
 +  runId,
 +}: {
 +  entries: { activity: DecisionProcessActivity; entry: DecisionTranscriptEntry }[];
++  phases: DecisionProcessPhase[];
++  stageAnchor?: number;
++  review?: DecisionProcess['review'];
 +  root: ModelTraceSpanNode;
 +  runId?: string;
 +}) => {
 +  const { theme } = useDesignSystemTheme();
-+  if (!entries.length) return null;
++  if (entries.length === 0 && phases.length === 0) return <div>Workflow stages were not recorded.</div>;
++
++  const activityRows = entries.map(({ activity, entry }, index) => {
++    const payload = activity.outputs ?? activity.inputs;
++    if (!payload) return null;
++    const key = `${activity.id}:${index}`;
++    const raw = <RecordedPayload payload={payload} title="Log excerpt" root={root} runId={runId} />;
++    if (entry.kind === 'tool') {
++      const resultPayload = entry.result?.evidence.outputs ?? entry.result?.evidence.inputs;
++      const hasReadableDetails = entry.arguments !== undefined || entry.result !== undefined;
++      return (
++        <li key={key}>
++          <ProcessDisclosureRow
++            label={entry.name}
++            roleLabel="Tool call"
++            preview={
++              entry.argumentPreview ??
++              (payload.truncated && !entry.arguments ? 'Argument preview incomplete' : undefined)
++            }
++            count={
++              entry.result?.kind === 'not-captured'
++                ? 'Result not captured'
++                : entry.hasReviewResponse
++                  ? 'Review response'
++                  : undefined
++            }
++            icon={<FunctionIcon />}
++          >
++            {hasReadableDetails ? (
++              <div css={{ display: 'grid', gap: theme.spacing.xs }}>
++                {entry.arguments &&
++                  (Object.keys(entry.arguments).length ? (
++                    <RecordedSourcePreview
++                      title="Arguments"
++                      caption="Arguments"
++                      value={entry.arguments}
++                      initialExpanded
++                      allowCollapse={false}
++                    />
++                  ) : (
++                    <Typography.Text color="secondary" size="sm">
++                      No arguments
++                    </Typography.Text>
++                  ))}
++                {entry.result?.kind === 'not-captured' && (
++                  <Typography.Text color="secondary" size="sm">
++                    Tool result was not captured.
++                  </Typography.Text>
++                )}
++                {entry.result?.kind === 'text' && (
++                  <section aria-label="Tool result">
++                    <Typography.Text bold size="sm">
++                      Tool result
++                    </Typography.Text>
++                    <TranscriptProse text={entry.result.text} />
++                  </section>
++                )}
++                <ProcessDisclosureRow label="Raw log excerpt">
++                  {raw}
++                  {resultPayload && (
++                    <RecordedPayload payload={resultPayload} title="Log excerpt" root={root} runId={runId} />
++                  )}
++                </ProcessDisclosureRow>
++              </div>
++            ) : (
++              raw
++            )}
++          </ProcessDisclosureRow>
++        </li>
++      );
++    }
++    if (entry.kind === 'thinking') {
++      return (
++        <li key={key}>
++          <ProcessDisclosureRow label="Thinking" preview={entry.text} icon={<RobotIcon />}>
++            {payload.truncated ? (
++              raw
++            ) : (
++              <>
++                <TranscriptProse text={entry.text} />
++                <SourceReference source={payload.source} runId={runId} />
++              </>
++            )}
++          </ProcessDisclosureRow>
++        </li>
++      );
++    }
++    const href = sourceArtifactUrl(payload.source, runId);
++    const lines = payload.source.lines;
++    return (
++      <li key={key}>
++        <section aria-label="Agent message" css={{ padding: theme.spacing.sm, minWidth: 0 }}>
++          <div
++            css={{
++              display: 'flex',
++              flexWrap: 'wrap',
++              alignItems: 'center',
++              gap: theme.spacing.xs,
++              marginBottom: theme.spacing.xs,
++            }}
++          >
++            <span aria-hidden css={{ display: 'flex', flexShrink: 0, color: theme.colors.textSecondary }}>
++              <RobotIcon />
++            </span>
++            <Typography.Text bold size="sm">
++              Agent message
++            </Typography.Text>
++            <Typography.Text color="secondary" size="sm">
++              {lines && `Lines ${lines[0]}–${lines[1]}`}
++              {href && (
++                <>
++                  {lines && ' · '}
++                  <a href={href} target="_blank" rel="noreferrer">
++                    Source log
++                  </a>
++                </>
++              )}
++            </Typography.Text>
++          </div>
++          <TranscriptProse text={entry.text} />
++          {payload.truncated && <ProcessDisclosureRow label="Full log excerpt">{raw}</ProcessDisclosureRow>}
++        </section>
++      </li>
++    );
++  });
++  const renderPhase = (phase: DecisionProcessPhase) => (
++    <li key={phase.id}>
++      <ProcessPhase
++        phase={phase}
++        root={root}
++        runId={runId}
++        review={review}
++        hint={getDecisionPhaseHint(phase, review, root)}
++      />
++    </li>
++  );
++  const canPlaceInline = stageAnchor !== undefined;
++  const isReviewStage = (phase: DecisionProcessPhase) => phase.id === 'proposal' || phase.id === 'review';
++  const beforeReview = stageAnchor === undefined ? activityRows.length : stageAnchor + 1;
 +  return (
 +    <ol
-+      aria-label="Recorded activity"
++      aria-label="Decision timeline"
 +      css={{
 +        '& > li::marker': { content: '""' },
 +        margin: 0,
-+        borderLeft: '3px solid ' + theme.colors.actionPrimaryBackgroundDefault,
-+        padding: theme.spacing.sm,
++        borderLeft: entries.length ? '3px solid ' + theme.colors.actionPrimaryBackgroundDefault : undefined,
++        padding: entries.length ? theme.spacing.sm : 0,
 +        backgroundColor: theme.colors.backgroundPrimary,
 +      }}
 +    >
-+      {entries.map(({ activity, entry }, index) => {
-+        const payload = activity.outputs ?? activity.inputs;
-+        if (!payload) return null;
-+        const key = `${activity.id}:${index}`;
-+        const raw = <RecordedPayload payload={payload} title="Log excerpt" root={root} runId={runId} />;
-+        if (entry.kind === 'tool') {
-+          return (
-+            <li key={key}>
-+              <ProcessDisclosureRow
-+                label={entry.name}
-+                preview={entry.argumentPreview ?? (payload.truncated ? 'Argument preview incomplete' : undefined)}
-+                count={entry.hasReviewResponse ? 'Review response' : undefined}
-+                icon={<FunctionIcon />}
-+                codePreview={Boolean(entry.argumentPreview)}
-+              >
-+                {raw}
-+              </ProcessDisclosureRow>
-+            </li>
-+          );
-+        }
-+        if (entry.kind === 'thinking') {
-+          return (
-+            <li key={key}>
-+              <ProcessDisclosureRow label="Thinking" preview={entry.text} icon={<RobotIcon />}>
-+                {payload.truncated ? (
-+                  raw
-+                ) : (
-+                  <>
-+                    <TranscriptProse text={entry.text} />
-+                    <SourceReference source={payload.source} runId={runId} />
-+                  </>
-+                )}
-+              </ProcessDisclosureRow>
-+            </li>
-+          );
-+        }
-+        const href = sourceArtifactUrl(payload.source, runId);
-+        const lines = payload.source.lines;
-+        return (
-+          <li key={key}>
-+            <section aria-label="Agent response" css={{ padding: theme.spacing.sm, minWidth: 0 }}>
-+              <div
-+                css={{ display: 'flex', alignItems: 'center', gap: theme.spacing.sm, marginBottom: theme.spacing.xs }}
-+              >
-+                <span aria-hidden css={{ display: 'flex', flexShrink: 0, color: theme.colors.textSecondary }}>
-+                  <RobotIcon />
-+                </span>
-+                <Typography.Text bold size="sm">
-+                  Agent
-+                </Typography.Text>
-+                <Typography.Text color="secondary" size="sm">
-+                  {lines && `Lines ${lines[0]}–${lines[1]}`}
-+                  {href && (
-+                    <>
-+                      {lines && ' · '}
-+                      <a href={href} target="_blank" rel="noreferrer">
-+                        Source log
-+                      </a>
-+                    </>
-+                  )}
-+                </Typography.Text>
-+              </div>
-+              <TranscriptProse text={entry.text} />
-+              {payload.truncated && <ProcessDisclosureRow label="Full log excerpt">{raw}</ProcessDisclosureRow>}
-+            </section>
-+          </li>
-+        );
-+      })}
++      {activityRows.slice(0, beforeReview)}
++      {canPlaceInline && phases.filter(isReviewStage).map(renderPhase)}
++      {activityRows.slice(beforeReview)}
++      {!canPlaceInline && entries.length > 0 && phases.length > 0 && (
++        <li css={{ paddingInline: theme.spacing.sm }}>
++          <Typography.Text color="secondary" size="sm">
++            Saved stage summaries
++          </Typography.Text>
++        </li>
++      )}
++      {(canPlaceInline ? phases.filter((phase) => !isReviewStage(phase)) : phases).map(renderPhase)}
 +    </ol>
 +  );
 +};
@@ -5946,7 +6033,11 @@
 +}) => {
 +  const { theme } = useDesignSystemTheme();
 +  return (
-+    <ProcessDisclosureRow label={phase.label} preview={hint}>
++    <ProcessDisclosureRow
++      label={phase.label}
++      preview={hint}
++      icon={phase.id === 'final' ? <CheckCircleIcon /> : <ClipboardIcon />}
++    >
 +      {phase.summary && <div css={{ paddingBottom: theme.spacing.xs }}>{phase.summary}</div>}
 +      {review && <PhaseOutcome phaseId={phase.id} review={review} />}
 +      {phase.activities.map((activity, index) => (
@@ -6192,23 +6283,14 @@
 +        <Typography.Title level={4} withoutMargins color="secondary">
 +          Decision process
 +        </Typography.Title>
-+        {presentation.workflowPhases.length > 0 ? (
-+          <section aria-label="Workflow stages" css={disclosureRowsCss}>
-+            {presentation.workflowPhases.map((phase) => (
-+              <ProcessPhase
-+                key={phase.id}
-+                phase={phase}
-+                root={root}
-+                runId={runId}
-+                review={decisionProcess?.review}
-+                hint={getDecisionPhaseHint(phase, decisionProcess?.review, root)}
-+              />
-+            ))}
-+          </section>
-+        ) : (
-+          presentation.transcript.length === 0 && <div>Workflow stages were not recorded.</div>
-+        )}
-+        <DecisionTranscript entries={presentation.transcript} root={root} runId={runId} />
++        <DecisionTimeline
++          entries={presentation.transcript}
++          phases={presentation.workflowPhases}
++          stageAnchor={presentation.stageAnchor}
++          review={decisionProcess?.review}
++          root={root}
++          runId={runId}
++        />
 +      </section>
 +      <section
 +        aria-label="Chosen action"
@@ -6486,11 +6568,16 @@
 +};
 --- /dev/null
 +++ b/mlflow/server/js/src/experiment-tracking/pages/experiment-chat-sessions/single-chat-view/decisionProcessPresentation.ts
-@@ -0,0 +1,295 @@
+@@ -0,0 +1,376 @@
 +import type { ModelTraceSpanNode } from '@databricks/web-shared/model-trace-explorer';
++import { isEqual } from 'lodash';
 +import { getDecisionActivityLabel } from './decisionActivityLabels';
 +import { resolveRecordedPayload } from './decisionProcessPayloads';
-+import { getDecisionTranscriptEntry, type DecisionTranscriptEntry } from './decisionTranscript';
++import {
++  getDecisionTranscriptEntry,
++  getDecisionTranscriptResult,
++  type DecisionTranscriptEntry,
++} from './decisionTranscript';
 +import type {
 +  DecisionProcess,
 +  DecisionProcessActivity,
@@ -6624,10 +6711,73 @@
 +  return additions.length ? { ...phase, activities: [...phase.activities, ...additions] } : phase;
 +};
 +
++type TranscriptRow = { activity: DecisionProcessActivity; entry: DecisionTranscriptEntry };
++
++const transcriptPayload = ({ activity }: TranscriptRow) => activity.outputs ?? activity.inputs;
++
++const getReviewStageAnchor = (
++  decision: OpenWorldDecision,
++  phases: DecisionProcessPhase[],
++  transcript: TranscriptRow[],
++): number | undefined => {
++  if (
++    decision.process?.producer !== 'reviewer' ||
++    !phases.some((phase) => phase.id === 'proposal') ||
++    !phases.some((phase) => phase.id === 'review')
++  ) {
++    return undefined;
++  }
++  const source = asObject(asObject(decision.root.outputs)?.['source']);
++  const info = asObject(source?.['choice_info']);
++  const multi = asObject(info?.['multi_agent']);
++  const proposalTool = asObject(multi?.['proposal_tool']);
++  const proposalArguments = asObject(proposalTool?.['arguments']);
++  if (!asObject(multi?.['proposal']) || !asObject(multi?.['advice']) || !proposalArguments) {
++    return undefined;
++  }
++
++  const proposals = transcript.flatMap(({ entry }, index) =>
++    entry.kind === 'tool' && entry.name === proposalTool?.['tool_name'] && isEqual(entry.arguments, proposalArguments)
++      ? [index]
++      : [],
++  );
++  if (proposals.length !== 1) return undefined;
++  const proposalIndex = proposals[0];
++  const proposalPayload = transcriptPayload(transcript[proposalIndex]);
++  const marker = proposalPayload?.preview.split(/\r?\n/).findIndex((line) => line.startsWith('Action review: {'));
++  const origin = proposalPayload?.source;
++  if (
++    origin?.file !== 'raw_align_system.log' ||
++    !origin.snapshot_sha256 ||
++    !origin.artifact_path ||
++    !origin.lines ||
++    marker === undefined ||
++    marker < 1 ||
++    origin.lines[0] + marker > origin.lines[1]
++  ) {
++    return undefined;
++  }
++
++  const sources = transcript.map((row) => transcriptPayload(row)?.source);
++  const inSourceOrder = sources.every((item, index) => {
++    const previous = sources[index - 1]?.lines;
++    return (
++      item?.lines &&
++      item.file === origin.file &&
++      item.snapshot_sha256 === origin.snapshot_sha256 &&
++      item.artifact_path === origin.artifact_path &&
++      item.lines[0] > 0 &&
++      item.lines[0] <= item.lines[1] &&
++      (!previous || previous[1] < item.lines[0])
++    );
++  });
++  return inSourceOrder ? proposalIndex : undefined;
++};
++
 +export const getDecisionProcessPresentation = (decision: OpenWorldDecision) => {
 +  const workflowPhases: DecisionProcessPhase[] = [];
 +  const sourceLogActivities: DecisionProcessActivity[] = [];
-+  const transcript: { activity: DecisionProcessActivity; entry: DecisionTranscriptEntry }[] = [];
++  const transcript: TranscriptRow[] = [];
 +  const otherSourceActivities: DecisionProcessActivity[] = [];
 +  const normalizedProducer = new Set([
 +    'reviewer',
@@ -6667,7 +6817,7 @@
 +      workflowPhases.push(withStageMetadata(phase, decision));
 +    }
 +  }
-+  const excerptSource = ({ activity }: (typeof transcript)[number]) => (activity.outputs ?? activity.inputs)?.source;
++  const excerptSource = (row: TranscriptRow) => transcriptPayload(row)?.source;
 +  const firstSource = transcript.length ? excerptSource(transcript[0]) : undefined;
 +  if (
 +    firstSource?.lines &&
@@ -6683,11 +6833,24 @@
 +  ) {
 +    transcript.sort((left, right) => (excerptSource(left)?.lines?.[0] ?? 0) - (excerptSource(right)?.lines?.[0] ?? 0));
 +  }
++  const pairedEvidence = new Set<DecisionProcessActivity>();
++  const transcriptWithResults = transcript.map((row) => {
++    const tool = row.entry;
++    if (tool.kind !== 'tool') return row;
++    const matches = sourceLogActivities.flatMap((evidence) => {
++      const result = getDecisionTranscriptResult(tool, row.activity, evidence);
++      return result ? [result] : [];
++    });
++    if (matches.length !== 1 || pairedEvidence.has(matches[0].evidence)) return row;
++    pairedEvidence.add(matches[0].evidence);
++    return { ...row, entry: { ...tool, result: matches[0] } };
++  });
 +  return {
 +    workflowPhases,
-+    sourceLogActivities,
++    sourceLogActivities: sourceLogActivities.filter((activity) => !pairedEvidence.has(activity)),
 +    otherSourceActivities,
-+    transcript,
++    transcript: transcriptWithResults,
++    stageAnchor: getReviewStageAnchor(decision, workflowPhases, transcriptWithResults),
 +  };
 +};
 +
@@ -6848,14 +7011,27 @@
 +};
 --- /dev/null
 +++ b/mlflow/server/js/src/experiment-tracking/pages/experiment-chat-sessions/single-chat-view/decisionTranscript.ts
-@@ -0,0 +1,51 @@
+@@ -0,0 +1,113 @@
 +import type { DecisionProcessActivity } from './decisionProcessTypes';
 +
-+export type DecisionTranscriptEntry =
-+  | { kind: 'agent' | 'thinking'; text: string }
-+  | { kind: 'tool'; name: string; argumentPreview?: string; hasReviewResponse?: boolean };
++type DecisionTranscriptResult =
++  | { kind: 'not-captured'; evidence: DecisionProcessActivity }
++  | { kind: 'text'; text: string; evidence: DecisionProcessActivity };
 +
-+const describeArguments = (json: string): { argumentPreview?: string; hasReviewResponse?: boolean } => {
++type DecisionTranscriptTool = {
++  kind: 'tool';
++  name: string;
++  argumentPreview?: string;
++  arguments?: Record<string, unknown>;
++  hasReviewResponse?: boolean;
++  result?: DecisionTranscriptResult;
++};
++
++export type DecisionTranscriptEntry = { kind: 'agent' | 'thinking'; text: string } | DecisionTranscriptTool;
++
++const describeArguments = (
++  json: string,
++): Pick<DecisionTranscriptTool, 'argumentPreview' | 'arguments' | 'hasReviewResponse'> => {
 +  let args: unknown;
 +  try {
 +    args = JSON.parse(json);
@@ -6877,6 +7053,7 @@
 +    .join(', ');
 +  return {
 +    argumentPreview: preview.length > 160 ? `${preview.slice(0, 159).trimEnd()}…` : preview || undefined,
++    arguments: args as Record<string, unknown>,
 +    hasReviewResponse: entries.some(([key, value]) => key === 'review_response' && value != null && value !== ''),
 +  };
 +};
@@ -6899,6 +7076,54 @@
 +  if (!call) return undefined;
 +  const args = call[2].endsWith(')') ? describeArguments(call[2].slice(0, -1)) : {};
 +  return { kind: 'tool', name: call[1], ...args };
++};
++
++const isDiagnostic = (line: string) => /^(?:HTTP Request: |Context budget: \{)/.test(line);
++
++export const getDecisionTranscriptResult = (
++  tool: DecisionTranscriptTool,
++  call: DecisionProcessActivity,
++  evidence: DecisionProcessActivity,
++): DecisionTranscriptResult | undefined => {
++  const observe = tool.name === 'observe_environment';
++  if ((!observe && tool.name !== 'list_available_actions') || !tool.arguments || Object.keys(tool.arguments).length) {
++    return undefined;
++  }
++  const marker = observe ? 'AGENT OBSERVING ENVIRONMENT' : 'AGENT LISTING AVAILABLE ACTIONS';
++  if (evidence.label !== marker) return undefined;
++
++  const request = call.outputs ?? call.inputs;
++  const response = evidence.outputs;
++  if (!request || request.truncated || !response || response.truncated) return undefined;
++  const from = request.source;
++  const to = response.source;
++  if (
++    from.file !== 'raw_align_system.log' ||
++    from.file !== to.file ||
++    !from.snapshot_sha256 ||
++    from.snapshot_sha256 !== to.snapshot_sha256 ||
++    !from.artifact_path ||
++    from.artifact_path !== to.artifact_path ||
++    !from.lines ||
++    !to.lines ||
++    from.lines[0] < 1 ||
++    from.lines[0] !== from.lines[1] ||
++    from.lines[1] + 1 !== to.lines[0] ||
++    to.lines[0] > to.lines[1]
++  ) {
++    return undefined;
++  }
++
++  const [header, ...lines] = response.preview.split(/\r?\n/);
++  if (header !== `[bold]*${marker}*[/bold]`) return undefined;
++  const diagnostic = lines.findIndex(isDiagnostic);
++  if (diagnostic >= 0 && !lines.slice(diagnostic).every((line) => !line.trim() || isDiagnostic(line))) return undefined;
++  const text = (diagnostic >= 0 ? lines.slice(0, diagnostic) : lines).join('\n').trimEnd();
++
++  // The observation marker logs no return value. The listing marker logs the formatter's exact rows.
++  if (observe) return text ? undefined : { kind: 'not-captured', evidence };
++  if (!text || !text.split('\n').every((line) => /^- [A-Za-z_][\w.-]*: .+$/.test(line))) return undefined;
++  return { kind: 'text', text, evidence };
 +};
 --- a/mlflow/server/js/src/experiment-tracking/pages/experiment-page-tabs/side-nav/constants.tsx
 +++ b/mlflow/server/js/src/experiment-tracking/pages/experiment-page-tabs/side-nav/constants.tsx

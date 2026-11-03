@@ -276,6 +276,11 @@ const recordedProposal = {
   conclusion:
     "Captured proposal tail: control the observed bleeding before reassessment.",
 };
+const recordedProposalTool = {
+  tool_name: "propose_treatment",
+  arguments: { patient_id: "patient-a", treatment: "tourniquet" },
+  note: "Proposal tool metadata remains with the proposal stage.",
+};
 const remainingLogLines = Array.from({ length: 20 }, () => "");
 remainingLogLines[0] = '{"treat A": 0.91, "inspect B": 0.44}';
 remainingLogLines[2] = '{"treat A": 0.62, "inspect B": 0.58}';
@@ -433,6 +438,15 @@ const reviewerProcess = (step) => ({
         },
       ],
     },
+    ...(reviewedLogSnapshots[step - 1]
+      ? [
+          {
+            id: "unassigned",
+            label: "Other recorded log sections",
+            activities: reviewedLogSnapshots[step - 1].activities,
+          },
+        ]
+      : []),
     savedActionPhase(step),
   ],
   review: {
@@ -523,35 +537,104 @@ const langGraphProcess = (step) => ({
   gaps: ["The model request before urgency classification was not captured."],
 });
 
-const legacyLogExcerpts = (step) =>
-  step === 3
-    ? []
-    : [
-        ...(step === 1
-          ? [
-              {
-                label: "AGENT SYSTEM PROMPT",
-                text: "[bold]*AGENT SYSTEM PROMPT*[/bold]:\nUse the recorded observations to select an available treatment.",
-              },
-            ]
-          : []),
-        {
-          label: "AGENT THINKING",
-          text: "[bold]*AGENT THINKING*[/bold]:\nCheck the observed bleeding against the available treatment options.",
-        },
-        {
-          label: "AGENT",
-          text: "[bold]*AGENT*[/bold]:\nPatient A has severe bleeding; inspect the recorded treatment options.",
-        },
-        {
-          label: "AGENT TOOL CALL",
-          text: '[bold]*AGENT TOOL CALL*[/bold]: inspect_patient({"patient_id":"patient-a"})',
-        },
-        {
-          label: "AGENT TOOL CALL",
-          text: '[bold]*AGENT TOOL CALL*[/bold]: list_treatments({"patient_id":"patient-b","review_response":"Keep the recorded treatment choice."})',
-        },
-      ];
+const logSnapshotFixture = (id, excerpts) => {
+  const log = Buffer.from(
+    `${excerpts.map(({ text }) => text).join("\n")}\n`,
+    "utf8",
+  );
+  const snapshot = createHash("sha256").update(log).digest("hex");
+  const artifactPath = `evidence/log/${snapshot}/raw_align_system.log`;
+  let firstLine = 1;
+  const activities = excerpts.map((excerpt, index) => {
+    const lastLine = firstLine + excerpt.text.split("\n").length - 1;
+    const source = {
+      file: "raw_align_system.log",
+      lines: [firstLine, lastLine],
+      snapshot_sha256: snapshot,
+      artifact_path: artifactPath,
+    };
+    firstLine = lastLine + 1;
+    return {
+      id: `${id}-${index}`,
+      kind: "recorded",
+      label: excerpt.label,
+      [excerpt.label === "AGENT SYSTEM PROMPT" ? "inputs" : "outputs"]:
+        processPayload(excerpt.text, source),
+    };
+  });
+  return { artifactPath, log, activities };
+};
+
+const reviewedLogSnapshots = [1, 2].map((step) =>
+  logSnapshotFixture(`reviewed-log-${step}`, [
+    {
+      label: "AGENT",
+      text: "[bold]*AGENT*[/bold]: I will propose treatment for Patient A.",
+    },
+    {
+      label: "AGENT TOOL CALL",
+      text:
+        `[bold]*AGENT TOOL CALL*[/bold]: ${recordedProposalTool.tool_name}(${JSON.stringify(recordedProposalTool.arguments)})` +
+        (step === 1
+          ? '\nAction review: {\n  "recommendation": "Assess Patient B before treatment."\n}'
+          : ""),
+    },
+    {
+      label: "AGENT",
+      text: "[bold]*AGENT*[/bold]: I will keep the proposal after considering the recommendation.",
+    },
+    {
+      label: "AGENT TOOL CALL",
+      text: '[bold]*AGENT TOOL CALL*[/bold]: list_treatments({"patient_id":"patient-b"})',
+    },
+  ]),
+);
+
+const legacyLogSnapshots = [1, 2].map((step) => {
+  const excerpts = [
+    ...(step === 1
+      ? [
+          {
+            label: "AGENT SYSTEM PROMPT",
+            text: "[bold]*AGENT SYSTEM PROMPT*[/bold]:\nUse the recorded observations to select an available treatment.",
+          },
+        ]
+      : []),
+    {
+      label: "AGENT THINKING",
+      text: "[bold]*AGENT THINKING*[/bold]:\nCheck the observed bleeding against the available treatment options.",
+    },
+    {
+      label: "AGENT",
+      text: "[bold]*AGENT*[/bold]:\nPatient A has severe bleeding; inspect the recorded treatment options.",
+    },
+    {
+      label: "AGENT TOOL CALL",
+      text: "[bold]*AGENT TOOL CALL*[/bold]: list_available_actions({})",
+    },
+    {
+      label: "AGENT LISTING AVAILABLE ACTIONS",
+      text: "[bold]*AGENT LISTING AVAILABLE ACTIONS*[/bold]\n- inspect_patient: Inspect a selected patient.\n- list_treatments: List available treatments.",
+    },
+    {
+      label: "AGENT TOOL CALL",
+      text: "[bold]*AGENT TOOL CALL*[/bold]: observe_environment({})",
+    },
+    {
+      label: "AGENT OBSERVING ENVIRONMENT",
+      text: "[bold]*AGENT OBSERVING ENVIRONMENT*[/bold]",
+    },
+    {
+      label: "AGENT TOOL CALL",
+      text: '[bold]*AGENT TOOL CALL*[/bold]: list_treatments({"patient_id":"patient-b","review_response":"Keep the recorded treatment choice."})',
+    },
+    {
+      label: "AGENT TOOL CALL",
+      text: '[bold]*AGENT TOOL CALL*[/bold]: inspect_patient({"patient_id":oops})',
+    },
+  ];
+  return logSnapshotFixture(`unassociated-log-${step}`, excerpts);
+});
 
 const legacyProcess = (step) => ({
   schema_version: "decision-process-v1",
@@ -562,21 +645,7 @@ const legacyProcess = (step) => ({
       label: "Other recorded log sections",
       summary:
         "Component ownership is unknown; these sections are not attributed to individual calls.",
-      activities: [
-        ...legacyLogExcerpts(step).map((excerpt, index) => ({
-          id: `unassociated-log-${step}-${index}`,
-          kind: "recorded",
-          label: excerpt.label,
-          [excerpt.label === "AGENT SYSTEM PROMPT" ? "inputs" : "outputs"]:
-            processPayload(
-              excerpt.text,
-              recordSource(
-                step,
-                `/choice_info/unassociated_log_excerpts/${index}`,
-              ),
-            ),
-        })),
-      ],
+      activities: legacyLogSnapshots[step - 1]?.activities ?? [],
     },
     savedActionPhase(step, "Treat Patient A for severe bleeding."),
   ].filter((phase) => phase.activities.length > 0),
@@ -621,10 +690,7 @@ export const createProcessDecisionPopulation = (runCount = 8) => {
           ? {
               multi_agent: {
                 proposal: recordedProposal,
-                proposal_tool: {
-                  name: "propose_treatment",
-                  note: "Proposal tool metadata remains with the proposal stage.",
-                },
+                proposal_tool: recordedProposalTool,
                 proposal_validation: null,
                 advice: {
                   recommendation: "Assess Patient B before treatment.",
@@ -693,13 +759,7 @@ export const createProcessDecisionPopulation = (runCount = 8) => {
                   ],
                 },
               }
-            : sessionIndex === 3
-              ? {
-                  unassociated_log_excerpts: legacyLogExcerpts(step).map(
-                    (excerpt) => excerpt.text,
-                  ),
-                }
-              : {};
+            : {};
       const detailedSummary = sessionIndex === 0 && step === 1;
       const situationSummary = `**Situation**\n\nPatient A has severe bleeding. Patient B is awaiting assessment.\n\nDecision ${step} environment summary.`;
       const actionSummary =
@@ -736,7 +796,14 @@ export const createProcessDecisionPopulation = (runCount = 8) => {
   }
   return {
     ...population,
-    sourceArtifacts: { [exampleArtifactPath]: exampleLog },
+    sourceArtifacts: {
+      [exampleArtifactPath]: exampleLog,
+      ...Object.fromEntries(
+        [...legacyLogSnapshots, ...reviewedLogSnapshots].map(
+          ({ artifactPath, log }) => [artifactPath, log],
+        ),
+      ),
+    },
   };
 };
 
