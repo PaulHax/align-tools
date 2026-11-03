@@ -523,20 +523,35 @@ const langGraphProcess = (step) => ({
   gaps: ["The model request before urgency classification was not captured."],
 });
 
-const legacyLogExcerpts = [
-  {
-    label: "AGENT",
-    text: "[bold]*AGENT*[/bold]\nPatient A has severe bleeding; inspect the recorded treatment options.",
-  },
-  {
-    label: "AGENT TOOL CALL",
-    text: '[bold]*AGENT TOOL CALL*[/bold]: inspect_patient({"patient_id":"patient-a"})',
-  },
-  {
-    label: "AGENT TOOL CALL",
-    text: '[bold]*AGENT TOOL CALL*[/bold]: list_treatments({"patient_id":"patient-b"})',
-  },
-];
+const legacyLogExcerpts = (step) =>
+  step === 3
+    ? []
+    : [
+        ...(step === 1
+          ? [
+              {
+                label: "AGENT SYSTEM PROMPT",
+                text: "[bold]*AGENT SYSTEM PROMPT*[/bold]:\nUse the recorded observations to select an available treatment.",
+              },
+            ]
+          : []),
+        {
+          label: "AGENT THINKING",
+          text: "[bold]*AGENT THINKING*[/bold]:\nCheck the observed bleeding against the available treatment options.",
+        },
+        {
+          label: "AGENT",
+          text: "[bold]*AGENT*[/bold]:\nPatient A has severe bleeding; inspect the recorded treatment options.",
+        },
+        {
+          label: "AGENT TOOL CALL",
+          text: '[bold]*AGENT TOOL CALL*[/bold]: inspect_patient({"patient_id":"patient-a"})',
+        },
+        {
+          label: "AGENT TOOL CALL",
+          text: '[bold]*AGENT TOOL CALL*[/bold]: list_treatments({"patient_id":"patient-b","review_response":"Keep the recorded treatment choice."})',
+        },
+      ];
 
 const legacyProcess = (step) => ({
   schema_version: "decision-process-v1",
@@ -548,25 +563,27 @@ const legacyProcess = (step) => ({
       summary:
         "Component ownership is unknown; these sections are not attributed to individual calls.",
       activities: [
-        ...legacyLogExcerpts.map((excerpt, index) => ({
+        ...legacyLogExcerpts(step).map((excerpt, index) => ({
           id: `unassociated-log-${step}-${index}`,
           kind: "recorded",
           label: excerpt.label,
-          outputs: processPayload(
-            excerpt.text,
-            recordSource(
-              step,
-              `/choice_info/unassociated_log_excerpts/${index}`,
+          [excerpt.label === "AGENT SYSTEM PROMPT" ? "inputs" : "outputs"]:
+            processPayload(
+              excerpt.text,
+              recordSource(
+                step,
+                `/choice_info/unassociated_log_excerpts/${index}`,
+              ),
             ),
-          ),
         })),
       ],
     },
     savedActionPhase(step, "Treat Patient A for severe bleeding."),
-  ],
+  ].filter((phase) => phase.activities.length > 0),
   gaps: [
     "No intermediate ADM activity can be associated with the final decision record.",
     "The unassociated log excerpt cannot establish which model call produced this action.",
+    "Some log sections have no verified component owner and are shown without call attribution.",
   ],
 });
 
@@ -678,7 +695,7 @@ export const createProcessDecisionPopulation = (runCount = 8) => {
               }
             : sessionIndex === 3
               ? {
-                  unassociated_log_excerpts: legacyLogExcerpts.map(
+                  unassociated_log_excerpts: legacyLogExcerpts(step).map(
                     (excerpt) => excerpt.text,
                   ),
                 }

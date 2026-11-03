@@ -5331,21 +5331,31 @@
          paddingTop: theme.spacing.sm,
 --- /dev/null
 +++ b/mlflow/server/js/src/experiment-tracking/pages/experiment-chat-sessions/single-chat-view/OpenWorldDecisionProcess.tsx
-@@ -0,0 +1,855 @@
+@@ -0,0 +1,967 @@
 +import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-+import { Button, ChevronDownIcon, ChevronRightIcon, Typography, useDesignSystemTheme } from '@databricks/design-system';
++import {
++  Button,
++  ChevronDownIcon,
++  ChevronRightIcon,
++  FunctionIcon,
++  RobotIcon,
++  Typography,
++  useDesignSystemTheme,
++} from '@databricks/design-system';
 +import type { ModelTrace, ModelTraceSpanNode } from '@databricks/web-shared/model-trace-explorer';
 +import {
 +  parseModelTraceToTree,
 +  tryDeserializeAttribute,
 +} from '@databricks/web-shared/model-trace-explorer/ModelTraceExplorer.utils';
 +import { getSpanAttribute } from '@databricks/web-shared/genai-traces-table/utils/TraceUtils';
++import { GenAIMarkdownRenderer } from '@databricks/web-shared/genai-markdown-renderer/GenAIMarkdownRenderer';
 +import { ModelTraceExplorerFieldRenderer } from '@databricks/web-shared/model-trace-explorer/field-renderers/ModelTraceExplorerFieldRenderer';
 +import { ModelTraceExplorerCodeSnippet } from '@databricks/web-shared/model-trace-explorer/ModelTraceExplorerCodeSnippet';
 +import { CodeSnippetRenderMode } from '@databricks/web-shared/model-trace-explorer/ModelTrace.types';
 +import { loadRecordedPayload, resolveRecordedPayload, sourceArtifactUrl } from './decisionProcessPayloads';
 +import { getDecisionActivityLabel } from './decisionActivityLabels';
 +import { getDecisionPhaseHint, getDecisionProcessPresentation } from './decisionProcessPresentation';
++import type { DecisionTranscriptEntry } from './decisionTranscript';
 +import type {
 +  DecisionProcess,
 +  DecisionProcessActivity,
@@ -5442,14 +5452,14 @@
 +
 +const fieldData = (value: unknown) => JSON.stringify(value) ?? 'null';
 +
-+const formatRecordedValue = (value: unknown) => {
++const formatRecordedValue = (value: unknown, stripObjectBraces = true) => {
 +  if (typeof value === 'string') return { display: value, copyText: value };
 +  const copyText = JSON.stringify(value, null, 2) ?? 'null';
 +  const object = asObject(value);
 +  const plainObject =
 +    object && (Object.getPrototypeOf(object) === Object.prototype || Object.getPrototypeOf(object) === null);
 +  const display =
-+    plainObject && copyText.startsWith('{\n') && copyText.endsWith('\n}')
++    stripObjectBraces && plainObject && copyText.startsWith('{\n') && copyText.endsWith('\n}')
 +      ? copyText
 +          .slice(2, -2)
 +          .split('\n')
@@ -5486,7 +5496,7 @@
 +  runId,
 +}: {
 +  payload: DecisionProcessPayload;
-+  title: 'Inputs' | 'Outputs';
++  title: 'Inputs' | 'Outputs' | 'Log excerpt';
 +  root: ModelTraceSpanNode;
 +  runId?: string;
 +}) => {
@@ -5604,12 +5614,10 @@
 +const ActivitySummary = ({
 +  activity,
 +  root,
-+  showLabel,
 +  proposalShown,
 +}: {
 +  activity: DecisionProcessActivity;
 +  root: ModelTraceSpanNode;
-+  showLabel: boolean;
 +  proposalShown: boolean;
 +}) => {
 +  const { theme } = useDesignSystemTheme();
@@ -5617,7 +5625,7 @@
 +  const text = typeof output?.text === 'string' ? output.text : undefined;
 +  const label =
 +    output?.title && proposalShown ? 'Justification' : (output?.title ?? getDecisionActivityLabel(activity));
-+  if (!text && !output?.title && !output?.fields?.length && !showLabel) return null;
++  if (!text && !output?.title && !output?.fields?.length) return null;
 +  return (
 +    <section
 +      aria-label={getDecisionActivityLabel(activity)}
@@ -5716,11 +5724,15 @@
 +  label,
 +  preview,
 +  count,
++  icon,
++  codePreview,
 +  children,
 +}: {
 +  label: string;
 +  preview?: string;
 +  count?: string;
++  icon?: ReactNode;
++  codePreview?: boolean;
 +  children: ReactNode;
 +}) => {
 +  const { theme } = useDesignSystemTheme();
@@ -5737,30 +5749,40 @@
 +          paddingInline: theme.spacing.sm,
 +          cursor: 'pointer',
 +          listStyle: 'none',
-+          border: '1px solid ' + theme.colors.borderDecorative,
++          border: icon ? undefined : '1px solid ' + theme.colors.borderDecorative,
 +          borderRadius: theme.borders.borderRadiusSm,
-+          backgroundColor: theme.colors.backgroundPrimary,
++          backgroundColor: icon ? undefined : theme.colors.backgroundPrimary,
 +          '&::-webkit-details-marker': { display: 'none' },
 +          '&:hover': { backgroundColor: theme.colors.actionDefaultBackgroundHover },
 +          '&:active': { backgroundColor: theme.colors.actionDefaultBackgroundPress },
 +          '&:focus-visible': { outline: '2px solid ' + theme.colors.actionDefaultBorderFocus, outlineOffset: -2 },
 +        }}
 +      >
++        {icon && (
++          <span aria-hidden css={{ display: 'flex', flexShrink: 0, color: theme.colors.textSecondary }}>
++            {icon}
++          </span>
++        )}
 +        <Typography.Text
 +          bold
 +          size="sm"
 +          css={{
 +            ...oneLine,
 +            maxWidth: '50%',
-+            paddingInline: theme.spacing.xs,
++            paddingInline: icon ? 0 : theme.spacing.xs,
 +            borderRadius: theme.borders.borderRadiusSm,
-+            backgroundColor: theme.colors.backgroundSecondary,
++            backgroundColor: icon ? undefined : theme.colors.backgroundSecondary,
 +          }}
 +        >
 +          {label}
 +        </Typography.Text>
 +        {preview && (
-+          <Typography.Text color="secondary" title={preview} css={{ ...oneLine, flex: 1 }}>
++          <Typography.Text
++            color="secondary"
++            size={codePreview ? 'sm' : undefined}
++            title={preview}
++            css={{ ...oneLine, flex: 1, fontFamily: codePreview ? 'monospace' : undefined }}
++          >
 +            {preview}
 +          </Typography.Text>
 +        )}
@@ -5786,38 +5808,134 @@
 +};
 +
 +const ProcessActivities = ({
++  label,
 +  activities,
 +  root,
 +  runId,
-+  sourceGroup = false,
-+  proposalShown = false,
-+  children,
 +}: {
++  label: string;
 +  activities: DecisionProcessActivity[];
 +  root: ModelTraceSpanNode;
 +  runId?: string;
-+  sourceGroup?: boolean;
-+  proposalShown?: boolean;
-+  children?: ReactNode;
 +}) => (
-+  <>
++  <section aria-label={label}>
 +    {activities.map((activity, index) => (
-+      <ActivitySummary
-+        key={`${activity.id}:${index}`}
-+        activity={activity}
-+        root={root}
-+        showLabel={sourceGroup || activity.kind === 'model' || activity.kind === 'tool' || activity.kind === 'cache'}
-+        proposalShown={proposalShown}
-+      />
++      <ProcessActivity key={`${activity.id}:${index}`} activity={activity} root={root} runId={runId} />
 +    ))}
-+    {children}
-+    <ProcessDisclosureRow label="Recorded evidence">
-+      {activities.map((activity, index) => (
-+        <ProcessActivity key={`${activity.id}:${index}`} activity={activity} root={root} runId={runId} />
-+      ))}
-+    </ProcessDisclosureRow>
-+  </>
++  </section>
 +);
++
++const transcriptMarkdownComponents = {
++  img: ({ alt }: { alt?: string }) => (alt ? <span>{alt}</span> : null),
++};
++
++const TranscriptProse = ({ text }: { text: string }) => (
++  <div css={{ overflowWrap: 'anywhere' }}>
++    <GenAIMarkdownRenderer compact components={transcriptMarkdownComponents}>
++      {text}
++    </GenAIMarkdownRenderer>
++  </div>
++);
++
++const DecisionTranscript = ({
++  entries,
++  root,
++  runId,
++  unattributed,
++}: {
++  entries: { activity: DecisionProcessActivity; entry: DecisionTranscriptEntry }[];
++  root: ModelTraceSpanNode;
++  runId?: string;
++  unattributed: boolean;
++}) => {
++  const { theme } = useDesignSystemTheme();
++  if (!entries.length) return null;
++  return (
++    <section aria-label="Agent and tool activity">
++      <div css={{ display: 'flex', flexWrap: 'wrap', gap: theme.spacing.sm, marginBottom: theme.spacing.xs }}>
++        <Typography.Title level={4} withoutMargins color="secondary">
++          Activity log
++        </Typography.Title>
++        {unattributed && (
++          <Typography.Text color="secondary" size="sm">
++            Stage attribution unavailable
++          </Typography.Text>
++        )}
++      </div>
++      <div
++        css={{
++          borderLeft: '3px solid ' + theme.colors.actionPrimaryBackgroundDefault,
++          padding: theme.spacing.sm,
++          backgroundColor: theme.colors.backgroundPrimary,
++        }}
++      >
++        {entries.map(({ activity, entry }, index) => {
++          const payload = activity.outputs ?? activity.inputs;
++          if (!payload) return null;
++          const key = `${activity.id}:${index}`;
++          const raw = <RecordedPayload payload={payload} title="Log excerpt" root={root} runId={runId} />;
++          if (entry.kind === 'tool') {
++            return (
++              <ProcessDisclosureRow
++                key={key}
++                label={entry.name}
++                preview={entry.argumentPreview ?? (payload.truncated ? 'Argument preview incomplete' : undefined)}
++                count={entry.hasReviewResponse ? 'Review response' : undefined}
++                icon={<FunctionIcon />}
++                codePreview={Boolean(entry.argumentPreview)}
++              >
++                {raw}
++              </ProcessDisclosureRow>
++            );
++          }
++          if (entry.kind === 'thinking') {
++            return (
++              <ProcessDisclosureRow key={key} label="Thinking" preview={entry.text} icon={<RobotIcon />}>
++                {payload.truncated ? (
++                  raw
++                ) : (
++                  <>
++                    <TranscriptProse text={entry.text} />
++                    <SourceReference source={payload.source} runId={runId} />
++                  </>
++                )}
++              </ProcessDisclosureRow>
++            );
++          }
++          const href = sourceArtifactUrl(payload.source, runId);
++          const lines = payload.source.lines;
++          return (
++            <section key={key} aria-label="Agent response" css={{ padding: theme.spacing.sm, minWidth: 0 }}>
++              <div
++                css={{ display: 'flex', alignItems: 'center', gap: theme.spacing.sm, marginBottom: theme.spacing.xs }}
++              >
++                <span aria-hidden css={{ display: 'flex', flexShrink: 0, color: theme.colors.textSecondary }}>
++                  <RobotIcon />
++                </span>
++                <Typography.Text bold size="sm">
++                  Agent
++                </Typography.Text>
++                <Typography.Text color="secondary" size="sm">
++                  {lines && `Lines ${lines[0]}–${lines[1]}`}
++                  {href && (
++                    <>
++                      {lines && ' · '}
++                      <a href={href} target="_blank" rel="noreferrer">
++                        Source log
++                      </a>
++                    </>
++                  )}
++                </Typography.Text>
++              </div>
++              <TranscriptProse text={entry.text} />
++              {payload.truncated && <ProcessDisclosureRow label="Full log excerpt">{raw}</ProcessDisclosureRow>}
++            </section>
++          );
++        })}
++      </div>
++    </section>
++  );
++};
 +
 +const ProcessPhase = ({
 +  phase,
@@ -5837,20 +5955,19 @@
 +    <ProcessDisclosureRow label={phase.label} preview={hint}>
 +      {phase.summary && <div css={{ paddingBottom: theme.spacing.xs }}>{phase.summary}</div>}
 +      {review && <PhaseOutcome phaseId={phase.id} review={review} />}
-+      {phase.activities.length ? (
-+        <ProcessActivities
-+          activities={phase.activities}
++      {phase.activities.map((activity, index) => (
++        <ActivitySummary
++          key={`${activity.id}:${index}`}
++          activity={activity}
 +          root={root}
-+          runId={runId}
 +          proposalShown={phase.id === 'proposal' && Boolean(review?.proposal)}
-+        >
-+          {review && phase.id === 'review' && <ReviewDetails review={review} />}
-+        </ProcessActivities>
++        />
++      ))}
++      {review && phase.id === 'review' && <ReviewDetails review={review} />}
++      {phase.activities.length ? (
++        <ProcessActivities label={phase.label + ' records'} activities={phase.activities} root={root} runId={runId} />
 +      ) : (
-+        <>
-+          {review && phase.id === 'review' && <ReviewDetails review={review} />}
-+          <div>No invocation details were captured for this phase.</div>
-+        </>
++        <div>No invocation details were captured for this phase.</div>
 +      )}
 +    </ProcessDisclosureRow>
 +  );
@@ -5950,40 +6067,25 @@
 +  return text.length > maximum ? text.slice(0, maximum - 1).trimEnd() + '…' : text;
 +};
 +
-+const additionalMetadataFields = (metadata: Record<string, unknown>): [string, unknown][] =>
-+  Object.entries(metadata).flatMap(([key, value]) => {
-+    const object = asObject(value);
-+    return ['choice_info', 'multi_agent', 'langchain_agent'].includes(key) && object
-+      ? additionalMetadataFields(object)
-+      : [[key, value] as [string, unknown]];
-+  });
-+
-+const additionalMetadataKeys = (metadata: Record<string, unknown>): string[] => {
-+  const informative = (value: unknown) =>
-+    value !== null &&
-+    value !== undefined &&
-+    value !== '' &&
-+    (!Array.isArray(value) || value.length > 0) &&
-+    (!asObject(value) || Object.keys(asObject(value) ?? {}).length > 0);
-+  return additionalMetadataFields(metadata)
-+    .sort(([, left], [, right]) => Number(informative(right)) - Number(informative(left)))
-+    .map(([key]) => key);
-+};
++const unattributedLogsGap =
++  'Some log sections have no verified component owner and are shown without call attribution.';
 +
 +const SourceActivities = ({
 +  label,
 +  activities,
 +  root,
 +  runId,
++  unattributed = false,
 +}: {
 +  label: string;
 +  activities: DecisionProcessActivity[];
 +  root: ModelTraceSpanNode;
 +  runId?: string;
++  unattributed?: boolean;
 +}) => {
 +  if (activities.length === 0) return null;
 +  const isSourceLogs = label === 'Source logs';
-+  const noun = isSourceLogs ? 'excerpt' : 'record';
++  const noun = isSourceLogs ? (unattributed ? 'unattributed excerpt' : 'excerpt') : 'record';
 +  const count = activities.length;
 +  return (
 +    <ProcessDisclosureRow
@@ -5991,12 +6093,12 @@
 +      preview={compactHint(getDecisionActivityLabel(activities[0]), 100)}
 +      count={count + ' ' + noun + (count === 1 ? '' : 's')}
 +    >
-+      {isSourceLogs && (
-+        <Typography.Text color="secondary">
-+          These excerpts have no verified association with a workflow stage or individual call.
-+        </Typography.Text>
-+      )}
-+      <ProcessActivities activities={activities} root={root} runId={runId} sourceGroup />
++      <ProcessActivities
++        label={isSourceLogs ? 'Log excerpts' : 'Source records'}
++        activities={activities}
++        root={root}
++        runId={runId}
++      />
 +    </ProcessDisclosureRow>
 +  );
 +};
@@ -6007,15 +6109,17 @@
 +  value,
 +  initialExpanded = false,
 +  allowCollapse = true,
++  raw = false,
 +}: {
 +  title: string;
 +  caption?: string;
 +  value: unknown;
 +  initialExpanded?: boolean;
 +  allowCollapse?: boolean;
++  raw?: boolean;
 +}) => {
 +  const { theme } = useDesignSystemTheme();
-+  const formatted = useMemo(() => formatRecordedValue(value), [value]);
++  const formatted = useMemo(() => formatRecordedValue(value, !raw), [value, raw]);
 +  return (
 +    <section aria-label={title}>
 +      {caption && (
@@ -6050,13 +6154,18 @@
 +  const presentation = useMemo(() => getDecisionProcessPresentation(decision), [decision]);
 +  const situationSummary = inputSummary?.replace(/^\*\*Situation\*\*(?:\r?\n){2}/, '');
 +  const outputSource = asObject(asObject(root.outputs)?.['source']);
-+  const metadataKeys = additionalMetadataKeys(presentation.additionalMetadata);
++  const choiceInfo = outputSource?.['choice_info'];
++  const choiceInfoKeys = Object.keys(asObject(choiceInfo) ?? {});
 +  const gaps = decisionProcess?.gaps ?? [];
++  const unattributed =
++    (presentation.sourceLogActivities.length > 0 || presentation.transcript.length > 0) &&
++    gaps.includes(unattributedLogsGap);
++  const otherGaps = unattributed ? gaps.filter((gap) => gap !== unattributedLogsGap) : gaps;
 +  const hasSupportingEvidence =
 +    presentation.sourceLogActivities.length > 0 ||
 +    presentation.otherSourceActivities.length > 0 ||
-+    gaps.length > 0 ||
-+    metadataKeys.length > 0;
++    otherGaps.length > 0 ||
++    choiceInfo !== undefined;
 +  const sectionCss = { display: 'flex', flexDirection: 'column' as const, minWidth: 0, gap: theme.spacing.sm };
 +  const disclosureRowsCss = {
 +    display: 'flex',
@@ -6109,6 +6218,7 @@
 +            <div>Workflow stages were not recorded.</div>
 +          )}
 +        </section>
++        <DecisionTranscript entries={presentation.transcript} root={root} runId={runId} unattributed={unattributed} />
 +      </section>
 +      <section
 +        aria-label="Chosen action"
@@ -6143,6 +6253,7 @@
 +              activities={presentation.sourceLogActivities}
 +              root={root}
 +              runId={runId}
++              unattributed={unattributed}
 +            />
 +            <SourceActivities
 +              label="Other source evidence"
@@ -6150,34 +6261,35 @@
 +              root={root}
 +              runId={runId}
 +            />
-+            {gaps.length > 0 && (
++            {otherGaps.length > 0 && (
 +              <ProcessDisclosureRow
 +                label="Capture gaps"
-+                preview={compactHint(gaps[0])}
-+                count={gaps.length + (gaps.length === 1 ? ' gap' : ' gaps')}
++                preview={compactHint(otherGaps[0])}
++                count={otherGaps.length + (otherGaps.length === 1 ? ' gap' : ' gaps')}
 +              >
 +                <section aria-label="Capture gaps">
 +                  <ul css={{ margin: '4px 0', paddingLeft: 20 }}>
-+                    {gaps.map((gap, index) => (
++                    {otherGaps.map((gap, index) => (
 +                      <li key={index}>{gap}</li>
 +                    ))}
 +                  </ul>
 +                </section>
 +              </ProcessDisclosureRow>
 +            )}
-+            {metadataKeys.length > 0 && (
++            {choiceInfo !== undefined && (
 +              <ProcessDisclosureRow
-+                label="Additional metadata"
++                label="Choice info"
 +                preview={
-+                  metadataKeys.slice(0, 4).join(', ') +
-+                  (metadataKeys.length > 4 ? ' (+' + (metadataKeys.length - 4) + ')' : '')
++                  choiceInfoKeys.slice(0, 4).join(', ') +
++                  (choiceInfoKeys.length > 4 ? ' (+' + (choiceInfoKeys.length - 4) + ')' : '')
 +                }
 +              >
 +                <RecordedSourcePreview
-+                  title="Additional metadata"
-+                  value={presentation.additionalMetadata}
++                  title="Choice info"
++                  value={choiceInfo}
 +                  initialExpanded
 +                  allowCollapse={false}
++                  raw
 +                />
 +              </ProcessDisclosureRow>
 +            )}
@@ -6385,10 +6497,11 @@
 +};
 --- /dev/null
 +++ b/mlflow/server/js/src/experiment-tracking/pages/experiment-chat-sessions/single-chat-view/decisionProcessPresentation.ts
-@@ -0,0 +1,313 @@
+@@ -0,0 +1,295 @@
 +import type { ModelTraceSpanNode } from '@databricks/web-shared/model-trace-explorer';
 +import { getDecisionActivityLabel } from './decisionActivityLabels';
 +import { resolveRecordedPayload } from './decisionProcessPayloads';
++import { getDecisionTranscriptEntry, type DecisionTranscriptEntry } from './decisionTranscript';
 +import type {
 +  DecisionProcess,
 +  DecisionProcessActivity,
@@ -6431,19 +6544,6 @@
 +    entries.length > 0 &&
 +    entries.every(([key, child]) => fullyCovered(child, `${pointer}/${escapePointer(key)}`, pointers))
 +  );
-+};
-+
-+const OMIT = Symbol('omit');
-+const withoutCovered = (value: unknown, pointer: string, pointers: string[]): unknown => {
-+  if (fullyCovered(value, pointer, pointers)) return OMIT;
-+  const object = asObject(value);
-+  // Partial arrays retain their source positions, including already exposed elements.
-+  if (!object) return value;
-+  const entries = Object.entries(object).flatMap(([key, child]) => {
-+    const remaining = withoutCovered(child, `${pointer}/${escapePointer(key)}`, pointers);
-+    return remaining === OMIT ? [] : [[key, remaining]];
-+  });
-+  return entries.length || !Object.keys(object).length ? Object.fromEntries(entries) : OMIT;
 +};
 +
 +const stageFields = new Map<string, [string, string][]>(
@@ -6538,6 +6638,7 @@
 +export const getDecisionProcessPresentation = (decision: OpenWorldDecision) => {
 +  const workflowPhases: DecisionProcessPhase[] = [];
 +  const sourceLogActivities: DecisionProcessActivity[] = [];
++  const transcript: { activity: DecisionProcessActivity; entry: DecisionTranscriptEntry }[] = [];
 +  const otherSourceActivities: DecisionProcessActivity[] = [];
 +  const normalizedProducer = new Set([
 +    'reviewer',
@@ -6550,7 +6651,11 @@
 +  ]).has(decision.process?.producer ?? '');
 +  for (const phase of decision.process?.phases ?? []) {
 +    if (normalizedProducer && (phase.id === 'unassigned' || phase.id === 'logged')) {
-+      sourceLogActivities.push(...phase.activities);
++      for (const activity of phase.activities) {
++        const entry = getDecisionTranscriptEntry(activity);
++        if (entry) transcript.push({ activity, entry });
++        else sourceLogActivities.push(activity);
++      }
 +    } else if (
 +      (normalizedProducer && phase.id === 'recorded') ||
 +      (phase.id === 'decision' && decision.process?.producer === 'langchain')
@@ -6573,38 +6678,27 @@
 +      workflowPhases.push(withStageMetadata(phase, decision));
 +    }
 +  }
-+  const source = asObject(asObject(decision.root.outputs)?.['source']) ?? {};
-+  const pointers = [
-+    '/output',
-+    ...resolvedPointers(
-+      [...workflowPhases.flatMap((phase) => phase.activities), ...sourceLogActivities, ...otherSourceActivities],
-+      decision.root,
-+    ),
-+  ];
-+  const justification = asObject(asObject(source['choice_info'])?.['langchain_agent'])?.['justification'];
++  const excerptSource = ({ activity }: (typeof transcript)[number]) => (activity.outputs ?? activity.inputs)?.source;
++  const firstSource = transcript.length ? excerptSource(transcript[0]) : undefined;
 +  if (
-+    ['reviewer', 'langchain'].includes(decision.process?.producer ?? '') &&
-+    typeof justification === 'string' &&
-+    justification === asObject(asObject(source['output'])?.['action'])?.['justification']
++    firstSource?.lines &&
++    transcript.every((item) => {
++      const source = excerptSource(item);
++      return (
++        source?.lines &&
++        source.file === firstSource.file &&
++        source.artifact_path === firstSource.artifact_path &&
++        source.snapshot_sha256 === firstSource.snapshot_sha256
++      );
++    })
 +  ) {
-+    pointers.push('/choice_info/langchain_agent/justification');
++    transcript.sort((left, right) => (excerptSource(left)?.lines?.[0] ?? 0) - (excerptSource(right)?.lines?.[0] ?? 0));
 +  }
-+  const multi = asObject(asObject(source['choice_info'])?.['multi_agent']);
-+  const proposalJustification = asObject(multi?.['proposal'])?.['justification'];
-+  if (
-+    decision.process?.producer === 'reviewer' &&
-+    typeof proposalJustification === 'string' &&
-+    proposalJustification === multi?.['original_justification'] &&
-+    covered('/choice_info/multi_agent/proposal', pointers)
-+  ) {
-+    pointers.push('/choice_info/multi_agent/original_justification');
-+  }
-+  const remaining = withoutCovered(source, '', pointers);
 +  return {
 +    workflowPhases,
 +    sourceLogActivities,
 +    otherSourceActivities,
-+    additionalMetadata: remaining === OMIT ? {} : (asObject(remaining) ?? {}),
++    transcript,
 +  };
 +};
 +
@@ -6762,6 +6856,60 @@
 +  process?: DecisionProcess;
 +  inputSummary?: string;
 +  outputSummary?: string;
++};
+--- /dev/null
++++ b/mlflow/server/js/src/experiment-tracking/pages/experiment-chat-sessions/single-chat-view/decisionTranscript.ts
+@@ -0,0 +1,51 @@
++import type { DecisionProcessActivity } from './decisionProcessTypes';
++
++export type DecisionTranscriptEntry =
++  | { kind: 'agent' | 'thinking'; text: string }
++  | { kind: 'tool'; name: string; argumentPreview?: string; hasReviewResponse?: boolean };
++
++const describeArguments = (json: string): { argumentPreview?: string; hasReviewResponse?: boolean } => {
++  let args: unknown;
++  try {
++    args = JSON.parse(json);
++  } catch {
++    return {};
++  }
++  if (!args || typeof args !== 'object' || Array.isArray(args)) return {};
++
++  const entries = Object.entries(args);
++  const identifying = entries.filter(
++    ([key]) => !/^(justification|reason|reasoning|thinking|review_response)$/i.test(key),
++  );
++  const preview = (identifying.length ? identifying : entries)
++    .slice(0, 3)
++    .map(([key, value]) => {
++      const text = (typeof value === 'string' ? value : JSON.stringify(value)).replace(/\s+/g, ' ').trim();
++      return `${key}=${text.length > 44 ? `${text.slice(0, 43).trimEnd()}…` : text}`;
++    })
++    .join(', ');
++  return {
++    argumentPreview: preview.length > 160 ? `${preview.slice(0, 159).trimEnd()}…` : preview || undefined,
++    hasReviewResponse: entries.some(([key, value]) => key === 'review_response' && value != null && value !== ''),
++  };
++};
++
++export const getDecisionTranscriptEntry = (activity: DecisionProcessActivity): DecisionTranscriptEntry | undefined => {
++  const label = activity.label;
++  if (label !== 'AGENT' && label !== 'AGENT TOOL CALL' && label !== 'AGENT THINKING' && label !== 'AGENT REASONING') {
++    return undefined;
++  }
++  const header = `[bold]*${label}*[/bold]:`;
++  const excerpt = (activity.outputs ?? activity.inputs)?.preview.trimStart();
++  if (!excerpt?.startsWith(header)) return undefined;
++  const text = excerpt.slice(header.length).trim();
++  if (!text) return undefined;
++  if (label !== 'AGENT TOOL CALL') return { kind: label === 'AGENT' ? 'agent' : 'thinking', text };
++
++  // The driver writes JSON on the call's first line. Later lines can contain diagnostics.
++  const firstLine = text.split(/\r?\n/, 1)[0].trimEnd();
++  const call = /^([A-Za-z_][\w.-]*)[ \t]*\((.*)$/.exec(firstLine);
++  if (!call) return undefined;
++  const args = call[2].endsWith(')') ? describeArguments(call[2].slice(0, -1)) : {};
++  return { kind: 'tool', name: call[1], ...args };
 +};
 --- a/mlflow/server/js/src/experiment-tracking/pages/experiment-page-tabs/side-nav/constants.tsx
 +++ b/mlflow/server/js/src/experiment-tracking/pages/experiment-page-tabs/side-nav/constants.tsx

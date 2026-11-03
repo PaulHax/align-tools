@@ -94,19 +94,6 @@ const expectStaticEvidence = async (scope) => {
   ).toHaveCount(0);
 };
 
-const openRecordedEvidence = async (group) => {
-  const toggle = summary(group, "Recorded evidence");
-  await expect(toggle).toBeVisible();
-  await expect(group.locator("details")).toHaveCount(1);
-  await expect(
-    group.getByRole("region", { name: /^(Inputs|Outputs)$/ }),
-  ).toHaveCount(0);
-  const evidence = toggle.locator("..");
-  await expect(evidence.locator("pre")).toHaveCount(0);
-  await toggle.click();
-  return evidence;
-};
-
 const collapseRawPreview = async (recorded) => {
   const collapse = recorded.getByRole("button", {
     name: "See less",
@@ -319,13 +306,12 @@ const expectCompactDecision = async (page, scope, session, stages) => {
     "Saved environment action",
     "Other recorded log sections",
     "Capture gaps",
-    "Additional metadata",
+    "Choice info",
   ])
     await expect(summary(workflow, label)).toHaveCount(0);
   await expect(summary(decision, "Saved environment action")).toHaveCount(0);
-  await expect(summary(supporting, "Additional metadata")).toContainText(
-    "recorded_debug_note",
-  );
+  await expect(summary(supporting, "Additional metadata")).toHaveCount(0);
+  await expect(supporting).not.toContainText("recorded_debug_note");
   await expect(
     process.getByRole("region", {
       name: "Reviewer guidance and final selection",
@@ -349,16 +335,18 @@ const openPipelineStage = async (decision) => {
     "Scored the visible treatment candidates.",
   );
   const phase = summary(decision, "Predict urgency").locator("..");
-  await expect(summary(phase, "Recorded evidence")).toHaveCount(0);
+  const recorded = phase.getByRole("region", {
+    name: "Predict urgency records",
+    exact: true,
+  });
+  await expect(recorded).toHaveCount(0);
   await summary(decision, "Predict urgency").click();
-  for (const name of [
-    "Predict patient urgency",
-    "Reuse candidate merit scores",
-  ])
-    await expect(
-      phase.getByRole("region", { name, exact: true }),
-    ).toBeVisible();
-  const recorded = await openRecordedEvidence(phase);
+  await expect(
+    recorded.getByRole("region", {
+      name: "Reuse candidate merit scores",
+      exact: true,
+    }),
+  ).toBeVisible();
   const details = recorded.getByRole("region", {
     name: "Predict patient urgency",
     exact: true,
@@ -373,7 +361,7 @@ const openPipelineStage = async (decision) => {
   await expect(
     details.getByRole("region", { name: "Outputs", exact: true }),
   ).toContainText(/inspect B"?\s*:\s*0\.44/);
-  await expectStaticEvidence(recorded);
+  await expectStaticEvidence(phase);
   await expectNoLineNumbers(details);
   await expect(
     recorded.getByText("raw_align_system.log", { exact: false }).first(),
@@ -503,26 +491,15 @@ test("pipeline stages reveal readable context and recorded evidence while the en
   await expectRawPreview(action, "Output");
   await expect(recordedAction).not.toContainText("unstructured");
   await expectSelection(page, page, session, 2);
-  const supporting = decision.getByRole("region", {
-    name: "Supporting evidence",
-    exact: true,
-  });
-  await summary(supporting, "Additional metadata").click();
-  const recordedMetadata = summary(supporting, "Additional metadata").locator(
-    "..",
-  );
-  await expect(recordedMetadata).toContainText("recorded_debug_note");
-  await expect(recordedMetadata).toContainText(
-    "Metadata remains associated with the decision.",
-  );
-  await expect(recordedMetadata).not.toContainText("APPLY_TREATMENT");
-  await expect(recordedMetadata).not.toContainText("example-triage-scenario");
-  await expectNoLineNumbers(recordedMetadata);
-  await expectStaticEvidence(recordedMetadata);
-  await expectSelection(page, page, session, 2);
   await summary(card(page, 2), "Predict urgency").click();
   const selectedPhase = summary(card(page, 2), "Predict urgency").locator("..");
-  await expect(summary(selectedPhase, "Recorded evidence")).toBeVisible();
+  await expect(
+    selectedPhase.getByRole("region", {
+      name: "Predict urgency records",
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expectStaticEvidence(selectedPhase);
   await expectSelection(page, page, session, 2);
   await expectNoLineNumbers(page);
   const overflow = await page.evaluate(
@@ -531,7 +508,7 @@ test("pipeline stages reveal readable context and recorded evidence while the en
   expect(overflow).toBeLessThanOrEqual(1);
 });
 
-test("recorded evidence loads complete captured context using the recorded UTF-8 byte range", async ({
+test("opening a stage loads complete captured context using the recorded UTF-8 byte range", async ({
   page,
   population,
 }) => {
@@ -555,15 +532,16 @@ test("recorded evidence loads complete captured context using the recorded UTF-8
     }),
   ).toHaveCount(0);
   const stage = summary(decision, "Predict urgency");
-  await stage.click();
-  const phase = stage.locator("..");
-  await expect(summary(phase, "Recorded evidence")).toBeVisible();
-  expect(sourceRequests).toHaveLength(0);
   const responsePromise = page.waitForResponse((response) =>
     new URL(response.url()).pathname.endsWith("/get-artifact"),
   );
-  const recorded = await openRecordedEvidence(phase);
+  await stage.click();
   const response = await responsePromise;
+  const phase = stage.locator("..");
+  const recorded = phase.getByRole("region", {
+    name: "Predict urgency records",
+    exact: true,
+  });
   const inputs = recorded
     .getByRole("region", { name: "Predict patient urgency", exact: true })
     .getByRole("region", { name: "Inputs", exact: true });
@@ -600,11 +578,11 @@ test("recorded evidence loads complete captured context using the recorded UTF-8
   await expect(
     inputs.getByText("Preview only.", { exact: false }),
   ).not.toBeVisible();
-  await expectStaticEvidence(recorded);
+  await expectStaticEvidence(phase);
   await expectNoLineNumbers(page);
 });
 
-const expectReviewerDistinction = async (decision) => {
+const expectReviewerDistinction = async (decision, population) => {
   const proposalJustification =
     "Control Patient A’s observed severe bleeding before reassessing. The recorded observation has no assessment result for Patient B.";
   const adviceReason =
@@ -644,10 +622,22 @@ const expectReviewerDistinction = async (decision) => {
   await expect(detailValue(proposalPhase, "Proposed action")).toHaveText(
     "Apply a tourniquet to Patient A.",
   );
-  await expect(
-    proposalPhase.getByText(proposalJustification, { exact: true }),
-  ).toBeVisible();
-  const proposalRecorded = await openRecordedEvidence(proposalPhase);
+  const proposalProse = proposalPhase.getByText(proposalJustification, {
+    exact: true,
+  });
+  await expect(proposalProse).toBeVisible();
+  const proposalRecorded = proposalPhase.getByRole("region", {
+    name: "Proposal records",
+    exact: true,
+  });
+  await expect(proposalRecorded).toBeVisible();
+  const [proseBounds, recordsBounds] = await Promise.all([
+    proposalProse.boundingBox(),
+    proposalRecorded.boundingBox(),
+  ]);
+  expect(proseBounds.y + proseBounds.height).toBeLessThanOrEqual(
+    recordsBounds.y + 1,
+  );
   await expect(
     proposalRecorded.getByRole("region", {
       name: "Proposal validation",
@@ -677,7 +667,7 @@ const expectReviewerDistinction = async (decision) => {
   await expect(proposalDetails).toContainText(
     "/choice_info/multi_agent/proposal",
   );
-  await expectStaticEvidence(proposalRecorded);
+  await expectStaticEvidence(proposalPhase);
   await expectNoLineNumbers(proposalDetails);
   const reviewToggle = summary(workflow, "Review");
   await reviewToggle.focus();
@@ -714,7 +704,10 @@ const expectReviewerDistinction = async (decision) => {
   await expect(
     reviewPhase.getByText(adviceReason, { exact: true }),
   ).toBeVisible();
-  const reviewRecorded = await openRecordedEvidence(reviewPhase);
+  const reviewRecorded = reviewPhase.getByRole("region", {
+    name: "Review records",
+    exact: true,
+  });
   const assessmentValidation = reviewRecorded.getByRole("region", {
     name: "Reviewer assessment validation",
     exact: true,
@@ -740,7 +733,7 @@ const expectReviewerDistinction = async (decision) => {
       exact: false,
     }),
   ).toBeVisible();
-  await expectStaticEvidence(reviewRecorded);
+  await expectStaticEvidence(reviewPhase);
   await summary(workflow, "Final selection").click();
   const finalPhase = summary(workflow, "Final selection").locator("..");
   await expect(detailValue(finalPhase, "Final action")).toHaveText(
@@ -755,7 +748,10 @@ const expectReviewerDistinction = async (decision) => {
   await expect(
     finalPhase.getByText(finalResponse, { exact: true }),
   ).toBeVisible();
-  const finalRecorded = await openRecordedEvidence(finalPhase);
+  const finalRecorded = finalPhase.getByRole("region", {
+    name: "Final selection records",
+    exact: true,
+  });
   const disposition = finalRecorded.getByRole("region", {
     name: "Final disposition",
     exact: true,
@@ -764,31 +760,28 @@ const expectReviewerDistinction = async (decision) => {
   await expect(disposition).toContainText(
     "/choice_info/multi_agent/disposition",
   );
-  await expectStaticEvidence(finalRecorded);
+  await expectStaticEvidence(finalPhase);
   const supporting = decision.getByRole("region", {
     name: "Supporting evidence",
     exact: true,
   });
-  const additionalMetadata = summary(supporting, "Additional metadata");
-  await expect(additionalMetadata).toContainText("calls");
-  await expect(additionalMetadata).toContainText("unclassified_note");
-  await additionalMetadata.click();
-  const remainingMetadata = additionalMetadata.locator("..");
-  await expectStaticEvidence(remainingMetadata);
-  await expect(remainingMetadata).toContainText("calls");
-  await expect(remainingMetadata).toContainText("unclassified_note");
-  for (const key of [
-    "proposal_tool",
-    "review_assessment_validation",
-    "weighting",
-    "disposition",
-  ])
-    await expect(remainingMetadata).not.toContainText(key);
+  const choiceInfo = summary(supporting, "Choice info");
+  const choiceInfoDetails = choiceInfo.locator("..");
+  const displayedCode = choiceInfoDetails.locator("pre code");
+  await expect(displayedCode).toHaveCount(0);
+  await choiceInfo.click();
+  await expect(displayedCode).toBeVisible();
+  const displayed = (await displayedCode.textContent()).trim();
+  const expected = JSON.parse(
+    population.traceDetails["tr-example-history-2-1"].spans[0].attributes.find(
+      (attribute) => attribute.key === "mlflow.spanOutputs",
+    ).value.string_value,
+  ).source.choice_info;
   expect(
-    (await decision.innerText()).match(
-      /Unknown multi-agent metadata remains available once\./g,
-    ),
-  ).toHaveLength(1);
+    JSON.parse(displayed.startsWith("{") ? displayed : `{${displayed}}`),
+  ).toEqual(expected);
+  await expect(choiceInfoDetails).not.toContainText("recorded_debug_note");
+  await expectStaticEvidence(choiceInfoDetails);
 };
 
 test("reviewer advice and computed suggestion remain distinct from the executed action", async ({
@@ -807,7 +800,7 @@ test("reviewer advice and computed suggestion remain distinct from the executed 
     .getByRole("button", { name: "Decision 1", exact: true })
     .click();
   await expect(navigation(page, session).getByRole("button")).toHaveCount(3);
-  await expectReviewerDistinction(decision);
+  await expectReviewerDistinction(decision, population);
   await expectSelection(page, page, session, 1);
   await expectNoLineNumbers(page);
 });
@@ -829,11 +822,17 @@ test("graph tools expose paired arguments and results without inventing missing 
   await expect(
     assessmentGroup
       .getByRole("region", { name: "Classify observed urgency", exact: true })
+      .filter({
+        hasNot: page.getByRole("region", { name: "Outputs", exact: true }),
+      })
       .getByText("Immediate treatment is indicated by the observed bleeding.", {
         exact: true,
       }),
   ).toBeVisible();
-  const assessmentRecorded = await openRecordedEvidence(assessmentGroup);
+  const assessmentRecorded = assessmentGroup.getByRole("region", {
+    name: "Assessment records",
+    exact: true,
+  });
   const toolDetails = assessmentRecorded.getByRole("region", {
     name: "Inspect patient",
     exact: true,
@@ -859,7 +858,7 @@ test("graph tools expose paired arguments and results without inventing missing 
         exact: true,
       }),
   ).toBeVisible();
-  await expectStaticEvidence(assessmentRecorded);
+  await expectStaticEvidence(assessmentGroup);
   const supporting = decision.getByRole("region", {
     name: "Supporting evidence",
     exact: true,
@@ -888,6 +887,63 @@ test("legacy decision evidence keeps incomplete and unassociated logs explicit",
   await page.goto(sessionRoute([session]));
   await closeAssistant(page);
   const decision = await expectCompactDecision(page, page, session, []);
+  const activity = decision
+    .getByRole("region", { name: "Decision process", exact: true })
+    .getByRole("region", { name: "Agent and tool activity", exact: true });
+  const response = activity.getByRole("region", {
+    name: "Agent response",
+    exact: true,
+  });
+  await expect(response.getByText("Agent", { exact: true })).toBeVisible();
+  await expect(
+    response.getByText(
+      "Patient A has severe bleeding; inspect the recorded treatment options.",
+      { exact: true },
+    ),
+  ).toBeVisible();
+  await expect(response.locator("pre")).toHaveCount(0);
+  const inspect = summary(activity, "inspect_patient");
+  const treatments = summary(activity, "list_treatments");
+  await expect(inspect).toContainText("patient_id=patient-a");
+  await expect(treatments).toContainText("patient_id=patient-b");
+  await expect(
+    inspect.getByText("Review response", { exact: true }),
+  ).toHaveCount(0);
+  await expect(
+    treatments.getByText("Review response", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    activity.getByRole("region", { name: "Log excerpt", exact: true }),
+  ).toHaveCount(0);
+  await inspect.click();
+  const inspectDetails = inspect.locator("..");
+  const capturedToolCall = inspectDetails.getByRole("region", {
+    name: "Log excerpt",
+    exact: true,
+  });
+  await expect(capturedToolCall.locator("pre code")).toHaveText(
+    '[bold]*AGENT TOOL CALL*[/bold]: inspect_patient({"patient_id":"patient-a"})',
+  );
+  await expect(inspectDetails).toContainText(
+    "/choice_info/unassociated_log_excerpts/3",
+  );
+  await expectStaticEvidence(inspectDetails);
+  await expect(
+    treatments
+      .locator("..")
+      .getByRole("region", { name: "Log excerpt", exact: true }),
+  ).toHaveCount(0);
+  const thinking = summary(activity, "Thinking");
+  const thinkingBody = thinking.locator("..").locator(":scope > :not(summary)");
+  await expect(thinkingBody).not.toBeVisible();
+  await thinking.click();
+  await expect(thinkingBody).toContainText(
+    "Check the observed bleeding against the available treatment options.",
+  );
+  await expectStaticEvidence(thinking.locator(".."));
+
+  const attributionGap =
+    "Some log sections have no verified component owner and are shown without call attribution.";
   const supporting = decision.getByRole("region", {
     name: "Supporting evidence",
     exact: true,
@@ -913,40 +969,24 @@ test("legacy decision evidence keeps incomplete and unassociated logs explicit",
       { exact: true },
     ),
   ).toBeVisible();
+  await expect(gapDetails).not.toContainText(attributionGap);
   const sourceLogs = summary(supporting, "Source logs");
-  await expect(sourceLogs).toContainText("3");
-  await expect(sourceLogs).toContainText(/AGENT|Agent response/);
+  await expect(sourceLogs).toContainText(/\b1 (?:unattributed )?excerpt\b/);
+  await expect(sourceLogs).toContainText("System prompt");
   await sourceLogs.click();
   const logSections = sourceLogs.locator("..");
   await expect(summary(decision, "Recorded decision")).toHaveCount(0);
   await expect(summary(decision, "Other recorded log sections")).toHaveCount(0);
-  const recordedLogs = await openRecordedEvidence(logSections);
-  const response = recordedLogs.getByRole("region", {
-    name: "Agent response: Patient A has severe bleeding; inspect the recorded treatment options.",
+  const recordedLogs = logSections.getByRole("region", {
+    name: "Log excerpts",
     exact: true,
   });
-  await expect(response).toBeVisible();
-  await expect(response).not.toContainText("· recorded");
-  const inspect = recordedLogs.getByRole("region", {
-    name: /^Tool call: inspect_patient(?: ·|$)/,
-  });
-  const treatments = recordedLogs.getByRole("region", {
-    name: /^Tool call: list_treatments(?: ·|$)/,
-  });
-  await expect(inspect).toBeVisible();
-  await expect(inspect).toContainText("patient_id=patient-a");
-  await expect(treatments).toBeVisible();
-  await expect(treatments).toContainText("patient_id=patient-b");
-  await expect(inspect).not.toContainText("· recorded");
-  await expect(treatments).not.toContainText("· recorded");
-  const capturedToolCall = inspect.getByRole("region", {
-    name: "Outputs",
-    exact: true,
-  });
-  await expect(capturedToolCall.locator("pre code")).toHaveText(
-    '[bold]*AGENT TOOL CALL*[/bold]: inspect_patient({"patient_id":"patient-a"})',
+  await expect(recordedLogs.locator("pre code")).toHaveText(
+    "[bold]*AGENT SYSTEM PROMPT*[/bold]:\nUse the recorded observations to select an available treatment.",
   );
-  await expectStaticEvidence(recordedLogs);
+  await expect(recordedLogs).not.toContainText("inspect_patient");
+  await expect(recordedLogs).not.toContainText("list_treatments");
+  await expectStaticEvidence(logSections);
   await expect(summary(decision, "Legacy decision record")).toHaveCount(0);
   await expect(
     navigation(page, session).getByRole("button", { name: /^Open .* phase$/ }),
@@ -957,6 +997,49 @@ test("legacy decision evidence keeps incomplete and unassociated logs explicit",
   const output = decision.getByRole("region", { name: "Output", exact: true });
   await output.getByRole("button", { name: "See more", exact: true }).click();
   await expect(output).toContainText("Treat Patient A for severe bleeding.");
+
+  await navigation(page, session)
+    .getByRole("button", { name: "Decision 2", exact: true })
+    .click();
+  const secondDecision = card(page, 2);
+  const secondSupporting = secondDecision.getByRole("region", {
+    name: "Supporting evidence",
+    exact: true,
+  });
+  await expect(summary(secondSupporting, "Source logs")).toHaveCount(0);
+  await expect(
+    secondDecision
+      .getByRole("region", { name: "Agent and tool activity", exact: true })
+      .getByText("Stage attribution unavailable", { exact: true }),
+  ).toBeVisible();
+  await summary(secondSupporting, "Capture gaps").click();
+  await expect(
+    secondSupporting.getByRole("region", { name: "Capture gaps", exact: true }),
+  ).not.toContainText(attributionGap);
+  await expectSelection(page, page, session, 2);
+
+  await navigation(page, session)
+    .getByRole("button", { name: "Decision 3", exact: true })
+    .click();
+  const thirdDecision = card(page, 3);
+  const thirdSupporting = thirdDecision.getByRole("region", {
+    name: "Supporting evidence",
+    exact: true,
+  });
+  await expect(summary(thirdSupporting, "Source logs")).toHaveCount(0);
+  await expect(
+    thirdDecision.getByRole("region", {
+      name: "Agent and tool activity",
+      exact: true,
+    }),
+  ).toHaveCount(0);
+  await summary(thirdSupporting, "Capture gaps").click();
+  await expect(
+    thirdSupporting
+      .getByRole("region", { name: "Capture gaps", exact: true })
+      .getByText(attributionGap, { exact: true }),
+  ).toBeVisible();
+  await expectSelection(page, page, session, 3);
   await expectNoLineNumbers(page);
 });
 
@@ -984,7 +1067,7 @@ test("comparison panes share process disclosures and retain independently select
       .click();
   }
   await openPipelineStage(card(panes[0]));
-  await expectReviewerDistinction(card(panes[1]));
+  await expectReviewerDistinction(card(panes[1]), population);
   for (let index = 0; index < sessions.length; index++)
     await expectSelection(page, panes[index], sessions[index], 2);
   await expect(

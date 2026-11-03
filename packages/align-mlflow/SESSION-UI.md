@@ -107,7 +107,6 @@ setup and ingestion do not create them, and saving one needs no server restart.
 
 ## Inspect a decision
 
-Session pages show the recorded environment changes and selected action first.
 Each decision has one outer frame without nested field outlines. Compact source
 captions identify the JSON sections shown beneath the readable summaries:
 `input_output.json → input` and `input_output.json → output`. Spacing and a
@@ -120,9 +119,9 @@ instead of repeating proximity changes and unchanged descriptions.
 has a single-line preview of its action, recommendation, or recorded rationale.
 The decision sidebar contains only decisions. Expand a stage to read its recorded
 proposal, advice, or response alongside the relevant settings and measurements.
-**Recorded evidence** opens the original activity payloads and source links in
-one further step. The Decision process and Supporting evidence headings use the
-same native typography.
+The original activity payloads and source links appear below the readable
+content when the stage opens. The Decision process and Supporting evidence
+headings use the same native typography.
 
 Reviewer proposals appear with **Proposal**, advice and computed suggestions with
 **Review**, and the final action and whether guidance was followed with **Final
@@ -130,18 +129,24 @@ selection**. **Review settings** holds influence, swap threshold, and the review
 contract; **Review measurements** holds confidence, estimated improvement, and
 strength. Explicitly owned metadata appears with its relevant stage.
 
-**Supporting evidence** is separate from the workflow. **Source logs** contains
-excerpts whose stage or individual call association is not established.
-**Capture gaps** explains limitations of the available evidence. **Additional
-metadata** retains fields not already exposed in the appropriate stage. These
-rows preview their contents before expansion. Opening a source group shows its
-excerpt labels. **Recorded evidence** reveals the complete available excerpts and
-their source links. The output source retains the saved environment action.
+**Activity log** shows captured agent responses and tool calls in source order
+below the workflow. Agent messages use a role label and readable Markdown.
+Tool rows show the tool name and key arguments. Open a tool row to inspect the
+original log excerpt. Explicitly recorded thinking has its own expandable row.
+
+**Supporting evidence** contains setup logs and other source records.
+Source logs and the activity log indicate when excerpts lack stage attribution.
+**Capture gaps** explains limitations of the available evidence. The collapsed
+rows preview their contents. Opening **Source logs** shows the excerpt labels,
+complete available excerpts, and source links. Opening **Other source evidence**
+shows its original payloads and links. **Choice info** shows the complete
+original `choice_info` value from the decision record. The output source
+retains the saved environment action.
 Original records and source references remain available for inspection. Cache
 hits remain distinct from fresh model invocations.
 
-The source sections show two-line code previews with a single **See more**
-control for the complete JSON. Expanded code has **See less** at the top and
+The input and output source previews show two lines of code with a single
+**See more** control for the complete JSON. Expanded code has **See less** at the top and
 bottom, so collapsing a long payload does not require scrolling to its end.
 Expanded Situation and action summaries also have a collapse control at the top.
 Readable summaries and source previews use matching chevron expansion buttons.
