@@ -5331,7 +5331,7 @@
          paddingTop: theme.spacing.sm,
 --- /dev/null
 +++ b/mlflow/server/js/src/experiment-tracking/pages/experiment-chat-sessions/single-chat-view/OpenWorldDecisionProcess.tsx
-@@ -0,0 +1,967 @@
+@@ -0,0 +1,956 @@
 +import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 +import {
 +  Button,
@@ -5841,43 +5841,33 @@
 +  entries,
 +  root,
 +  runId,
-+  unattributed,
 +}: {
 +  entries: { activity: DecisionProcessActivity; entry: DecisionTranscriptEntry }[];
 +  root: ModelTraceSpanNode;
 +  runId?: string;
-+  unattributed: boolean;
 +}) => {
 +  const { theme } = useDesignSystemTheme();
 +  if (!entries.length) return null;
 +  return (
-+    <section aria-label="Agent and tool activity">
-+      <div css={{ display: 'flex', flexWrap: 'wrap', gap: theme.spacing.sm, marginBottom: theme.spacing.xs }}>
-+        <Typography.Title level={4} withoutMargins color="secondary">
-+          Activity log
-+        </Typography.Title>
-+        {unattributed && (
-+          <Typography.Text color="secondary" size="sm">
-+            Stage attribution unavailable
-+          </Typography.Text>
-+        )}
-+      </div>
-+      <div
-+        css={{
-+          borderLeft: '3px solid ' + theme.colors.actionPrimaryBackgroundDefault,
-+          padding: theme.spacing.sm,
-+          backgroundColor: theme.colors.backgroundPrimary,
-+        }}
-+      >
-+        {entries.map(({ activity, entry }, index) => {
-+          const payload = activity.outputs ?? activity.inputs;
-+          if (!payload) return null;
-+          const key = `${activity.id}:${index}`;
-+          const raw = <RecordedPayload payload={payload} title="Log excerpt" root={root} runId={runId} />;
-+          if (entry.kind === 'tool') {
-+            return (
++    <ol
++      aria-label="Recorded activity"
++      css={{
++        '& > li::marker': { content: '""' },
++        margin: 0,
++        borderLeft: '3px solid ' + theme.colors.actionPrimaryBackgroundDefault,
++        padding: theme.spacing.sm,
++        backgroundColor: theme.colors.backgroundPrimary,
++      }}
++    >
++      {entries.map(({ activity, entry }, index) => {
++        const payload = activity.outputs ?? activity.inputs;
++        if (!payload) return null;
++        const key = `${activity.id}:${index}`;
++        const raw = <RecordedPayload payload={payload} title="Log excerpt" root={root} runId={runId} />;
++        if (entry.kind === 'tool') {
++          return (
++            <li key={key}>
 +              <ProcessDisclosureRow
-+                key={key}
 +                label={entry.name}
 +                preview={entry.argumentPreview ?? (payload.truncated ? 'Argument preview incomplete' : undefined)}
 +                count={entry.hasReviewResponse ? 'Review response' : undefined}
@@ -5886,11 +5876,13 @@
 +              >
 +                {raw}
 +              </ProcessDisclosureRow>
-+            );
-+          }
-+          if (entry.kind === 'thinking') {
-+            return (
-+              <ProcessDisclosureRow key={key} label="Thinking" preview={entry.text} icon={<RobotIcon />}>
++            </li>
++          );
++        }
++        if (entry.kind === 'thinking') {
++          return (
++            <li key={key}>
++              <ProcessDisclosureRow label="Thinking" preview={entry.text} icon={<RobotIcon />}>
 +                {payload.truncated ? (
 +                  raw
 +                ) : (
@@ -5900,12 +5892,14 @@
 +                  </>
 +                )}
 +              </ProcessDisclosureRow>
-+            );
-+          }
-+          const href = sourceArtifactUrl(payload.source, runId);
-+          const lines = payload.source.lines;
-+          return (
-+            <section key={key} aria-label="Agent response" css={{ padding: theme.spacing.sm, minWidth: 0 }}>
++            </li>
++          );
++        }
++        const href = sourceArtifactUrl(payload.source, runId);
++        const lines = payload.source.lines;
++        return (
++          <li key={key}>
++            <section aria-label="Agent response" css={{ padding: theme.spacing.sm, minWidth: 0 }}>
 +              <div
 +                css={{ display: 'flex', alignItems: 'center', gap: theme.spacing.sm, marginBottom: theme.spacing.xs }}
 +              >
@@ -5930,10 +5924,10 @@
 +              <TranscriptProse text={entry.text} />
 +              {payload.truncated && <ProcessDisclosureRow label="Full log excerpt">{raw}</ProcessDisclosureRow>}
 +            </section>
-+          );
-+        })}
-+      </div>
-+    </section>
++          </li>
++        );
++      })}
++    </ol>
 +  );
 +};
 +
@@ -6075,17 +6069,15 @@
 +  activities,
 +  root,
 +  runId,
-+  unattributed = false,
 +}: {
 +  label: string;
 +  activities: DecisionProcessActivity[];
 +  root: ModelTraceSpanNode;
 +  runId?: string;
-+  unattributed?: boolean;
 +}) => {
 +  if (activities.length === 0) return null;
 +  const isSourceLogs = label === 'Source logs';
-+  const noun = isSourceLogs ? (unattributed ? 'unattributed excerpt' : 'excerpt') : 'record';
++  const noun = isSourceLogs ? 'excerpt' : 'record';
 +  const count = activities.length;
 +  return (
 +    <ProcessDisclosureRow
@@ -6157,10 +6149,8 @@
 +  const choiceInfo = outputSource?.['choice_info'];
 +  const choiceInfoKeys = Object.keys(asObject(choiceInfo) ?? {});
 +  const gaps = decisionProcess?.gaps ?? [];
-+  const unattributed =
-+    (presentation.sourceLogActivities.length > 0 || presentation.transcript.length > 0) &&
-+    gaps.includes(unattributedLogsGap);
-+  const otherGaps = unattributed ? gaps.filter((gap) => gap !== unattributedLogsGap) : gaps;
++  const hasLogExcerpts = presentation.sourceLogActivities.length > 0 || presentation.transcript.length > 0;
++  const otherGaps = hasLogExcerpts ? gaps.filter((gap) => gap !== unattributedLogsGap) : gaps;
 +  const hasSupportingEvidence =
 +    presentation.sourceLogActivities.length > 0 ||
 +    presentation.otherSourceActivities.length > 0 ||
@@ -6202,9 +6192,9 @@
 +        <Typography.Title level={4} withoutMargins color="secondary">
 +          Decision process
 +        </Typography.Title>
-+        <section aria-label="Workflow stages" css={disclosureRowsCss}>
-+          {presentation.workflowPhases.length > 0 ? (
-+            presentation.workflowPhases.map((phase) => (
++        {presentation.workflowPhases.length > 0 ? (
++          <section aria-label="Workflow stages" css={disclosureRowsCss}>
++            {presentation.workflowPhases.map((phase) => (
 +              <ProcessPhase
 +                key={phase.id}
 +                phase={phase}
@@ -6213,12 +6203,12 @@
 +                review={decisionProcess?.review}
 +                hint={getDecisionPhaseHint(phase, decisionProcess?.review, root)}
 +              />
-+            ))
-+          ) : (
-+            <div>Workflow stages were not recorded.</div>
-+          )}
-+        </section>
-+        <DecisionTranscript entries={presentation.transcript} root={root} runId={runId} unattributed={unattributed} />
++            ))}
++          </section>
++        ) : (
++          presentation.transcript.length === 0 && <div>Workflow stages were not recorded.</div>
++        )}
++        <DecisionTranscript entries={presentation.transcript} root={root} runId={runId} />
 +      </section>
 +      <section
 +        aria-label="Chosen action"
@@ -6253,7 +6243,6 @@
 +              activities={presentation.sourceLogActivities}
 +              root={root}
 +              runId={runId}
-+              unattributed={unattributed}
 +            />
 +            <SourceActivities
 +              label="Other source evidence"

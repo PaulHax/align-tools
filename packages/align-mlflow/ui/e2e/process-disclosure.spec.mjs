@@ -233,7 +233,7 @@ const expectCompactDecision = async (page, scope, session, stages) => {
     name: "Workflow stages",
     exact: true,
   });
-  await expect(workflow).toBeVisible();
+  await expect(workflow).toHaveCount(stages.length > 0 ? 1 : 0);
   await expect(workflow.locator("summary")).toHaveCount(stages.length);
   for (const name of stages) {
     const stage = summary(workflow, name);
@@ -257,10 +257,6 @@ const expectCompactDecision = async (page, scope, session, stages) => {
     const lineHeight = Math.max(...fragments.map(({ height }) => height));
     expect(bottom - top).toBeLessThanOrEqual(lineHeight + 2);
   }
-  if (stages.length === 0)
-    await expect(
-      workflow.getByText("Workflow stages were not recorded.", { exact: true }),
-    ).toBeVisible();
   const supporting = decision.getByRole("region", {
     name: "Supporting evidence",
     exact: true,
@@ -887,10 +883,27 @@ test("legacy decision evidence keeps incomplete and unassociated logs explicit",
   await page.goto(sessionRoute([session]));
   await closeAssistant(page);
   const decision = await expectCompactDecision(page, page, session, []);
-  const activity = decision
-    .getByRole("region", { name: "Decision process", exact: true })
-    .getByRole("region", { name: "Agent and tool activity", exact: true });
-  const response = activity.getByRole("region", {
+  const process = decision.getByRole("region", {
+    name: "Decision process",
+    exact: true,
+  });
+  await expect(
+    process.getByRole("heading", { name: "Activity log", exact: true }),
+  ).toHaveCount(0);
+  await expect(
+    process.getByText("Stage attribution unavailable", { exact: true }),
+  ).toHaveCount(0);
+  await expect(
+    process.getByText("Workflow stages were not recorded.", { exact: true }),
+  ).toHaveCount(0);
+  const activity = process.getByRole("list", {
+    name: "Recorded activity",
+    exact: true,
+  });
+  await expect(activity).toHaveJSProperty("tagName", "OL");
+  const entries = activity.getByRole("listitem");
+  await expect(entries).toHaveCount(4);
+  const response = entries.nth(1).getByRole("region", {
     name: "Agent response",
     exact: true,
   });
@@ -902,8 +915,8 @@ test("legacy decision evidence keeps incomplete and unassociated logs explicit",
     ),
   ).toBeVisible();
   await expect(response.locator("pre")).toHaveCount(0);
-  const inspect = summary(activity, "inspect_patient");
-  const treatments = summary(activity, "list_treatments");
+  const inspect = summary(entries.nth(2), "inspect_patient");
+  const treatments = summary(entries.nth(3), "list_treatments");
   await expect(inspect).toContainText("patient_id=patient-a");
   await expect(treatments).toContainText("patient_id=patient-b");
   await expect(
@@ -933,7 +946,7 @@ test("legacy decision evidence keeps incomplete and unassociated logs explicit",
       .locator("..")
       .getByRole("region", { name: "Log excerpt", exact: true }),
   ).toHaveCount(0);
-  const thinking = summary(activity, "Thinking");
+  const thinking = summary(entries.nth(0), "Thinking");
   const thinkingBody = thinking.locator("..").locator(":scope > :not(summary)");
   await expect(thinkingBody).not.toBeVisible();
   await thinking.click();
@@ -971,7 +984,7 @@ test("legacy decision evidence keeps incomplete and unassociated logs explicit",
   ).toBeVisible();
   await expect(gapDetails).not.toContainText(attributionGap);
   const sourceLogs = summary(supporting, "Source logs");
-  await expect(sourceLogs).toContainText(/\b1 (?:unattributed )?excerpt\b/);
+  await expect(sourceLogs).toContainText(/\b1 excerpt\b/);
   await expect(sourceLogs).toContainText("System prompt");
   await sourceLogs.click();
   const logSections = sourceLogs.locator("..");
@@ -1007,11 +1020,14 @@ test("legacy decision evidence keeps incomplete and unassociated logs explicit",
     exact: true,
   });
   await expect(summary(secondSupporting, "Source logs")).toHaveCount(0);
+  const secondActivity = secondDecision.getByRole("list", {
+    name: "Recorded activity",
+    exact: true,
+  });
+  await expect(secondActivity.getByRole("listitem")).toHaveCount(4);
   await expect(
-    secondDecision
-      .getByRole("region", { name: "Agent and tool activity", exact: true })
-      .getByText("Stage attribution unavailable", { exact: true }),
-  ).toBeVisible();
+    secondDecision.getByText("Stage attribution unavailable", { exact: true }),
+  ).toHaveCount(0);
   await summary(secondSupporting, "Capture gaps").click();
   await expect(
     secondSupporting.getByRole("region", { name: "Capture gaps", exact: true }),
@@ -1028,8 +1044,8 @@ test("legacy decision evidence keeps incomplete and unassociated logs explicit",
   });
   await expect(summary(thirdSupporting, "Source logs")).toHaveCount(0);
   await expect(
-    thirdDecision.getByRole("region", {
-      name: "Agent and tool activity",
+    thirdDecision.getByRole("list", {
+      name: "Recorded activity",
       exact: true,
     }),
   ).toHaveCount(0);

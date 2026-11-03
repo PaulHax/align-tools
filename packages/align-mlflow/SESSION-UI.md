@@ -129,13 +129,13 @@ selection**. **Review settings** holds influence, swap threshold, and the review
 contract; **Review measurements** holds confidence, estimated improvement, and
 strength. Explicitly owned metadata appears with its relevant stage.
 
-**Activity log** shows captured agent responses and tool calls in source order
-below the workflow. Agent messages use a role label and readable Markdown.
-Tool rows show the tool name and key arguments. Open a tool row to inspect the
-original log excerpt. Explicitly recorded thinking has its own expandable row.
+Captured agent responses, recorded thinking, and tool calls follow the workflow
+stages in source order under **Decision process**. Agent messages use a role
+label and readable Markdown. Tool rows show the tool name and key arguments.
+Open a tool row to inspect the original log excerpt. Recorded thinking has its
+own expandable row.
 
 **Supporting evidence** contains setup logs and other source records.
-Source logs and the activity log indicate when excerpts lack stage attribution.
 **Capture gaps** explains limitations of the available evidence. The collapsed
 rows preview their contents. Opening **Source logs** shows the excerpt labels,
 complete available excerpts, and source links. Opening **Other source evidence**
