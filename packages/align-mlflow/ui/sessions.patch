@@ -4418,15 +4418,11 @@
 +};
 --- /dev/null
 +++ b/mlflow/server/js/src/experiment-tracking/pages/experiment-chat-sessions/single-chat-view/ExperimentChatSessionViewer.tsx
-@@ -0,0 +1,158 @@
-+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-+import { Button, Typography, useDesignSystemTheme } from '@databricks/design-system';
+@@ -0,0 +1,83 @@
++import { useCallback, useEffect, useRef, useState } from 'react';
 +import { getModelTraceId, type ModelTrace, type ModelTraceInfoV3 } from '@databricks/web-shared/model-trace-explorer';
 +import { ExperimentSingleChatConversation } from './ExperimentSingleChatConversation';
 +import { ExperimentSingleChatSessionSidebar } from './ExperimentSingleChatSessionSidebar';
-+import { getOpenWorldDecision } from './OpenWorldDecisionProcess';
-+import { getDecisionPhaseHint, getDecisionProcessPresentation } from './decisionProcessPresentation';
-+import type { DecisionPhaseSelection } from './decisionProcessTypes';
 +
 +export const orderSessionTraces = (traces: ModelTraceInfoV3[]) => {
 +  const hasSteps = traces.every((trace) => /^[1-9]\d*$/.test(trace.tags?.['step'] ?? ''));
@@ -4453,16 +4449,8 @@
 +  onOpenTrace: (trace: ModelTrace) => void;
 +  getAssessmentTitle: (assessmentName: string) => string;
 +}) => {
-+  const { theme } = useDesignSystemTheme();
 +  const chatRefs = useRef<{ [traceId: string]: HTMLDivElement }>({});
 +  const [hoveredTurnIndex, setHoveredTurnIndex] = useState<number | null>(null);
-+  const [phaseSelection, setPhaseSelection] = useState<DecisionPhaseSelection>();
-+  const selectedTrace = selectedTurnIndex !== null ? traces[selectedTurnIndex] : undefined;
-+  const selectedDecision = useMemo(() => selectedTrace && getOpenWorldDecision(selectedTrace), [selectedTrace]);
-+  const selectedPresentation = useMemo(
-+    () => selectedDecision && getDecisionProcessPresentation(selectedDecision),
-+    [selectedDecision],
-+  );
 +  const activeTurnIndex = hoveredTurnIndex ?? selectedTurnIndex;
 +  const selectedTraceId =
 +    selectedTurnIndex !== null && traces[selectedTurnIndex] ? getModelTraceId(traces[selectedTurnIndex]) : undefined;
@@ -4480,42 +4468,10 @@
 +    locallySelectedTraceId.current = undefined;
 +  }, [selectedTraceId, scrollToTrace]);
 +  const selectTurn = (index: number) => {
-+    setPhaseSelection(undefined);
 +    locallySelectedTraceId.current = getModelTraceId(traces[index]);
 +    onSelectTurn(index);
 +    setHoveredTurnIndex(index);
 +  };
-+  const processLink = (trace: ModelTrace, id: string, label: string, accessibleLabel: string, hint?: string) => (
-+    <Button
-+      key={id}
-+      componentId="mlflow.session.open-process-phase"
-+      type="tertiary"
-+      size="small"
-+      aria-label={accessibleLabel}
-+      title={hint}
-+      aria-pressed={phaseSelection?.traceId === getModelTraceId(trace) && phaseSelection.phaseId === id}
-+      css={{
-+        display: 'flex',
-+        width: '100%',
-+        height: 'auto',
-+        justifyContent: 'flex-start',
-+        whiteSpace: 'normal',
-+        textAlign: 'left',
-+        overflowWrap: 'anywhere',
-+        marginTop: theme.spacing.xs,
-+        '& > span': { width: '100%' },
-+      }}
-+      onClick={() =>
-+        setPhaseSelection((current) => ({
-+          traceId: getModelTraceId(trace),
-+          phaseId: id,
-+          revision: (current?.revision ?? 0) + 1,
-+        }))
-+      }
-+    >
-+      <span css={{ display: 'block', width: '100%', textAlign: 'left' }}>{label}</span>
-+    </Button>
-+  );
 +
 +  return (
 +    <div css={{ display: 'flex', flex: 1, minHeight: 0, minWidth: 0 }} onMouseLeave={() => setHoveredTurnIndex(null)}>
@@ -4529,36 +4485,6 @@
 +            selectTurn(index);
 +            scrollToTrace(getModelTraceId(traces[index]));
 +          }}
-+          renderTurnChildren={(trace) =>
-+            selectedDecision && selectedPresentation ? (
-+              <div css={{ paddingLeft: theme.spacing.sm, paddingBottom: theme.spacing.sm }}>
-+                <Typography.Text color="secondary">Decision process</Typography.Text>
-+                {selectedPresentation.workflowPhases.map((phase) =>
-+                  processLink(
-+                    trace,
-+                    phase.id,
-+                    phase.label,
-+                    `Open ${phase.label} phase`,
-+                    getDecisionPhaseHint(phase, selectedDecision.process?.review, selectedDecision.root),
-+                  ),
-+                )}
-+                {selectedPresentation.workflowPhases.length === 0 && (
-+                  <div>
-+                    <Typography.Text color="secondary" size="sm">
-+                      Workflow stages were not recorded.
-+                    </Typography.Text>
-+                  </div>
-+                )}
-+                {selectedPresentation.sourceLogActivities.length > 0 &&
-+                  selectedPresentation.sourcePhaseIds.length > 0 && (
-+                    <div css={{ paddingTop: theme.spacing.sm }}>
-+                      <Typography.Text color="secondary">Source evidence</Typography.Text>
-+                      {processLink(trace, selectedPresentation.sourcePhaseIds[0], 'Source logs', 'Open Source logs')}
-+                    </div>
-+                  )}
-+              </div>
-+            ) : null
-+          }
 +        />
 +      </nav>
 +      <ExperimentSingleChatConversation
@@ -4572,7 +4498,6 @@
 +        }}
 +        setSelectedTrace={onOpenTrace}
 +        getAssessmentTitle={getAssessmentTitle}
-+        phaseSelection={phaseSelection}
 +      />
 +    </div>
 +  );
@@ -4587,7 +4512,7 @@
  } from '@databricks/web-shared/model-trace-explorer';
  import {
    Button,
-@@ -14,26 +15,40 @@
+@@ -14,26 +15,37 @@
    useDesignSystemTheme,
  } from '@databricks/design-system';
  import { FormattedMessage } from '@databricks/i18n';
@@ -4596,14 +4521,12 @@
  import { ExperimentSingleChatIcon } from './ExperimentSingleChatIcon';
 -import { noop } from 'lodash';
 +import { getOpenWorldDecision, OpenWorldDecisionContent } from './OpenWorldDecisionProcess';
-+import type { DecisionPhaseSelection } from './decisionProcessTypes';
 +
 +type ConversationProps = {
 +  traces: ModelTrace[];
 +  setSelectedTrace?: (trace: ModelTrace) => void;
 +  chatRefs?: MutableRefObject<{ [traceId: string]: HTMLDivElement }>;
 +  getAssessmentTitle: (assessmentName: string) => string;
-+  phaseSelection?: DecisionPhaseSelection;
 +} & (
 +  | {
 +      selection: {
@@ -4633,14 +4556,13 @@
 -  chatRefs?: MutableRefObject<{ [traceId: string]: HTMLDivElement }>;
 -  getAssessmentTitle: (assessmentName: string) => string;
 -}) => {
-+  phaseSelection,
 +}: ConversationProps) => {
    const { theme } = useDesignSystemTheme();
 +  const openWorldDecisions = useMemo(() => traces.map(getOpenWorldDecision), [traces]);
  
    if (!traces) {
      return null;
-@@ -41,6 +56,7 @@
+@@ -41,6 +53,7 @@
  
    return (
      <div
@@ -4648,7 +4570,7 @@
        css={{
          display: 'flex',
          flexDirection: 'column',
-@@ -54,11 +70,23 @@
+@@ -54,11 +67,23 @@
        }}
      >
        {traces.map((trace, index) => {
@@ -4673,7 +4595,7 @@
              ref={(el) => {
                if (el && chatRefs) {
                  chatRefs.current[traceId] = el;
-@@ -72,20 +100,38 @@
+@@ -72,20 +97,38 @@
                gap: theme.spacing.sm,
                backgroundColor: isActive ? theme.colors.actionDefaultBackgroundHover : undefined,
                border: `1px solid ${theme.colors.border}`,
@@ -4721,7 +4643,7 @@
                <div css={{ flex: 1 }} />
                <Button
                  componentId="mlflow.experiment.chat-session.view-trace"
-@@ -106,8 +152,15 @@
+@@ -106,8 +149,14 @@
                  />
                </Button>
              </div>
@@ -4731,7 +4653,6 @@
 +              <OpenWorldDecisionContent
 +                decision={openWorldDecision}
 +                runId={(trace.info as ModelTraceInfoV3).trace_metadata?.['mlflow.sourceRun']}
-+                phaseSelection={phaseSelection?.traceId === traceId ? phaseSelection : undefined}
 +              />
 +            ) : (
 +              <SingleChatTurnMessages key={traceId} trace={trace} />
@@ -5298,7 +5219,7 @@
  };
 --- a/mlflow/server/js/src/experiment-tracking/pages/experiment-chat-sessions/single-chat-view/ExperimentSingleChatSessionSidebar.tsx
 +++ b/mlflow/server/js/src/experiment-tracking/pages/experiment-chat-sessions/single-chat-view/ExperimentSingleChatSessionSidebar.tsx
-@@ -1,34 +1,25 @@
+@@ -1,34 +1,22 @@
 -import { ChainIcon, TitleSkeleton, Typography, useDesignSystemTheme } from '@databricks/design-system';
 -import { getModelTraceId, type ModelTrace, type ModelTraceInfoV3 } from '@databricks/web-shared/model-trace-explorer';
 -import type { MutableRefObject } from 'react';
@@ -5307,7 +5228,6 @@
 +import { getModelTraceId, type ModelTrace } from '@databricks/web-shared/model-trace-explorer';
  import { ExperimentSingleChatIcon } from './ExperimentSingleChatIcon';
  import { FormattedMessage } from 'react-intl';
-+import type { ReactNode } from 'react';
  
  export const ExperimentSingleChatSessionSidebar = ({
    traces,
@@ -5318,7 +5238,6 @@
 -  chatRefs,
 +  onActivateTurn,
 +  onSelectTurn,
-+  renderTurnChildren,
  }: {
    traces: ModelTrace[];
 +  activeTurnIndex: number | null;
@@ -5328,7 +5247,6 @@
 -  chatRefs: MutableRefObject<{ [traceId: string]: HTMLDivElement }>;
 +  onActivateTurn: (turnIndex: number) => void;
 +  onSelectTurn: (turnIndex: number) => void;
-+  renderTurnChildren?: (trace: ModelTrace, turnIndex: number) => ReactNode;
  }) => {
    const { theme } = useDesignSystemTheme();
 -
@@ -5344,7 +5262,7 @@
  
    if (!traces) {
      return null;
-@@ -38,7 +29,8 @@
+@@ -38,7 +26,8 @@
      <div
        css={{
          minHeight: 0,
@@ -5354,49 +5272,35 @@
          borderRight: `1px solid ${theme.colors.border}`,
          overflow: 'auto',
          paddingTop: theme.spacing.sm,
-@@ -46,29 +38,42 @@
-       }}
-     >
+@@ -48,26 +37,37 @@
        {traces.map((trace, index) => (
--        <div
--          key={getModelTraceId(trace)}
--          css={{
--            display: 'flex',
--            alignItems: 'center',
--            gap: theme.spacing.sm,
+         <div
+           key={getModelTraceId(trace)}
++          role="button"
++          tabIndex={0}
++          aria-pressed={selectedTurnIndex === index}
+           css={{
+             display: 'flex',
+             alignItems: 'center',
+             gap: theme.spacing.sm,
 -            backgroundColor: selectedTurnIndex === index ? theme.colors.actionDefaultBackgroundHover : undefined,
--            padding: theme.spacing.xs,
--            borderRadius: theme.borders.borderRadiusSm,
--            cursor: 'pointer',
--          }}
++            backgroundColor: activeTurnIndex === index ? theme.colors.actionDefaultBackgroundHover : undefined,
+             padding: theme.spacing.xs,
+             borderRadius: theme.borders.borderRadiusSm,
+             cursor: 'pointer',
+           }}
 -          onMouseEnter={() => setSelectedTurnIndex(index)}
 -          onClick={() => scrollToTrace(trace)}
--        >
--          <ExperimentSingleChatIcon displayLink={index !== traces.length - 1} />
-+        <div key={getModelTraceId(trace)}>
-+          <div
-+            role="button"
-+            tabIndex={0}
-+            aria-pressed={selectedTurnIndex === index}
-+            css={{
-+              display: 'flex',
-+              alignItems: 'center',
-+              gap: theme.spacing.sm,
-+              backgroundColor: activeTurnIndex === index ? theme.colors.actionDefaultBackgroundHover : undefined,
-+              padding: theme.spacing.xs,
-+              borderRadius: theme.borders.borderRadiusSm,
-+              cursor: 'pointer',
-+            }}
-+            onMouseEnter={() => onActivateTurn(index)}
-+            onClick={() => onSelectTurn(index)}
-+            onKeyDown={(event) => {
-+              if (event.key === 'Enter' || event.key === ' ') {
-+                event.preventDefault();
-+                onSelectTurn(index);
-+              }
-+            }}
-+          >
-+            <ExperimentSingleChatIcon displayLink={index !== traces.length - 1} />
++          onMouseEnter={() => onActivateTurn(index)}
++          onClick={() => onSelectTurn(index)}
++          onKeyDown={(event) => {
++            if (event.key === 'Enter' || event.key === ' ') {
++              event.preventDefault();
++              onSelectTurn(index);
++            }
++          }}
+         >
+           <ExperimentSingleChatIcon displayLink={index !== traces.length - 1} />
  
 -          <Typography.Text bold>
 -            <FormattedMessage
@@ -5404,22 +5308,18 @@
 -              description="Label for a single turn within an experiment chat session"
 -              values={{ turnNumber: index + 1 }}
 -            />
--          </Typography.Text>
-+            <Typography.Text bold css={{ overflowWrap: 'anywhere' }}>
-+              {(!Array.isArray(trace.info.tags) && trace.info.tags?.['mlflow.traceName']) || (
-+                <FormattedMessage
-+                  defaultMessage="Turn {turnNumber}"
-+                  description="Label for a single turn within an experiment chat session"
-+                  values={{ turnNumber: index + 1 }}
-+                />
-+              )}
-+            </Typography.Text>
-+          </div>
-+          {selectedTurnIndex === index && renderTurnChildren?.(trace, index)}
++          <Typography.Text bold css={{ overflowWrap: 'anywhere' }}>
++            {(!Array.isArray(trace.info.tags) && trace.info.tags?.['mlflow.traceName']) || (
++              <FormattedMessage
++                defaultMessage="Turn {turnNumber}"
++                description="Label for a single turn within an experiment chat session"
++                values={{ turnNumber: index + 1 }}
++              />
++            )}
+           </Typography.Text>
          </div>
        ))}
-     </div>
-@@ -83,7 +88,8 @@
+@@ -83,7 +83,8 @@
          display: 'flex',
          flexDirection: 'column',
          minHeight: 0,
@@ -5431,7 +5331,7 @@
          paddingTop: theme.spacing.sm,
 --- /dev/null
 +++ b/mlflow/server/js/src/experiment-tracking/pages/experiment-chat-sessions/single-chat-view/OpenWorldDecisionProcess.tsx
-@@ -0,0 +1,759 @@
+@@ -0,0 +1,699 @@
 +import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 +import { Button, Typography, useDesignSystemTheme } from '@databricks/design-system';
 +import type { ModelTrace, ModelTraceSpanNode } from '@databricks/web-shared/model-trace-explorer';
@@ -5447,7 +5347,6 @@
 +import { getDecisionActivityLabel } from './decisionActivityLabels';
 +import { getDecisionPhaseHint, getDecisionProcessPresentation } from './decisionProcessPresentation';
 +import type {
-+  DecisionPhaseSelection,
 +  DecisionProcess,
 +  DecisionProcessActivity,
 +  DecisionProcessPayload,
@@ -5630,8 +5529,8 @@
 +        copyText={formatted.copyText}
 +        initialRenderMode={CodeSnippetRenderMode.TEXT}
 +        initialExpanded
++        allowCollapse={false}
 +        showLineNumbers={false}
-+        showTopCollapse
 +        hideRenderModeDropdown
 +        bordered={false}
 +      />
@@ -5673,7 +5572,7 @@
 +  runId?: string;
 +}) => {
 +  const { theme } = useDesignSystemTheme();
-+  const [expanded, setExpanded] = useState(false);
++  const label = getDecisionActivityLabel(activity);
 +  const description = actionSummary(activity, root);
 +  const detailLabels = [
 +    activity.kind === 'recorded' ? undefined : activity.kind.replaceAll('_', ' '),
@@ -5694,49 +5593,47 @@
 +        ? 'The result of this tool call was not captured.'
 +        : undefined;
 +  return (
-+    <details open={expanded} onToggle={(event) => setExpanded(event.currentTarget.open)} css={{ minWidth: 0 }}>
-+      <summary css={{ cursor: 'pointer', padding: `${theme.spacing.xs}px 0`, overflowWrap: 'anywhere' }}>
-+        <Typography.Text bold>{getDecisionActivityLabel(activity)}</Typography.Text>
++    <section aria-label={label} css={{ minWidth: 0 }}>
++      <div css={{ padding: `${theme.spacing.xs}px 0`, overflowWrap: 'anywhere' }}>
++        <Typography.Text bold>{label}</Typography.Text>
 +        {description && <Typography.Text> · {description}</Typography.Text>}
 +        {detailLabels.length > 0 && <Typography.Text color="secondary"> · {detailLabels.join(' · ')}</Typography.Text>}
-+      </summary>
-+      {expanded && (
-+        <div
-+          css={{
-+            display: 'flex',
-+            flexDirection: 'column',
-+            minWidth: 0,
-+            gap: theme.spacing.sm,
-+            padding: theme.spacing.sm,
-+            borderLeft: `2px solid ${theme.colors.border}`,
-+          }}
-+        >
-+          {activity.inputs ? (
-+            <RecordedPayload
-+              key={`input:${JSON.stringify(activity.inputs.source)}`}
-+              payload={activity.inputs}
-+              title="Inputs"
-+              root={root}
-+              runId={runId}
-+            />
-+          ) : (
-+            missingInput && <div>{missingInput}</div>
-+          )}
-+          {activity.outputs ? (
-+            <RecordedPayload
-+              key={`output:${JSON.stringify(activity.outputs.source)}`}
-+              payload={activity.outputs}
-+              title="Outputs"
-+              root={root}
-+              runId={runId}
-+            />
-+          ) : (
-+            missingOutput && <div>{missingOutput}</div>
-+          )}
-+          {activity.source && <SourceReference source={activity.source} runId={runId} />}
-+        </div>
-+      )}
-+    </details>
++      </div>
++      <div
++        css={{
++          display: 'flex',
++          flexDirection: 'column',
++          minWidth: 0,
++          gap: theme.spacing.sm,
++          padding: theme.spacing.sm,
++          borderLeft: `2px solid ${theme.colors.border}`,
++        }}
++      >
++        {activity.inputs ? (
++          <RecordedPayload
++            key={`input:${JSON.stringify(activity.inputs.source)}`}
++            payload={activity.inputs}
++            title="Inputs"
++            root={root}
++            runId={runId}
++          />
++        ) : (
++          missingInput && <div>{missingInput}</div>
++        )}
++        {activity.outputs ? (
++          <RecordedPayload
++            key={`output:${JSON.stringify(activity.outputs.source)}`}
++            payload={activity.outputs}
++            title="Outputs"
++            root={root}
++            runId={runId}
++          />
++        ) : (
++          missingOutput && <div>{missingOutput}</div>
++        )}
++        {activity.source && <SourceReference source={activity.source} runId={runId} />}
++      </div>
++    </section>
 +  );
 +};
 +
@@ -5744,41 +5641,19 @@
 +  phase,
 +  root,
 +  runId,
-+  selected,
-+  selectionRevision,
 +  review,
 +  hint,
 +}: {
 +  phase: DecisionProcessPhase;
 +  root: ModelTraceSpanNode;
 +  runId?: string;
-+  selected: boolean;
-+  selectionRevision?: number;
 +  review?: DecisionProcess['review'];
 +  hint?: string;
 +}) => {
 +  const { theme } = useDesignSystemTheme();
 +  const [expanded, setExpanded] = useState(false);
-+  const ref = useRef<HTMLDetailsElement>(null);
-+  useEffect(() => {
-+    if (!selected) return;
-+    setExpanded(true);
-+    const frame = requestAnimationFrame(() => {
-+      const element = ref.current;
-+      const scroller = element?.closest<HTMLElement>('[data-session-conversation]');
-+      if (element && scroller) {
-+        scroller.scrollTop += element.getBoundingClientRect().top - scroller.getBoundingClientRect().top;
-+      }
-+    });
-+    return () => cancelAnimationFrame(frame);
-+  }, [selected, selectionRevision]);
 +  return (
-+    <details
-+      ref={ref}
-+      open={expanded}
-+      onToggle={(event) => setExpanded(event.currentTarget.open)}
-+      css={{ minWidth: 0 }}
-+    >
++    <details open={expanded} onToggle={(event) => setExpanded(event.currentTarget.open)} css={{ minWidth: 0 }}>
 +      <summary css={{ cursor: 'pointer', padding: `${theme.spacing.xs}px 0`, overflowWrap: 'anywhere' }}>
 +        <Typography.Text bold>{phase.label}</Typography.Text>
 +        <Typography.Text color="secondary">
@@ -5856,14 +5731,10 @@
 +      {groups
 +        .filter((group) => group.fields.some(([, value]) => value !== undefined))
 +        .map((group) => (
-+          <details key={group.label}>
-+            <summary css={{ cursor: 'pointer', padding: `${theme.spacing.xs}px 0`, overflowWrap: 'anywhere' }}>
-+              <Typography.Text bold>{group.label}</Typography.Text>
-+            </summary>
-+            <section aria-label={group.label}>
-+              <ReviewValueList fields={group.fields} />
-+            </section>
-+          </details>
++          <section key={group.label} aria-label={group.label} css={{ padding: `${theme.spacing.xs}px 0` }}>
++            <Typography.Text bold>{group.label}</Typography.Text>
++            <ReviewValueList fields={group.fields} />
++          </section>
 +        ))}
 +    </>
 +  );
@@ -5932,35 +5803,17 @@
 +  activities,
 +  root,
 +  runId,
-+  phaseSelection,
-+  sourcePhaseIds = [],
 +}: {
 +  label: string;
 +  activities: DecisionProcessActivity[];
 +  root: ModelTraceSpanNode;
 +  runId?: string;
-+  phaseSelection?: DecisionPhaseSelection;
-+  sourcePhaseIds?: string[];
 +}) => {
 +  const { theme } = useDesignSystemTheme();
 +  const [expanded, setExpanded] = useState(false);
-+  const ref = useRef<HTMLDetailsElement>(null);
-+  const selected = Boolean(phaseSelection && sourcePhaseIds.includes(phaseSelection.phaseId));
-+  useEffect(() => {
-+    if (!selected) return;
-+    setExpanded(true);
-+    const frame = requestAnimationFrame(() => {
-+      const element = ref.current;
-+      const scroller = element?.closest<HTMLElement>('[data-session-conversation]');
-+      if (element && scroller) {
-+        scroller.scrollTop += element.getBoundingClientRect().top - scroller.getBoundingClientRect().top;
-+      }
-+    });
-+    return () => cancelAnimationFrame(frame);
-+  }, [selected, phaseSelection?.revision]);
 +  if (activities.length === 0) return null;
 +  return (
-+    <details ref={ref} open={expanded} onToggle={(event) => setExpanded(event.currentTarget.open)}>
++    <details open={expanded} onToggle={(event) => setExpanded(event.currentTarget.open)}>
 +      <summary css={{ cursor: 'pointer', padding: `${theme.spacing.xs}px 0`, overflowWrap: 'anywhere' }}>
 +        <Typography.Text bold>{label}</Typography.Text>
 +        <Typography.Text color="secondary">
@@ -5990,11 +5843,13 @@
 +  caption,
 +  value,
 +  initialExpanded = false,
++  allowCollapse = true,
 +}: {
 +  title: string;
 +  caption?: string;
 +  value: unknown;
 +  initialExpanded?: boolean;
++  allowCollapse?: boolean;
 +}) => {
 +  const { theme } = useDesignSystemTheme();
 +  const formatted = useMemo(() => formatRecordedValue(value), [value]);
@@ -6016,6 +5871,7 @@
 +        initialRenderMode={CodeSnippetRenderMode.TEXT}
 +        previewLines={2}
 +        initialExpanded={initialExpanded}
++        allowCollapse={allowCollapse}
 +        showLineNumbers={false}
 +        showTopCollapse
 +        hideRenderModeDropdown
@@ -6025,15 +5881,7 @@
 +  );
 +};
 +
-+export const OpenWorldDecisionContent = ({
-+  decision,
-+  runId,
-+  phaseSelection,
-+}: {
-+  decision: OpenWorldDecision;
-+  runId?: string;
-+  phaseSelection?: DecisionPhaseSelection;
-+}) => {
++export const OpenWorldDecisionContent = ({ decision, runId }: { decision: OpenWorldDecision; runId?: string }) => {
 +  const { theme } = useDesignSystemTheme();
 +  const [metadataExpanded, setMetadataExpanded] = useState(false);
 +  const [gapsExpanded, setGapsExpanded] = useState(false);
@@ -6093,14 +5941,9 @@
 +        data-decision-process
 +        css={{ ...sectionCss, borderTop: `1px solid ${theme.colors.border}`, paddingTop: theme.spacing.sm }}
 +      >
-+        <div css={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: theme.spacing.sm }}>
-+          <Typography.Title level={4} withoutMargins>
-+            Decision process
-+          </Typography.Title>
-+          <Typography.Text color="secondary" size="sm">
-+            {presentation.workflowPhases.length} {presentation.workflowPhases.length === 1 ? 'stage' : 'stages'}
-+          </Typography.Text>
-+        </div>
++        <Typography.Title level={4} withoutMargins color="secondary">
++          Decision process
++        </Typography.Title>
 +        <section aria-label="Workflow stages" css={sectionCss}>
 +          {presentation.workflowPhases.length > 0 ? (
 +            presentation.workflowPhases.map((phase) => (
@@ -6109,8 +5952,6 @@
 +                phase={phase}
 +                root={root}
 +                runId={runId}
-+                selected={phaseSelection?.phaseId === phase.id}
-+                selectionRevision={phaseSelection?.revision}
 +                review={decisionProcess?.review}
 +                hint={getDecisionPhaseHint(phase, decisionProcess?.review, root)}
 +              />
@@ -6126,17 +5967,15 @@
 +          data-decision-process
 +          css={{ ...sectionCss, borderTop: `1px solid ${theme.colors.border}`, paddingTop: theme.spacing.sm }}
 +        >
-+          <Typography.Text bold color="secondary">
++          <Typography.Title level={4} withoutMargins color="secondary">
 +            Supporting evidence
-+          </Typography.Text>
++          </Typography.Title>
 +          {presentation.sourceLogActivities.length > 0 && (
 +            <SourceActivities
 +              label="Source logs"
 +              activities={presentation.sourceLogActivities}
 +              root={root}
 +              runId={runId}
-+              phaseSelection={phaseSelection}
-+              sourcePhaseIds={presentation.sourcePhaseIds}
 +            />
 +          )}
 +          {presentation.otherSourceActivities.length > 0 && (
@@ -6182,6 +6021,7 @@
 +                  title="Additional metadata"
 +                  value={presentation.additionalMetadata}
 +                  initialExpanded
++                  allowCollapse={false}
 +                />
 +              )}
 +            </details>
@@ -6389,7 +6229,7 @@
 +};
 --- /dev/null
 +++ b/mlflow/server/js/src/experiment-tracking/pages/experiment-chat-sessions/single-chat-view/decisionProcessPresentation.ts
-@@ -0,0 +1,292 @@
+@@ -0,0 +1,289 @@
 +import type { ModelTraceSpanNode } from '@databricks/web-shared/model-trace-explorer';
 +import { getDecisionActivityLabel } from './decisionActivityLabels';
 +import { resolveRecordedPayload } from './decisionProcessPayloads';
@@ -6540,7 +6380,6 @@
 +export const getDecisionProcessPresentation = (decision: OpenWorldDecision) => {
 +  const workflowPhases: DecisionProcessPhase[] = [];
 +  const sourceLogActivities: DecisionProcessActivity[] = [];
-+  const sourcePhaseIds: string[] = [];
 +  const otherSourceActivities: DecisionProcessActivity[] = [];
 +  const normalizedProducer = new Set([
 +    'reviewer',
@@ -6554,7 +6393,6 @@
 +  for (const phase of decision.process?.phases ?? []) {
 +    if (normalizedProducer && (phase.id === 'unassigned' || phase.id === 'logged')) {
 +      sourceLogActivities.push(...phase.activities);
-+      sourcePhaseIds.push(phase.id);
 +    } else if (
 +      (normalizedProducer && phase.id === 'recorded') ||
 +      (phase.id === 'decision' && decision.process?.producer === 'langchain')
@@ -6607,7 +6445,6 @@
 +  return {
 +    workflowPhases,
 +    sourceLogActivities,
-+    sourcePhaseIds,
 +    otherSourceActivities,
 +    additionalMetadata: remaining === OMIT ? {} : (asObject(remaining) ?? {}),
 +  };
@@ -6684,7 +6521,7 @@
 +};
 --- /dev/null
 +++ b/mlflow/server/js/src/experiment-tracking/pages/experiment-chat-sessions/single-chat-view/decisionProcessTypes.ts
-@@ -0,0 +1,67 @@
+@@ -0,0 +1,61 @@
 +import type { ModelTraceSpanNode } from '@databricks/web-shared/model-trace-explorer';
 +
 +export type DecisionProcessSource = {
@@ -6745,12 +6582,6 @@
 +  process?: DecisionProcess;
 +  inputSummary?: string;
 +  outputSummary?: string;
-+};
-+
-+export type DecisionPhaseSelection = {
-+  traceId: string;
-+  phaseId: string;
-+  revision: number;
 +};
 --- a/mlflow/server/js/src/experiment-tracking/pages/experiment-page-tabs/side-nav/constants.tsx
 +++ b/mlflow/server/js/src/experiment-tracking/pages/experiment-page-tabs/side-nav/constants.tsx
@@ -11761,7 +11592,7 @@
    );
 --- a/mlflow/server/js/src/shared/web-shared/model-trace-explorer/ModelTraceExplorerCodeSnippet.tsx
 +++ b/mlflow/server/js/src/shared/web-shared/model-trace-explorer/ModelTraceExplorerCodeSnippet.tsx
-@@ -41,16 +41,22 @@
+@@ -41,16 +41,23 @@
    title,
    tokens,
    data,
@@ -11771,6 +11602,7 @@
    containsActiveMatch = false,
    initialRenderMode,
    initialExpanded,
++  allowCollapse = true,
 +  previewLines,
 +  showLineNumbers = true,
 +  showTopCollapse = false,
@@ -11784,10 +11616,11 @@
    searchFilter?: string;
    // the current active search match
    activeMatch?: SearchMatch | null;
-@@ -59,6 +65,11 @@
+@@ -59,6 +66,12 @@
    containsActiveMatch?: boolean;
    initialRenderMode?: CodeSnippetRenderMode;
    initialExpanded?: boolean;
++  allowCollapse?: boolean;
 +  /** Maximum text lines shown before expanding the snippet. */
 +  previewLines?: number;
 +  showLineNumbers?: boolean;
@@ -11796,7 +11629,7 @@
    /** When true, the per-snippet render mode dropdown is hidden (e.g. for aggregated table view). */
    hideRenderModeDropdown?: boolean;
  }) {
-@@ -158,18 +169,22 @@
+@@ -158,18 +171,23 @@
          <div
            css={{
              overflow: 'hidden',
@@ -11814,6 +11647,7 @@
              containsActiveMatch={containsActiveMatch}
              renderMode={renderMode}
              initialExpanded={initialExpanded}
++            allowCollapse={allowCollapse}
 +            previewLines={previewLines}
 +            showLineNumbers={showLineNumbers}
 +            showTopCollapse={showTopCollapse}
@@ -11822,7 +11656,7 @@
        </div>
 --- a/mlflow/server/js/src/shared/web-shared/model-trace-explorer/ModelTraceExplorerCodeSnippetBody.tsx
 +++ b/mlflow/server/js/src/shared/web-shared/model-trace-explorer/ModelTraceExplorerCodeSnippetBody.tsx
-@@ -21,18 +21,26 @@
+@@ -21,23 +21,34 @@
  
  export function ModelTraceExplorerCodeSnippetBody({
    data,
@@ -11832,6 +11666,7 @@
    containsActiveMatch = false,
    renderMode = CodeSnippetRenderMode.JSON,
    initialExpanded = false,
++  allowCollapse = true,
 +  previewLines = MAX_LINES_FOR_PREVIEW,
 +  showLineNumbers = true,
 +  showTopCollapse = false,
@@ -11843,13 +11678,21 @@
    containsActiveMatch?: boolean;
    renderMode?: CodeSnippetRenderMode;
    initialExpanded?: boolean;
++  allowCollapse?: boolean;
 +  previewLines?: number;
 +  showLineNumbers?: boolean;
 +  showTopCollapse?: boolean;
  }) {
    const containsMatches = Boolean(searchFilter) && !isNil(activeMatch) && data.toLowerCase().includes(searchFilter);
    const { theme } = useDesignSystemTheme();
-@@ -55,19 +63,46 @@
+   const [isContentLong, setIsContentLong] = useState(false);
+-  const [expanded, setExpanded] = useState(initialExpanded || containsMatches);
++  const [expandedByUser, setExpanded] = useState(initialExpanded || containsMatches);
++  const expanded = !allowCollapse || expandedByUser;
+   const snippetRef = useRef<HTMLPreElement>(null);
+   // if the data is rendered in text / markdown mode, then
+   // we need to parse it so that the newlines are unescaped
+@@ -55,19 +66,49 @@
    }, [data, renderMode]);
  
    const expandable =
@@ -11858,7 +11701,10 @@
 -    dataToTruncate.length > MAX_CHARS_FOR_PREVIEW;
 -
 -  // Truncate after first 3 lines if not expanded
-+    isContentLong || dataToTruncate.split('\n').length > previewLines || dataToTruncate.length > MAX_CHARS_FOR_PREVIEW;
++    allowCollapse &&
++    (isContentLong ||
++      dataToTruncate.split('\n').length > previewLines ||
++      dataToTruncate.length > MAX_CHARS_FOR_PREVIEW);
 +  const toggleExpanded = () => setExpanded((current) => !current);
 +  const expansionButton = (atTop = false) => (
 +    <Button
@@ -11903,7 +11749,7 @@
  
    useEffect(() => {
      if (snippetRef.current) {
-@@ -94,10 +129,11 @@
+@@ -94,10 +135,11 @@
    if (renderMode === 'json' || renderMode === 'table') {
      return (
        <div css={{ position: 'relative' }}>
@@ -11916,7 +11762,7 @@
            size="small"
            css={{ position: 'absolute', top: theme.spacing.xs, right: theme.spacing.xs, zIndex: 1 }}
          />
-@@ -109,7 +145,12 @@
+@@ -109,7 +151,12 @@
              position: 'relative',
            }}
          >
@@ -11930,7 +11776,7 @@
            {expandable && !expanded && (
              <div
                css={{
-@@ -127,32 +168,7 @@
+@@ -127,32 +174,7 @@
            <div
              css={{ backgroundColor: theme.colors.backgroundSecondary, borderTop: `1px solid ${theme.colors.border}` }}
            >
@@ -11964,7 +11810,7 @@
            </div>
          )}
        </div>
-@@ -161,6 +177,7 @@
+@@ -161,6 +183,7 @@
  
    return (
      <div css={{ position: 'relative' }}>
@@ -11972,7 +11818,7 @@
        {renderMode === 'markdown' ? (
          <div
            css={{
-@@ -173,7 +190,7 @@
+@@ -173,7 +196,7 @@
            <SnippetCopyAction
              key="copy-snippet"
              componentId="shared.model-trace-explorer.copy-snippet-markdown"
@@ -11981,7 +11827,7 @@
              size="small"
              css={{ position: 'absolute', top: theme.spacing.xs, right: theme.spacing.xs, zIndex: 1 }}
            />
-@@ -184,14 +201,14 @@
+@@ -184,14 +207,14 @@
            <SnippetCopyAction
              key="copy-snippet"
              componentId="shared.model-trace-explorer.copy-snippet"
@@ -11998,7 +11844,7 @@
              language={renderMode}
              lineProps={{ style: { wordBreak: 'break-word', whiteSpace: 'pre-wrap' } }}
              wrapLines={expanded}
-@@ -211,31 +228,7 @@
+@@ -211,31 +234,7 @@
            </CodeSnippet>
          </>
        )}

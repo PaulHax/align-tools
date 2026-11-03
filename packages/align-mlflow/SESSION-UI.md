@@ -117,12 +117,11 @@ Each situation groups the current patients into **Now nearby**, **Not nearby**, 
 **Unknown proximity**. Patient updates focus on clinical and description changes
 instead of repeating proximity changes and unchanged descriptions.
 **Decision process** shows workflow stages immediately, with a concise preview
-of each stage's captured action, recommendation, or other evidence. Counts refer
-only to these stages. Source-log buckets and saved-action projections do not
-increase the stage count. Expand a stage and an activity for its full inputs,
-outputs, and source references, without another preview-expansion step.
-Selecting a stage beneath the chosen decision in the sidebar opens the same
-inline detail and preserves the decision selected for comparison.
+of each stage's captured action, recommendation, or other evidence. The decision
+sidebar contains only decisions. Expand a stage once to see all
+of its settings, measurements, activity inputs, outputs, and source references.
+There are no additional expansion controls within a stage. The Decision process
+and Supporting evidence headings use the same native typography.
 
 Reviewer proposals appear with **Proposal**, advice and computed suggestions with
 **Review**, and the final action and whether guidance was followed with **Final
@@ -134,7 +133,8 @@ strength. Explicitly owned metadata appears with its relevant stage.
 excerpts whose stage or individual call association is not established.
 **Capture gaps** explains limitations of the available evidence. **Additional
 metadata** retains fields not already exposed in the appropriate stage. These
-rows preview their contents before expansion. The saved environment action
+rows preview their contents before expansion. Opening a source group reveals
+all of its excerpts directly. The saved environment action
 remains in the output source rather than appearing again as a workflow stage.
 Original records and source references remain available for inspection. Cache
 hits remain distinct from fresh model invocations.
