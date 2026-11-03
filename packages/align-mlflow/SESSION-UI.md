@@ -155,9 +155,9 @@ retains the saved environment action.
 Original records and source references remain available for inspection. Cache
 hits remain distinct from fresh model invocations.
 
-The input and output source previews show two lines of code with a single
-**See more** control for the complete JSON. Expanded code has **See less** at the top and
-bottom, so collapsing a long payload does not require scrolling to its end.
+The input and output source previews and long stage **Inputs** show up to two
+lines of code. **See more** opens the complete available code. Expanded code has
+**See less** above and below the payload.
 Expanded Situation and action summaries also have a collapse control at the top.
 Readable summaries and source previews use matching chevron expansion buttons.
 Session code views omit line-number gutters.

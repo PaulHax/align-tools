@@ -5331,7 +5331,7 @@
          paddingTop: theme.spacing.sm,
 --- /dev/null
 +++ b/mlflow/server/js/src/experiment-tracking/pages/experiment-chat-sessions/single-chat-view/OpenWorldDecisionProcess.tsx
-@@ -0,0 +1,1038 @@
+@@ -0,0 +1,1070 @@
 +import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 +import {
 +  Button,
@@ -5496,11 +5496,13 @@
 +  title,
 +  root,
 +  runId,
++  previewLines,
 +}: {
 +  payload: DecisionProcessPayload;
 +  title: 'Inputs' | 'Outputs' | 'Log excerpt';
 +  root: ModelTraceSpanNode;
 +  runId?: string;
++  previewLines?: number;
 +}) => {
 +  const { theme } = useDesignSystemTheme();
 +  const [fullPayload, setFullPayload] = useState<string>();
@@ -5540,8 +5542,10 @@
 +        data={JSON.stringify(formatted.display)}
 +        copyText={formatted.copyText}
 +        initialRenderMode={CodeSnippetRenderMode.TEXT}
-+        initialExpanded
-+        allowCollapse={false}
++        initialExpanded={previewLines === undefined}
++        allowCollapse={previewLines !== undefined}
++        previewLines={previewLines}
++        showTopCollapse={previewLines !== undefined}
 +        showLineNumbers={false}
 +        hideRenderModeDropdown
 +        bordered={false}
@@ -5651,10 +5655,12 @@
 +  activity,
 +  root,
 +  runId,
++  previewInputs,
 +}: {
 +  activity: DecisionProcessActivity;
 +  root: ModelTraceSpanNode;
 +  runId?: string;
++  previewInputs?: boolean;
 +}) => {
 +  const { theme } = useDesignSystemTheme();
 +  const label = getDecisionActivityLabel(activity);
@@ -5701,6 +5707,7 @@
 +            title="Inputs"
 +            root={root}
 +            runId={runId}
++            previewLines={previewInputs ? 2 : undefined}
 +          />
 +        ) : (
 +          missingInput && <div>{missingInput}</div>
@@ -5802,7 +5809,18 @@
 +          {expanded ? <ChevronDownIcon /> : <ChevronRightIcon />}
 +        </span>
 +      </summary>
-+      {expanded && <div css={{ minWidth: 0, paddingInline: theme.spacing.sm }}>{children}</div>}
++      {expanded && (
++        <div
++          css={{
++            minWidth: 0,
++            paddingBlock: icon ? theme.spacing.sm : undefined,
++            paddingInlineStart: icon ? `min(${theme.spacing.lg + theme.spacing.sm}px, 12%)` : theme.spacing.sm,
++            paddingInlineEnd: theme.spacing.sm,
++          }}
++        >
++          {children}
++        </div>
++      )}
 +    </details>
 +  );
 +};
@@ -5812,15 +5830,23 @@
 +  activities,
 +  root,
 +  runId,
++  previewInputs,
 +}: {
 +  label: string;
 +  activities: DecisionProcessActivity[];
 +  root: ModelTraceSpanNode;
 +  runId?: string;
++  previewInputs?: boolean;
 +}) => (
 +  <section aria-label={label}>
 +    {activities.map((activity, index) => (
-+      <ProcessActivity key={`${activity.id}:${index}`} activity={activity} root={root} runId={runId} />
++      <ProcessActivity
++        key={`${activity.id}:${index}`}
++        activity={activity}
++        root={root}
++        runId={runId}
++        previewInputs={previewInputs}
++      />
 +    ))}
 +  </section>
 +);
@@ -6050,7 +6076,13 @@
 +      ))}
 +      {review && phase.id === 'review' && <ReviewDetails review={review} />}
 +      {phase.activities.length ? (
-+        <ProcessActivities label={phase.label + ' records'} activities={phase.activities} root={root} runId={runId} />
++        <ProcessActivities
++          label={phase.label + ' records'}
++          activities={phase.activities}
++          root={root}
++          runId={runId}
++          previewInputs
++        />
 +      ) : (
 +        <div>No invocation details were captured for this phase.</div>
 +      )}
@@ -12291,24 +12323,33 @@
  
    useEffect(() => {
      if (snippetRef.current) {
-@@ -94,10 +135,11 @@
+@@ -94,13 +135,7 @@
    if (renderMode === 'json' || renderMode === 'table') {
      return (
        <div css={{ position: 'relative' }}>
-+        {showTopCollapse && expanded && expandable && expansionButton(true)}
-         <SnippetCopyAction
-           key="copy-snippet"
-           componentId="shared.model-trace-explorer.copy-snippet"
+-        <SnippetCopyAction
+-          key="copy-snippet"
+-          componentId="shared.model-trace-explorer.copy-snippet"
 -          copyText={data}
-+          copyText={copyText ?? data}
-           size="small"
-           css={{ position: 'absolute', top: theme.spacing.xs, right: theme.spacing.xs, zIndex: 1 }}
-         />
-@@ -109,7 +151,12 @@
+-          size="small"
+-          css={{ position: 'absolute', top: theme.spacing.xs, right: theme.spacing.xs, zIndex: 1 }}
+-        />
++        {showTopCollapse && expanded && expandable && expansionButton(true)}
+         <div
+           css={{
+             maxHeight:
+@@ -109,7 +144,19 @@
              position: 'relative',
            }}
          >
 -          <CollapsibleJsonViewer data={data} initialExpanded renderMode={renderMode} />
++          <SnippetCopyAction
++            key="copy-snippet"
++            componentId="shared.model-trace-explorer.copy-snippet"
++            copyText={copyText ?? data}
++            size="small"
++            css={{ position: 'absolute', top: theme.spacing.xs, right: theme.spacing.xs, zIndex: 1 }}
++          />
 +          <CollapsibleJsonViewer
 +            data={data}
 +            initialExpanded
@@ -12360,7 +12401,7 @@
        {renderMode === 'markdown' ? (
          <div
            css={{
-@@ -173,7 +196,7 @@
+@@ -173,25 +196,24 @@
            <SnippetCopyAction
              key="copy-snippet"
              componentId="shared.model-trace-explorer.copy-snippet-markdown"
@@ -12369,7 +12410,11 @@
              size="small"
              css={{ position: 'absolute', top: theme.spacing.xs, right: theme.spacing.xs, zIndex: 1 }}
            />
-@@ -184,14 +207,14 @@
+           <GenAIMarkdownRenderer>{displayedData}</GenAIMarkdownRenderer>
+         </div>
+       ) : (
+-        <>
++        <div css={{ position: 'relative' }}>
            <SnippetCopyAction
              key="copy-snippet"
              componentId="shared.model-trace-explorer.copy-snippet"
@@ -12378,7 +12423,7 @@
              size="small"
              css={{ position: 'absolute', top: theme.spacing.xs, right: theme.spacing.xs, zIndex: 1 }}
            />
-           {}
+-          {}
            <CodeSnippet
              PreTag={PreWithRef}
 -            showLineNumbers
@@ -12386,10 +12431,12 @@
              language={renderMode}
              lineProps={{ style: { wordBreak: 'break-word', whiteSpace: 'pre-wrap' } }}
              wrapLines={expanded}
-@@ -211,31 +234,7 @@
+@@ -209,33 +231,9 @@
+           >
+             {displayedData}
            </CodeSnippet>
-         </>
-       )}
+-        </>
+-      )}
 -      {expandable && (
 -        <div css={{ backgroundColor: theme.colors.backgroundSecondary }}>
 -          <Button
@@ -12413,8 +12460,8 @@
 -              />
 -            )}
 -          </Button>
--        </div>
--      )}
+         </div>
+       )}
 +      {expandable && <div css={{ backgroundColor: theme.colors.backgroundSecondary }}>{expansionButton()}</div>}
      </div>
    );

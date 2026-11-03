@@ -69,6 +69,11 @@ const expectRawPreview = async (scope, title) => {
       { exact: true },
     ),
   ).toBeVisible();
+  await expectTwoLinePreview(recorded);
+  return recorded;
+};
+
+const expectTwoLinePreview = async (recorded) => {
   await expect(recorded.locator("pre")).toBeVisible();
   await expect(
     recorded.locator("pre .react-syntax-highlighter-line-number"),
@@ -85,7 +90,6 @@ const expectRawPreview = async (scope, title) => {
   await expect(
     recorded.getByRole("button", { name: "See less", exact: true }),
   ).toHaveCount(0);
-  return recorded;
 };
 
 const expectNoLineNumbers = async (scope) => {
@@ -95,11 +99,19 @@ const expectNoLineNumbers = async (scope) => {
   await expect(scope.getByTestId("json-line-number")).toHaveCount(0);
 };
 
-const expectStaticEvidence = async (scope) => {
+const expectStaticEvidence = async (
+  scope,
+  { allowInputPreviews = false } = {},
+) => {
   await expect(scope.locator("details")).toHaveCount(0);
-  await expect(
-    scope.getByRole("button", { name: /^See (more|less)$/, exact: true }),
-  ).toHaveCount(0);
+  const folds = { name: /^See (more|less)$/, exact: true };
+  const inputFolds = allowInputPreviews
+    ? await scope
+        .getByRole("region", { name: "Inputs", exact: true })
+        .getByRole("button", folds)
+        .count()
+    : 0;
+  await expect(scope.getByRole("button", folds)).toHaveCount(inputFolds);
   await expect(
     scope.getByRole("link", { name: /^See (more|less)$/, exact: true }),
   ).toHaveCount(0);
@@ -361,8 +373,12 @@ const openPipelineStage = async (decision) => {
     exact: true,
   });
   await expect(details).toBeVisible();
+  const inputs = details.getByRole("region", { name: "Inputs", exact: true });
+  await expectTwoLinePreview(inputs);
+  await expect(inputs).not.toContainText("Captured note: José");
+  await inputs.getByRole("button", { name: "See more", exact: true }).click();
   await expect(
-    details.getByText("System: Estimate urgency", { exact: false }),
+    inputs.getByText("System: Estimate urgency", { exact: false }),
   ).toBeVisible();
   await expect(
     details.getByRole("region", { name: "Outputs", exact: true }),
@@ -370,7 +386,7 @@ const openPipelineStage = async (decision) => {
   await expect(
     details.getByRole("region", { name: "Outputs", exact: true }),
   ).toContainText(/inspect B"?\s*:\s*0\.44/);
-  await expectStaticEvidence(phase);
+  await expectStaticEvidence(phase, { allowInputPreviews: true });
   await expectNoLineNumbers(details);
   await expect(
     recorded.getByText("raw_align_system.log", { exact: false }).first(),
@@ -509,7 +525,7 @@ test("pipeline stages reveal readable context and recorded evidence while the en
       exact: true,
     }),
   ).toBeVisible();
-  await expectStaticEvidence(selectedPhase);
+  await expectStaticEvidence(selectedPhase, { allowInputPreviews: true });
   await expectSelection(page, page, session, 2);
   await expectNoLineNumbers(page);
   const overflow = await page.evaluate(
@@ -573,6 +589,9 @@ test("opening a stage loads complete captured context using the recorded UTF-8 b
   expect(response.headers()["content-range"]).toBe(
     `bytes ${start}-${end - 1}/${population.sourceArtifacts[source.artifact_path].length}`,
   );
+  await expectTwoLinePreview(inputs);
+  await expect(inputs).not.toContainText("Captured note: José");
+  await inputs.getByRole("button", { name: "See more", exact: true }).click();
   await expectNoLineNumbers(inputs);
   await expect(renderedLog).toContainText("[bold]*AGENT SYSTEM PROMPT*[/bold]");
   expect(await renderedLog.textContent()).toContain("  exact **markers**");
@@ -588,7 +607,11 @@ test("opening a stage loads complete captured context using the recorded UTF-8 b
   await expect(
     inputs.getByText("Preview only.", { exact: false }),
   ).not.toBeVisible();
-  await expectStaticEvidence(phase);
+  await collapseRawPreview(inputs);
+  await expectTwoLinePreview(inputs);
+  await expect(inputs).not.toContainText("Captured note: José");
+  expect(sourceRequests).toHaveLength(1);
+  await expectStaticEvidence(phase, { allowInputPreviews: true });
   await expectNoLineNumbers(page);
 });
 
@@ -735,12 +758,17 @@ const expectReviewerDistinction = async (decision, population) => {
     name: "Review proposed treatment",
     exact: true,
   });
-  await expect(
-    call.getByText("System: Review the proposed action", {
-      exact: false,
-    }),
-  ).toBeVisible();
-  await expectStaticEvidence(reviewPhase);
+  const reviewInputs = call.getByRole("region", {
+    name: "Inputs",
+    exact: true,
+  });
+  await expect(reviewInputs).toContainText(
+    "System: Review the proposed action",
+  );
+  await expect(reviewInputs).toContainText(
+    "Proposal: Apply a tourniquet to Patient A.",
+  );
+  await expectStaticEvidence(reviewPhase, { allowInputPreviews: true });
   await summary(timeline, "Final selection").click();
   const finalPhase = summary(timeline, "Final selection").locator("..");
   await expect(detailValue(finalPhase, "Final action")).toHaveText(
@@ -901,7 +929,7 @@ test("graph tools expose paired arguments and results without inventing missing 
         exact: true,
       }),
   ).toBeVisible();
-  await expectStaticEvidence(assessmentGroup);
+  await expectStaticEvidence(assessmentGroup, { allowInputPreviews: true });
   const supporting = decision.getByRole("region", {
     name: "Supporting evidence",
     exact: true,
