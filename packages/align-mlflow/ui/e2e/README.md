@@ -26,5 +26,14 @@ Unexpected API requests fail the test so new server dependencies remain explicit
 A three-session example includes tied and backward timestamps to check consistent
 decision ordering and explicit selection in individual and comparison views.
 
+Process examples cover pipeline components and cached outputs, reviewer advice
+that differs from the executed action, graph tool arguments and results, and
+incomplete legacy evidence. Browser checks exercise inline phase and activity
+disclosures, source references, missing context, and independent decision
+selection in single-session and comparison views at a 960-pixel viewport.
+The source-artifact example returns an exact HTTP byte range containing UTF-8
+text and verifies that opening an activity loads its complete captured context
+without fetching source payloads while the activity remains collapsed.
+
 The UI workflow builds the maintained patch, installs Chromium, and runs this
 suite. Playwright reports and failure traces are saved as workflow artifacts.

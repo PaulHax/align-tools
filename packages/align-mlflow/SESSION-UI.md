@@ -105,6 +105,83 @@ In **Traces**, use **Views** to save filters and column layouts for the experime
 saved view restores its filters and columns. Views are optional personal layouts;
 setup and ingestion do not create them, and saving one needs no server restart.
 
+## Inspect a decision
+
+Each decision has one outer frame without nested field outlines. Compact source
+captions identify the JSON sections shown beneath the readable summaries:
+`input_output.json → input` and `input_output.json → output`. Spacing and a
+divider distinguish the situation from the action. Code keeps its preformatted
+shading.
+Each situation groups the current patients into **Now nearby**, **Not nearby**, and
+**Unknown proximity**. Patient updates focus on clinical and description changes
+instead of repeating proximity changes and unchanged descriptions.
+**Decision process** follows Situation and precedes the chosen action. Each stage
+has a single-line preview of its action, recommendation, or recorded rationale.
+The decision sidebar contains only decisions. Expand a stage to read its recorded
+proposal, advice, or response alongside the relevant settings and measurements.
+The original activity payloads and source links appear below the readable
+content when the stage opens. The Decision process and Supporting evidence
+headings use the same native typography.
+
+Reviewer proposals appear with **Proposal**, advice and computed suggestions with
+**Review**, and the final action and whether guidance was followed with **Final
+selection**. **Review settings** holds influence, swap threshold, and the review
+contract; **Review measurements** holds confidence, estimated improvement, and
+strength. Explicitly owned metadata appears with its relevant stage.
+
+The decision timeline combines stage summaries with captured agent messages,
+thinking, and tool calls under **Decision process**. **Proposal** and **Review**
+follow a uniquely matched proposal call with a recorded action review marker.
+With uncertain stage timing, **Saved stage summaries** follows the recorded
+activity. **Final selection** closes the reviewed timeline. Decisions with only
+stage summaries show those stages in order.
+
+Stages, thinking, and tool calls use the same compact disclosure row. Icons
+and labels identify the row type. **Agent message** rows use readable Markdown.
+**Tool call** rows show the tool name and key arguments.
+Open a parsed call to inspect its arguments, any matched result, and the
+**Raw log excerpt** control. When a matched observation log contains no return
+value, the row shows **Result not captured**. Calls with malformed arguments
+open directly to the original excerpt. Recorded thinking has its own expandable
+row.
+
+**Supporting evidence** contains setup logs and other source records.
+**Capture gaps** explains limitations of the available evidence. The collapsed
+rows preview their contents. Opening **Source logs** shows the excerpt labels,
+complete available excerpts, and source links. Opening **Other source evidence**
+shows its original payloads and links. **Choice info** shows the complete
+original `choice_info` value from the decision record. The output source
+retains the saved environment action.
+Original records and source references remain available for inspection. Cache
+hits remain distinct from fresh model invocations.
+
+The input and output source previews and long stage **Inputs** show up to two
+lines of code. **See more** opens the complete available code. Expanded code has
+**See less** above and below the payload.
+Expanded Situation and action summaries also have a collapse control at the top.
+Readable summaries and source previews use matching chevron expansion buttons.
+Session code views omit line-number gutters.
+Single-object previews omit their outer braces and excess indentation; arrays,
+nested objects, and raw log text retain their structure. The copy control still
+copies complete, valid JSON for structured data.
+Disclosure labels use the same bold styling. Generic log rows include a response
+excerpt or a tool name and arguments instead of repeating uninformative headings
+and `recorded` badges. The complete source remains available when the row opens.
+Saved records show the fields they contain. Missing request or result notices
+apply to captured model and tool activities, where those fields are expected.
+Process payloads use their exact recorded JSON fields or source-log ranges.
+Opening an activity loads its selected log range on demand; opening the page or
+a phase does not fetch those payloads. **Open source artifact** provides the
+complete captured log. Large payloads above the inline limit remain available
+through their source artifact.
+
+The chevron at the right of the session metrics row collapses and expands
+**Session assessments**. The same control remains in place while collapsed, and
+the panel gives its full width back to the trace. Decision selection, resized
+panel width, and unsaved notes are retained.
+
+Older imports can gain process evidence with the [card refresh command](INGESTION.md#refresh-existing-decision-evidence).
+
 ## Compare sessions and decisions
 
 In the grouped **Traces** table or **Sessions (episodes)**, check sessions and

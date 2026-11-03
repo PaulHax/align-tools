@@ -25,7 +25,7 @@ _REJECTION = re.compile(
     r"HTTP response headers: HTTPHeaderDict\((?P<headers>\{[^\r\n]*\})\)\r?\n"
     r"HTTP response body: (?P<body>[^\r\n]+)\r?\n(?:[ \t]*\r?\n)+"
 )
-_HEADER = re.compile(r"^\[bold\]\*(.*?)\*\[/bold\]$")
+_HEADER = re.compile(r"^\[bold\]\*(.*?)\*\[/bold\](?::.*)?$")
 _CACHE = re.compile(r"^Cache (hit|miss) for `([^`]+)`")
 _REGRESSION = {
     "DirectRegressionADMComponent",
@@ -54,15 +54,36 @@ class Section:
     text: str
     first_line: int
     last_line: int
+    byte_range: Optional[tuple[int, int]] = None
+    truncated: bool = False
+    content_sha256: Optional[str] = None
 
     def reference(self, snapshot_sha256: Optional[str] = None) -> dict:
         return {
             "file": RAW_LOG_FILE,
             "lines": [self.first_line, self.last_line],
-            "sha256": hashlib.sha256(self.text.encode()).hexdigest(),
+            "sha256": self.content_sha256
+            or hashlib.sha256(self.text.encode()).hexdigest(),
             "title": self.title,
-            **({"snapshot_sha256": snapshot_sha256} if snapshot_sha256 else {}),
+            **({"byte_range": list(self.byte_range)} if self.byte_range else {}),
+            **(
+                {
+                    "snapshot_sha256": snapshot_sha256,
+                    "artifact_path": f"evidence/log/{snapshot_sha256}/{RAW_LOG_FILE}",
+                }
+                if snapshot_sha256
+                else {}
+            ),
         }
+
+
+@dataclass(frozen=True)
+class LogEvent:
+    role: str
+    direction: str
+    fields: Mapping[str, str]
+    detail: bool
+    section: Section
 
 
 @dataclass(frozen=True)
@@ -72,10 +93,18 @@ class DecisionLog:
     excerpt: Optional[Section] = None
     snapshot_sha256: Optional[str] = None
     skipped_rejected_attempts: int = 0
+    events: tuple[LogEvent, ...] = ()
 
 
-def _sections(text: str, first_line: int) -> tuple[Section, ...]:
+def _sections(
+    text: str, first_line: int, byte_start: Optional[int] = None
+) -> tuple[Section, ...]:
     lines = text.splitlines()
+    raw_lines = text.splitlines(keepends=True)
+    offsets = [0]
+    if byte_start is not None:
+        for line in raw_lines:
+            offsets.append(offsets[-1] + len(line.encode("utf-8")))
     starts = []
     for i, line in enumerate(lines):
         if _CACHE.match(line):
@@ -97,6 +126,14 @@ def _sections(text: str, first_line: int) -> tuple[Section, ...]:
                 "\n".join(lines[start:end]).rstrip(),
                 first_line + start,
                 first_line + end - 1,
+                (byte_start + offsets[start], byte_start + offsets[end])
+                if byte_start is not None
+                else None,
+                content_sha256=hashlib.sha256(
+                    "".join(raw_lines[start:end]).encode("utf-8")
+                ).hexdigest()
+                if byte_start is not None
+                else None,
             )
         )
     return tuple(sections)
@@ -148,6 +185,11 @@ def read_decision_logs(
         return tuple(DecisionLog("missing_log") for _ in records)
     text = log_text
     digest = snapshot_sha256 or hashlib.sha256(text.encode("utf-8")).hexdigest()
+    from .process_logs import read_correlated_logs
+
+    correlated = read_correlated_logs(text, records, digest)
+    if correlated is not None:
+        return correlated
     markers = list(_ACTION.finditer(text))
     empty = "no_action_markers" if not markers else "action_not_yet_logged"
     result = [DecisionLog(empty, snapshot_sha256=digest) for _ in records]
@@ -156,6 +198,8 @@ def read_decision_logs(
     previous_end = 0
     index = 0
     skipped_rejections = 0
+    byte_position = byte_count = 0
+    byte_offsets = "\ufffd" not in text
     for attempt_index, marker in enumerate(markers):
         if index >= len(records):
             break
@@ -214,6 +258,9 @@ def read_decision_logs(
             ]
             break
         begin_line = bisect_right(newlines, previous_end - 1) + 1
+        if byte_offsets:
+            byte_count += len(text[byte_position:previous_end].encode("utf-8"))
+            byte_position = previous_end
         excerpt_start = previous_end
         while excerpt_start < marker.start() and text[excerpt_start] in "\r\n":
             excerpt_start += 1
@@ -224,13 +271,28 @@ def read_decision_logs(
                 excerpt_text,
                 bisect_right(newlines, excerpt_start - 1) + 1,
                 bisect_right(newlines, excerpt_start + len(excerpt_text) - 1) + 1,
+                (
+                    byte_count + len(text[previous_end:excerpt_start].encode("utf-8")),
+                    byte_count
+                    + len(
+                        text[previous_end : excerpt_start + len(excerpt_text)].encode(
+                            "utf-8"
+                        )
+                    ),
+                )
+                if byte_offsets
+                else None,
             )
             if excerpt_text
             else None
         )
         result[index] = DecisionLog(
             "exact_action_sequence",
-            _sections(text[previous_end : marker.start()], begin_line),
+            _sections(
+                text[previous_end : marker.start()],
+                begin_line,
+                byte_count if byte_offsets else None,
+            ),
             excerpt,
             digest,
             skipped_rejections,
@@ -286,7 +348,12 @@ def decision_evidence(
             else _preview(info)
         ),
     }
-    evidence: dict[str, Any] = {"choice_info": choice_info}
+    from .process import decision_process
+
+    evidence: dict[str, Any] = {
+        "choice_info": choice_info,
+        "process": decision_process(record, record_index=record_index, log=log),
+    }
     if record_index is not None:
         evidence["record_index"] = record_index
     if log is not None:
@@ -298,7 +365,18 @@ def decision_evidence(
         evidence["log"] = {
             "status": log.status,
             "source": source,
-            **({"text": log.excerpt.text} if log.excerpt is not None else {}),
+            **(
+                {
+                    "text": log.excerpt.text[:4096],
+                    **(
+                        {"text_truncated": True}
+                        if log.excerpt.truncated or len(log.excerpt.text) > 4096
+                        else {}
+                    ),
+                }
+                if log.excerpt is not None
+                else {}
+            ),
             **(
                 {"skipped_rejected_attempts": log.skipped_rejected_attempts}
                 if log.skipped_rejected_attempts
@@ -367,7 +445,13 @@ def _block(section: Section) -> str:
     fence = "`" * max(
         3, 1 + max((len(m[0]) for m in re.finditer(r"`+", section.text)), default=0)
     )
-    return f"**{section.title}** ({RAW_LOG_FILE}:{section.first_line}-{section.last_line})\n\n{fence}text\n{section.text}\n{fence}"
+    preview = section.text[:4096]
+    omitted = (
+        "\nPreview limited; the complete payload is in the captured source."
+        if len(section.text) > 4096
+        else ""
+    )
+    return f"**{section.title}** ({RAW_LOG_FILE}:{section.first_line}-{section.last_line})\n\n{fence}text\n{preview}{omitted}\n{fence}"
 
 
 def component_evidence(

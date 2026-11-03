@@ -384,7 +384,7 @@ def test_cli_highlights_input_changes_within_each_episode(tmp_path):
     assert "Patient 1 is injured" in summaries[0]
     assert "Patient 2 is injured" in summaries[0]
     assert summaries[1].startswith("**Situation**\n\nUnchanged.")
-    assert "**Patient 2**" in summaries[1]
+    assert "- **Patient 2:** Vitals / AVPU: not recorded → ALERT" in summaries[1]
     assert "Vitals / AVPU: not recorded → ALERT" in summaries[1]
     assert "**Patient 1**" not in summaries[1]
     assert "Heart rate: not recorded → FAST" in summaries[2]
@@ -395,7 +395,8 @@ def test_cli_highlights_input_changes_within_each_episode(tmp_path):
     assert "evacuation vehicle arrived" in summaries[3]
     assert "No longer visible" in summaries[4]
     assert "Hidden patient description" not in summaries[4]
-    assert "No other changes to summarize" in summaries[5]
+    assert "**Now nearby:** Patient 1" in summaries[5]
+    assert "Patient updates since previous input" not in summaries[5]
     assert "Elapsed" not in summaries[5]
     assert session(imported[0]) != session(imported[6])
     assert summaries[6] == summaries[0]

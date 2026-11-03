@@ -2,6 +2,7 @@
 
 import sqlite3
 from pathlib import Path
+from typing import Optional
 
 import click
 
@@ -100,7 +101,15 @@ def sync(path: Path, tracking_uri: str, experiment: str) -> None:
 @click.option(
     "--dry-run", is_flag=True, help="Report older cards without changing them"
 )
-def refresh_cards(tracking_uri: str, experiment: str, dry_run: bool) -> None:
+@click.option(
+    "--source",
+    "source_root",
+    type=click.Path(exists=True, file_okay=False, path_type=Path),
+    help="Read original run directories to enrich source-linked decision evidence",
+)
+def refresh_cards(
+    tracking_uri: str, experiment: str, dry_run: bool, source_root: Optional[Path]
+) -> None:
     """Give previously imported traces readable cards without replacing their IDs.
 
     Requires a local MLflow 3.17.2 SQLite store. Back up the store first.
@@ -108,7 +117,7 @@ def refresh_cards(tracking_uri: str, experiment: str, dry_run: bool) -> None:
     """
     try:
         for updated, current in refresh_card_payloads(
-            tracking_uri, experiment, dry_run
+            tracking_uri, experiment, dry_run, source_root=source_root
         ):
             action = "would refresh" if dry_run else "refreshed"
             click.echo(f"{updated} cards {action}, {current} already current")

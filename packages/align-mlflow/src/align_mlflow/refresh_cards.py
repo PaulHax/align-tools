@@ -1,6 +1,7 @@
 """Refresh imported cards in an MLflow 3.17.2 SQLite store."""
 
 import copy
+import hashlib
 import json
 import sqlite3
 from collections import defaultdict
@@ -9,12 +10,23 @@ from pathlib import Path
 from typing import Iterator, Optional
 
 import mlflow
-from align_utils.open_world import OpenWorldRecord
+from align_utils.open_world import (
+    RAW_LOG_FILE,
+    OpenWorldRecord,
+    find_open_world_runs,
+    load_run,
+)
+from mlflow import MlflowClient
 from mlflow.entities import Span
 from mlflow.tracing.constant import SpanAttributeKey
 from sqlalchemy.engine import make_url
 
 from .cards import CARD_FORMAT, card_inputs, card_outputs
+from .artifacts import preserve_log
+from .evidence import DecisionLog, Section, _sections, read_decision_logs
+from .process import PROCESS_VERSION
+from .provenance import read_provenance
+from .traces import run_key
 
 
 def _source_record(root: Span) -> OpenWorldRecord:
@@ -32,16 +44,78 @@ def _source_record(root: Span) -> OpenWorldRecord:
 
 
 def refreshed_root(
-    root: Span, previous: Optional[OpenWorldRecord] = None
+    root: Span,
+    previous: Optional[OpenWorldRecord] = None,
+    *,
+    source_log: Optional[DecisionLog] = None,
+    source_record_index: Optional[int] = None,
 ) -> Optional[Span]:
     record = _source_record(root)
     card_format = root.get_attribute("align.card_format")
-    inputs, outputs = card_inputs(record, previous), card_outputs(record)
     recorded_evidence = root.outputs.get("evidence")
-    if card_format == CARD_FORMAT and isinstance(recorded_evidence, dict):
+    record_index = (
+        recorded_evidence.get("record_index")
+        if isinstance(recorded_evidence, dict)
+        else None
+    )
+    if source_record_index is not None:
+        record_index = source_record_index
+    captured = (
+        recorded_evidence.get("log") if isinstance(recorded_evidence, dict) else None
+    )
+    log = None
+    if isinstance(captured, dict):
+        source = captured.get("source")
+        if not isinstance(source, dict):
+            source = {}
+        text = captured.get("text")
+        lines = source.get("lines")
+        sections: tuple[Section, ...] = ()
+        excerpt = None
+        if (
+            isinstance(text, str)
+            and not captured.get("text_truncated")
+            and isinstance(lines, list)
+            and len(lines) == 2
+            and all(isinstance(line, int) for line in lines)
+        ):
+            excerpt = Section(
+                source.get("title", "Captured decision log"), text, lines[0], lines[1]
+            )
+            sections = _sections(text, lines[0])
+        log = DecisionLog(
+            captured.get("status", "not_loaded"),
+            sections=sections,
+            excerpt=excerpt,
+            snapshot_sha256=source.get("snapshot_sha256"),
+            skipped_rejected_attempts=captured.get("skipped_rejected_attempts", 0),
+        )
+    inputs, outputs = (
+        card_inputs(record, previous),
+        card_outputs(
+            record,
+            record_index=record_index,
+            log=source_log if source_log is not None else log,
+        ),
+    )
+    if (
+        source_log is None
+        and card_format == CARD_FORMAT
+        and isinstance(recorded_evidence, dict)
+    ):
         for key in ("record_index", "log"):
             if key in recorded_evidence:
                 outputs["evidence"][key] = recorded_evidence[key]
+        process = recorded_evidence.get("process")
+        if (
+            isinstance(process, dict)
+            and process.get("schema_version") == PROCESS_VERSION
+        ):
+            outputs["evidence"]["process"] = process
+        elif isinstance(captured, dict) and captured.get("text_truncated"):
+            outputs["evidence"]["process"]["gaps"].append(
+                "Only a bounded log preview was saved on this trace; full activities require the captured source artifact."
+            )
     if card_format == CARD_FORMAT and root.inputs == inputs and root.outputs == outputs:
         return None
     data = copy.deepcopy(root.to_dict())
@@ -53,6 +127,114 @@ def refreshed_root(
         }
     )
     return Span.from_dict(data)
+
+
+def _source_evidence(db, experiment_id, source_root, tracking_uri, dry_run):
+    wanted = {
+        row[0]
+        for row in db.execute(
+            "SELECT DISTINCT run.value FROM trace_tags run "
+            "JOIN trace_info t ON t.request_id=run.request_id "
+            "WHERE t.experiment_id=? AND run.key='align.run_key'",
+            (experiment_id,),
+        )
+    }
+    references = []
+    sources = {}
+    bindings = db.execute(
+        "SELECT r.run_uuid,k.value,p.value,d.value FROM runs r "
+        "JOIN tags k ON k.run_uuid=r.run_uuid AND k.key='align.run_key' "
+        "LEFT JOIN tags p ON p.run_uuid=r.run_uuid AND p.key='align.source_path' "
+        "LEFT JOIN tags d ON d.run_uuid=r.run_uuid AND d.key='align.provenance_sha256' "
+        "WHERE r.experiment_id=? AND r.lifecycle_stage='active'",
+        (experiment_id,),
+    ).fetchall()
+    bound_runs = {}
+    for path in find_open_world_runs(source_root):
+        run = load_run(path, log_text=None)
+        current_key = run_key(run)
+        candidates = [
+            binding
+            for binding in bindings
+            if binding[1] == current_key
+            or isinstance(binding[2], str)
+            and Path(binding[2]).resolve() == path.resolve()
+        ]
+        if len(candidates) > 1:
+            raise ValueError(f"Ambiguous imported source identity for {path}")
+        if not candidates or candidates[0][1] not in wanted:
+            continue
+        source_run_id, key, _, provenance = candidates[0]
+        if key in sources:
+            raise ValueError(f"Multiple source directories have run key {key}")
+        if provenance is not None:
+            expected = json.loads(provenance)
+            captured = read_provenance(path)
+            if (
+                not isinstance(expected, dict)
+                or not expected
+                or any(
+                    name not in captured
+                    or hashlib.sha256(captured[name]).hexdigest() != digest
+                    for name, digest in expected.items()
+                )
+            ):
+                raise ValueError(
+                    f"Source provenance differs for {path}; decision evidence was not attached"
+                )
+        elif key != current_key:
+            raise ValueError(
+                f"Recorded source provenance is required to resolve {path}"
+            )
+        bound_runs[key] = source_run_id
+        rows = db.execute(
+            "SELECT s.trace_id,s.content,record.value FROM spans s "
+            "JOIN trace_tags run ON run.request_id=s.trace_id AND run.key='align.run_key' "
+            "JOIN trace_tags record ON record.request_id=s.trace_id AND record.key='align.record_index' "
+            "JOIN trace_tags complete ON complete.request_id=s.trace_id "
+            "AND complete.key='align.import_complete' AND complete.value='source-record-v1' "
+            "WHERE s.experiment_id=? AND s.parent_span_id IS NULL AND run.value=?",
+            (experiment_id, key),
+        )
+        for trace_id, content, index in rows:
+            index = int(index)
+            if (
+                index < 0
+                or index >= len(run.records)
+                or _source_record(Span.from_dict(json.loads(content))).source
+                != run.records[index].source
+            ):
+                raise ValueError(
+                    f"{trace_id}: source record differs; decision evidence was not attached"
+                )
+            references.append((trace_id, key, index))
+        try:
+            content = (path / RAW_LOG_FILE).read_bytes()
+        except FileNotFoundError:
+            content = None
+        logs = read_decision_logs(
+            path,
+            run.records,
+            log_text=content.decode("utf-8", errors="replace")
+            if content is not None
+            else None,
+            snapshot_sha256=hashlib.sha256(content).hexdigest()
+            if content is not None
+            else None,
+        )
+        sources[key] = (logs, content)
+    if not sources:
+        raise ValueError(
+            "No original source directories match this experiment's imported run keys"
+        )
+    if not dry_run:
+        client = MlflowClient(tracking_uri=tracking_uri)
+        for key, (logs, content) in sources.items():
+            preserve_log(client, client.get_run(bound_runs[key]), content, logs)
+    return {
+        trace_id: (sources[key][0][int(index)], int(index))
+        for trace_id, key, index in references
+    }
 
 
 def _previous_traces(db: sqlite3.Connection, experiment_id: int) -> dict[str, str]:
@@ -79,7 +261,10 @@ def _previous_traces(db: sqlite3.Connection, experiment_id: int) -> dict[str, st
 
 
 def refresh_cards(
-    tracking_uri: str, experiment_name: str, dry_run: bool = False
+    tracking_uri: str,
+    experiment_name: str,
+    dry_run: bool = False,
+    source_root: Optional[Path] = None,
 ) -> Iterator[tuple[int, int]]:
     """Yield cumulative (updated, already current) counts after each page.
 
@@ -105,6 +290,11 @@ def refresh_cards(
         if experiment is None:
             raise ValueError(f"Active experiment {experiment_name!r} does not exist")
         predecessors = _previous_traces(db, experiment[0])
+        source_evidence = (
+            _source_evidence(db, experiment[0], source_root, tracking_uri, dry_run)
+            if source_root is not None
+            else {}
+        )
         updated = current = 0
         last_id = ""
         while True:
@@ -139,7 +329,15 @@ def refresh_cards(
                             previous = _source_record(
                                 Span.from_dict(json.loads(prior_roots[0][0]))
                             )
-                    root = refreshed_root(Span.from_dict(content), previous)
+                    source_log, source_record_index = source_evidence.get(
+                        trace_id, (None, None)
+                    )
+                    root = refreshed_root(
+                        Span.from_dict(content),
+                        previous,
+                        source_log=source_log,
+                        source_record_index=source_record_index,
+                    )
                     if root is None:
                         current += 1
                         continue
